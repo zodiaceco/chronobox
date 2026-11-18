@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works, option C</title>
+<style>
+/* Demo page only: app tokens. In the app these come from styles.css. */
+:root { --fg:#0b0b0c; --muted:#6a6a70; --line:#e5e5e8; --line-strong:#c9c9ce; --blue-wash:#eef6fd; --blue-text:#1f5fa3; --radius:14px; }
+@media (prefers-color-scheme: dark) { :root { --fg:#f4f4f5; --muted:#9a9aa2; --line:#26262a; --line-strong:#3a3a40; --blue-wash:#0f1c2a; --blue-text:#8fc3f5; } }
+body { margin:0; padding:32px 16px; background:#fff; color:var(--fg); }
+@media (prefers-color-scheme: dark) { body { background:#0b0b0c; } }
+.demo { max-width:680px; margin:0 auto; }
+
+
+/* Shared. Move into styles.css: the app CSP forbids inline styles. */
+.hiw { container-type: inline-size; color: var(--fg, #0b0b0c); font-family: var(--font, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif); }
+.hiw ol { list-style: none; margin: 0; padding: 0; }
+.hiw svg { display: block; overflow: visible; }
+.hiw-title { font-size: 15px; font-weight: 600; line-height: 1.3; margin: 0; }
+.hiw-text { font-size: 14px; line-height: 1.4; color: var(--muted, #6a6a70); margin: 2px 0 0; }
+.hiw-num { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: var(--blue-wash, #eef6fd); color: var(--blue-text, #1f5fa3); font-size: 13px; font-weight: 600; line-height: 1; }
+.hiw-pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.hiw-pills span { display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border-radius: 999px;
+  border: 1.5px solid var(--line-strong, #c9c9ce); font-size: 13px; font-weight: 500; color: var(--fg, #0b0b0c); white-space: nowrap; }
+
+/* Option C: one box, four states; 2 x 2 cards, one column below 480px. */
+.hiw-c ol { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hiw-c li { display: grid; grid-template-columns: 72px 1fr; column-gap: 16px; align-items: start; padding: 18px;
+  border: 1px solid var(--line, #e5e5e8); border-radius: var(--radius, 14px); }
+.hiw-c .hiw-art { width: 72px; height: 72px; }
+.hiw-c .hiw-copy { display: flex; flex-direction: column; align-items: flex-start; }
+.hiw-c .hiw-num { margin-bottom: 6px; }
+@container (max-width: 480px) {
+  .hiw-c ol { grid-template-columns: 1fr; gap: 10px; }
+  .hiw-c li { grid-template-columns: 56px 1fr; column-gap: 14px; padding: 14px; }
+  .hiw-c .hiw-art { width: 56px; height: 56px; }
+}
+</style>
+</head>
+<body>
+<div class="demo">
+<!-- How it works, option C: The box over time. Copy and pill labels are HTML. -->
+<div class="hiw hiw-c"><ol><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><path d="M6.5 14V49.5a10 10 0 0 0 10 10H47.5a10 10 0 0 0 10-10V14" fill="none" stroke="currentColor" stroke-width="5"/></svg><div class="hiw-copy"><span class="hiw-num">1</span><p class="hiw-title">Set up</p><p class="hiw-text">Create your Timebox with your wallet.</p></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><path d="M6.5 14V49.5a10 10 0 0 0 10 10H47.5a10 10 0 0 0 10-10V14" fill="none" stroke="currentColor" stroke-width="5"/><path d="M16.16 53.23A16 16 0 1 1 47.84 53.23" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="16.76" cy="46.12" r="5.5" fill="currentColor"/></svg><div class="hiw-copy"><span class="hiw-num">2</span><p class="hiw-title">Set the delay</p><p class="hiw-text">Choose how long every withdrawal must wait.</p><span class="hiw-pills"><span>1 day</span><span>1 week</span><span aria-label="Custom">+</span></span></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><path d="M6.5 14V49.5a10 10 0 0 0 10 10H47.5a10 10 0 0 0 10-10V14" fill="none" stroke="currentColor" stroke-width="5"/><path d="M16.16 53.23A16 16 0 1 1 47.84 53.23" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="16.76" cy="46.12" r="5.5" fill="currentColor"/><path d="M13 55A26.56 26.56 0 0 1 51 55Z" fill="#469CED"/><circle cx="32" cy="9" r="6.5" fill="#469CED"/></svg><div class="hiw-copy"><span class="hiw-num">3</span><p class="hiw-title">Deposit</p><p class="hiw-text">Send money to your Timebox.</p></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><rect x="6.5" y="14" width="51" height="45.5" rx="10" fill="none" stroke="currentColor" stroke-width="5"/><path d="M16.16 53.23A16 16 0 1 1 47.84 53.23" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="22.15" cy="38.39" r="5.5" fill="currentColor"/><path d="M13 55A26.56 26.56 0 0 1 51 55Z" fill="#469CED"/></svg><div class="hiw-copy"><span class="hiw-num">4</span><p class="hiw-title">Peace of mind</p><p class="hiw-text">Nobody can take it in a hurry.</p></div></li></ol></div>
+</div>
+</body>
+</html>

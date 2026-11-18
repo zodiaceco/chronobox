@@ -1,0 +1,27 @@
+{
+  "name": "zodiac-timebox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "A vault that nobody can empty quickly. Safe + Zodiac Delay, no backend.",
+  "scripts": {
+    "dev": "node build.mjs --dev",
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "fork": "anvil --fork-url https://mainnet.gateway.tenderly.co --chain-id 1 --port 8545 --silent",
+    "test:fork": "node test/fork.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "2.4.0",
+    "preact": "11.2.0",
+    "qrcode-generator": "2.0.4"
+  },
+  "devDependencies": {
+    "@foundry-rs/anvil": "1.7.1",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

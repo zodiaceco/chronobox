@@ -1,0 +1,312 @@
+/* "How it is built" (#/technical). The same shape as the rest of the app:
+ * a narrow column, one title, rounded groups. Uses the tokens from styles.css. */
+
+.tech {
+  max-width: 560px;
+  margin: 0 auto;
+  padding-top: 8px;
+  display: grid;
+  gap: 32px;
+}
+
+.tech-back {
+  justify-self: start;
+}
+
+.tech-head {
+  display: grid;
+  gap: 12px;
+  text-align: center;
+  justify-items: center;
+}
+
+.tech-head h1 {
+  font-size: clamp(2rem, 7vw, 2.6rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+/* The path of the money: three glyphs joined by dotted lines. */
+
+.tech-flow {
+  list-style: none;
+  margin: 0;
+  padding: 26px 8px 22px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+}
+
+.tech-flow li {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+  padding: 0 4px;
+}
+
+.tech-glyph {
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  overflow: visible;
+}
+
+.tech-flow li + li::before {
+  content: "";
+  position: absolute;
+  top: 32px;
+  right: calc(50% + 46px);
+  left: calc(-50% + 46px);
+  border-top: 2px dotted var(--blue);
+}
+
+.tech-flow strong {
+  font-size: 1rem;
+}
+
+.tech-flow span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.tech-caption {
+  margin-top: -18px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+  text-wrap: pretty;
+}
+
+/* Blocks */
+
+.tech-block {
+  display: grid;
+  gap: 12px;
+}
+
+.tech-block h2 {
+  font-size: 1.3rem;
+  letter-spacing: -0.015em;
+}
+
+.tech-note {
+  color: var(--muted);
+  font-size: 0.925rem;
+  text-wrap: pretty;
+}
+
+.tech-note a,
+.tech-meta a,
+.tech-more a {
+  color: var(--blue-text);
+  text-underline-offset: 3px;
+}
+
+.tech-mono {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.tech code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+/* A short address stays in one piece. */
+.tech-meta .tech-mono {
+  white-space: nowrap;
+}
+
+/* Grouped cards: a title and one or two sentences each. */
+
+.tech-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+}
+
+.tech-cards li {
+  display: grid;
+  gap: 4px;
+  padding: 16px 18px;
+}
+
+.tech-cards li + li {
+  border-top: 1px solid var(--line);
+}
+
+.tech-cards strong {
+  font-size: 1.05rem;
+}
+
+.tech-cards p {
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.tech-cards .tech-meta {
+  margin-top: 4px;
+  font-size: 0.875rem;
+}
+
+/* Rows: a name on the left, a value or a tag on the right. */
+
+.tech-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+}
+
+.tech-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  min-height: 54px;
+  padding: 8px 18px;
+  font-weight: 500;
+}
+
+.tech-rows li + li {
+  border-top: 1px solid var(--line);
+}
+
+.tech-value {
+  color: var(--muted);
+  font-weight: 400;
+  text-align: right;
+}
+
+.tech-tag {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tech-tag-now {
+  background: var(--blue-wash);
+  color: var(--blue-text);
+}
+
+/* Ticked lines */
+
+.tech-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.tech-checks li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.tech-checks .wiz-tick {
+  width: 22px;
+  height: 22px;
+  animation: none;
+}
+
+/* For developers */
+
+.tech-more {
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+}
+
+.tech-more summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.tech-more[open] summary {
+  margin-bottom: 10px;
+}
+
+.tech-more p {
+  color: var(--muted);
+  font-size: 0.925rem;
+  margin-bottom: 10px;
+  text-wrap: pretty;
+}
+
+.tech-addresses {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  font-size: 0.9rem;
+}
+
+.tech-addresses li {
+  display: grid;
+  gap: 1px;
+}
+
+/* A narrow column: the path runs from top to bottom. */
+
+@media (max-width: 440px) {
+  .tech-flow {
+    grid-template-columns: 1fr;
+    gap: 22px;
+    padding: 22px 18px;
+  }
+  .tech-flow li {
+    grid-template-columns: 56px 1fr;
+    justify-items: start;
+    align-items: center;
+    column-gap: 16px;
+    text-align: left;
+    padding: 0;
+  }
+  .tech-glyph {
+    grid-row: span 2;
+    width: 56px;
+    height: 56px;
+    margin: 0;
+  }
+  .tech-flow strong {
+    align-self: end;
+  }
+  .tech-flow span {
+    align-self: start;
+  }
+  .tech-flow li + li::before {
+    top: -19px;
+    left: 27px;
+    right: auto;
+    height: 16px;
+    border-top: 0;
+    border-left: 2px dotted var(--blue);
+  }
+  .tech-caption {
+    margin-top: -16px;
+  }
+}

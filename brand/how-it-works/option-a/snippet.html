@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works, option A</title>
+<style>
+/* Demo page only: app tokens. In the app these come from styles.css. */
+:root { --fg:#0b0b0c; --muted:#6a6a70; --line:#e5e5e8; --line-strong:#c9c9ce; --blue-wash:#eef6fd; --blue-text:#1f5fa3; --radius:14px; }
+@media (prefers-color-scheme: dark) { :root { --fg:#f4f4f5; --muted:#9a9aa2; --line:#26262a; --line-strong:#3a3a40; --blue-wash:#0f1c2a; --blue-text:#8fc3f5; } }
+body { margin:0; padding:32px 16px; background:#fff; color:var(--fg); }
+@media (prefers-color-scheme: dark) { body { background:#0b0b0c; } }
+.demo { max-width:680px; margin:0 auto; }
+
+
+/* Shared. Move into styles.css: the app CSP forbids inline styles. */
+.hiw { container-type: inline-size; color: var(--fg, #0b0b0c); font-family: var(--font, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif); }
+.hiw ol { list-style: none; margin: 0; padding: 0; }
+.hiw svg { display: block; overflow: visible; }
+.hiw-title { font-size: 15px; font-weight: 600; line-height: 1.3; margin: 0; }
+.hiw-text { font-size: 14px; line-height: 1.4; color: var(--muted, #6a6a70); margin: 2px 0 0; }
+.hiw-num { display: inline-grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px;
+  background: var(--blue-wash, #eef6fd); color: var(--blue-text, #1f5fa3); font-size: 13px; font-weight: 600; line-height: 1; }
+.hiw-pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.hiw-pills span { display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border-radius: 999px;
+  border: 1.5px solid var(--line-strong, #c9c9ce); font-size: 13px; font-weight: 500; color: var(--fg, #0b0b0c); white-space: nowrap; }
+
+/* Option A: four glyphs in a row; a list with a rail below 480px. */
+.hiw-a ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+.hiw-a li { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 4px; }
+.hiw-a .hiw-art { width: 72px; height: 72px; margin-bottom: 14px; }
+.hiw-a li + li::before { content: ""; position: absolute; top: 36px; right: calc(50% + 50px); left: calc(-50% + 50px);
+  border-top: 2px dotted currentColor; opacity: .35; }
+.hiw-a .hiw-copy { display: flex; flex-direction: column; align-items: center; }
+.hiw-a .hiw-num { margin-bottom: 6px; }
+.hiw-a .hiw-pills { justify-content: center; }
+@container (max-width: 480px) {
+  .hiw-a ol { grid-template-columns: 1fr; gap: 22px; }
+  .hiw-a li { flex-direction: row; align-items: flex-start; gap: 16px; text-align: left; padding: 0; }
+  .hiw-a .hiw-art { flex: none; width: 56px; height: 56px; margin: 0; }
+  .hiw-a .hiw-copy { align-items: flex-start; }
+  .hiw-a li + li::before { top: -19px; height: 16px; left: 27px; right: auto; border-top: 0; border-left: 2px dotted currentColor; }
+  .hiw-a .hiw-num { margin-bottom: 4px; }
+  .hiw-a .hiw-pills { justify-content: flex-start; }
+}
+</style>
+</head>
+<body>
+<div class="demo">
+<!-- How it works, option A: Four glyphs. Copy and pill labels are HTML. -->
+<div class="hiw hiw-a"><ol><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><path d="M15 19L43 9.5L47 19" fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><rect x="8.5" y="19" width="47" height="35" rx="7" fill="none" stroke="currentColor" stroke-width="5"/><rect x="37" y="29.5" width="21" height="14" rx="7" fill="#469CED"/><circle cx="44.5" cy="36.5" r="3.5" fill="currentColor"/></svg><div class="hiw-copy"><span class="hiw-num">1</span><p class="hiw-title">Set up</p><p class="hiw-text">Create your Timebox with your wallet.</p></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><g transform="translate(0 6)"><path d="M6.06 45.81A26 26 0 0 1 57.94 45.81" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="7.98" cy="37.63" r="7.5" fill="currentColor"/><path d="M2 50A44 44 0 0 1 62 50Z" fill="#469CED"/></g></svg><div class="hiw-copy"><span class="hiw-num">2</span><p class="hiw-title">Set the delay</p><p class="hiw-text">Choose how long every withdrawal must wait.</p><span class="hiw-pills"><span>1 day</span><span>1 week</span><span aria-label="Custom">+</span></span></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><path d="M32 3V13M26 8L32 14L38 8" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="32" cy="29" r="9" fill="#469CED"/><path d="M8.5 32V45a9 9 0 0 0 9 9H46.5a9 9 0 0 0 9-9V32" fill="none" stroke="currentColor" stroke-width="5"/></svg><div class="hiw-copy"><span class="hiw-num">3</span><p class="hiw-title">Deposit</p><p class="hiw-text">Send money to your Timebox.</p></div></li><li><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" class="hiw-art" aria-hidden="true" focusable="false"><g transform="translate(0 6)"><path d="M6.06 45.81A26 26 0 0 1 57.94 45.81" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="56.02" cy="37.63" r="7.5" fill="currentColor"/><path d="M2 50A44 44 0 0 1 62 50Z" fill="#469CED"/></g></svg><div class="hiw-copy"><span class="hiw-num">4</span><p class="hiw-title">Peace of mind</p><p class="hiw-text">Nobody can take it in a hurry.</p></div></li></ol></div>
+</div>
+</body>
+</html>
