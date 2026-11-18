@@ -1,5 +1,5 @@
 /**
- * Creating a Timebox, one question per screen: network, delay, two promises,
+ * Creating a Chronobox, one question per screen: network, delay, two promises,
  * (for a wallet that can batch: money to put in), review, then the result
  * with the address to send money to. Every answer stays when you go back.
  */
@@ -25,7 +25,7 @@ import {
   sendAndWait,
   setupCalls,
   tokenBalance,
-} from "../lib/timebox.ts";
+} from "../lib/chronobox.ts";
 import { canBatch, errorText, sendBatch, switchChain } from "../lib/wallet.ts";
 import { type Asset, AssetAmount, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -213,7 +213,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           setProgress("create");
           const receipt = await sendAndWait(session.rpc, session.account, createTx(session.account, now.index));
           const safe = safeFromReceipt(receipt);
-          if (!safe || safe !== now.safe) throw new Error("Something is not right: your Timebox is not where it should be. Stop here, and do not send money.");
+          if (!safe || safe !== now.safe) throw new Error("Something is not right: your Chronobox is not where it should be. Stop here, and do not send money.");
           now = { ...now, created: true };
           setPlan(now);
         }
@@ -223,7 +223,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       setProgress("check");
       const result = await inspect(session.rpc, plan.safe, blockHints(chain.id));
       if (result.state !== "locked" || result.cooldown !== cooldown) {
-        throw new Error("Your Timebox did not pass the safety checks. Do not send money to it.");
+        throw new Error("Your Chronobox did not pass the safety checks. Do not send money to it.");
       }
       rememberVault({ chainId: chain.id, safe: plan.safe });
       setDone({ chain, safe: plan.safe, funded: batch && parsedDeposits.length > 0 });
@@ -242,7 +242,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           <Mark size={72} />
         </div>
         <Screen
-          title="Your Timebox is ready."
+          title="Your Chronobox is ready."
           lead={done.funded ? `Your money is inside. From now on, every withdrawal waits ${delayText}.` : `From now on, every withdrawal waits ${delayText}.`}
         >
           {done.funded ? null : (
@@ -254,7 +254,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         </Screen>
         <div class="wiz-foot">
           <Button kind="primary" onClick={() => props.onDone(done.chain, done.safe)}>
-            Open my Timebox
+            Open my Chronobox
           </Button>
         </div>
       </section>
@@ -265,11 +265,11 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   if (progress) {
     const rows: { id: Progress[]; text: string }[] = batch
       ? [
-          { id: ["batch", "waiting"], text: parsedDeposits.length > 0 ? "Create, lock and fill your Timebox" : "Create and lock your Timebox" },
+          { id: ["batch", "waiting"], text: parsedDeposits.length > 0 ? "Create, lock and fill your Chronobox" : "Create and lock your Chronobox" },
           { id: ["check"], text: "Run the safety checks" },
         ]
       : [
-          { id: ["create"], text: "Create your Timebox" },
+          { id: ["create"], text: "Create your Chronobox" },
           { id: ["lock"], text: "Lock it" },
           { id: ["check"], text: "Run the safety checks" },
         ];
@@ -277,7 +277,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     return (
       <section class="wiz" key="work">
         <Screen
-          title="Creating your Timebox"
+          title="Creating your Chronobox"
           lead={
             progress === "check"
               ? "Almost there."
@@ -363,13 +363,13 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     );
   } else if (current === "promises") {
     screen = (
-      <Screen title="Two promises to yourself" lead="Timebox is simple because it has no back door. Tap each one when you mean it.">
+      <Screen title="Two promises to yourself" lead="Chronobox is simple because it has no back door. Tap each one when you mean it.">
         <div class="wiz-list">
           <Choice
             role="checkbox"
             on={keepSafe}
             title="I will keep this wallet safe."
-            text="It is the only key. If I lose it, the money in my Timebox is gone."
+            text="It is the only key. If I lose it, the money in my Chronobox is gone."
             onClick={() => setKeepSafe(!keepSafe)}
           />
           <Choice
@@ -389,7 +389,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     screen = (
       <Screen
         title="Put money in now?"
-        lead="Your wallet can create, lock and fill your Timebox in one go. Or skip this and add money later."
+        lead="Your wallet can create, lock and fill your Chronobox in one go. Or skip this and add money later."
       >
         <div class="wiz-fund">
           {deposits.map((d, i) => (
@@ -450,7 +450,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               </span>
             ) : null}
             <p>
-              Timebox is free software. You can always run it yourself at no cost. Your contribution pays for the work that keeps this
+              Chronobox is free software. You can always run it yourself at no cost. Your contribution pays for the work that keeps this
               app safe and maintained.
             </p>
             {giveLess ? (
@@ -536,7 +536,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
       <div class="wiz-foot">
         <Button kind="primary" disabled={!canContinue} onClick={last ? run : () => setStep(step + 1)}>
-          {last ? (plan?.created && !batch ? "Lock my Timebox" : "Create my Timebox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
+          {last ? (plan?.created && !batch ? "Lock my Chronobox" : "Create my Chronobox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
         </Button>
       </div>
     </section>

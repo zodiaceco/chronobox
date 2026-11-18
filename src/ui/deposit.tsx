@@ -1,5 +1,5 @@
 /**
- * How money gets into a Timebox. The address comes first: a vault can
+ * How money gets into a Chronobox. The address comes first: a vault can
  * receive from any wallet or exchange, any token, any number of times.
  * Sending from the connected wallet is the second way, one asset at a time.
  */
@@ -8,7 +8,7 @@ import qrcode from "qrcode-generator";
 import type { Chain } from "../lib/chains.ts";
 import { formatAmount, formatUnits, parseUnits } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { depositTx, sendAndWait } from "../lib/timebox.ts";
+import { depositTx, sendAndWait } from "../lib/chronobox.ts";
 import { type Asset, AssetAmount, Button, Notice, type Session, useAction, useBalances } from "./common.tsx";
 
 /** A QR code as one SVG path. No image file, no inline style. */
@@ -101,7 +101,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
               In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
             </p>
           ) : null}
-          {sent ? <Notice kind="good">{sent} is in your Timebox.</Notice> : null}
+          {sent ? <Notice kind="good">{sent} is in your Chronobox.</Notice> : null}
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
           <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
             Send {amount ? `${amountText} ${asset.symbol}` : ""}

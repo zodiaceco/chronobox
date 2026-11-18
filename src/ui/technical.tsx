@@ -1,15 +1,15 @@
 /**
- * "How it is built": the four parts of a Timebox, who audited them, what the
+ * "How it is built": the four parts of a Chronobox, who audited them, what the
  * app checks, and what it cannot do for you. Static. Every fact here must
- * match README.md and src/lib/timebox.ts.
+ * match README.md and src/lib/chronobox.ts.
  */
 import "../technical.css";
 import type { ComponentChildren } from "preact";
 import { CONTRACTS } from "../lib/chains.ts";
+import { BoxArt, SunArt, WalletArt } from "./art.tsx";
 import { Tick } from "./common.tsx";
 
-const BLUE = "#469CED";
-const BUILD = (document.querySelector('meta[name="timebox-build"]')?.getAttribute("content") ?? "").slice(0, 8);
+const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "").slice(0, 8);
 
 function Ext(props: { href: string; children: ComponentChildren }) {
   return (
@@ -31,39 +31,7 @@ function Contract(props: { address: string }) {
   );
 }
 
-// The path of the money, drawn with the pieces of the mark.
-
-function Glyph(props: { children: ComponentChildren }) {
-  return (
-    <svg class="tech-glyph" viewBox="0 0 64 64" width="64" height="64" aria-hidden="true" focusable="false">
-      {props.children}
-    </svg>
-  );
-}
-
-const WALLET = (
-  <>
-    <path d="M15 19L43 9.5L47 19" fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round" />
-    <rect x="8.5" y="19" width="47" height="35" rx="7" fill="none" stroke="currentColor" stroke-width="5" />
-    <rect x="37" y="29.5" width="21" height="14" rx="7" fill={BLUE} />
-    <circle cx="44.5" cy="36.5" r="3.5" fill="currentColor" />
-  </>
-);
-
-const LOCK = (
-  <g transform="translate(0 6)">
-    <path d="M6.06 45.81A26 26 0 0 1 57.94 45.81" fill="none" stroke="currentColor" stroke-width="5" />
-    <circle cx="15.99" cy="23.51" r="7.5" fill="currentColor" />
-    <path d="M2 50A44 44 0 0 1 62 50Z" fill={BLUE} />
-  </g>
-);
-
-const BOX = (
-  <>
-    <rect x="8.5" y="10.5" width="47" height="43" rx="10" fill="none" stroke="currentColor" stroke-width="5" />
-    <path d="M14 48.5A19 17 0 0 1 50 48.5Z" fill={BLUE} />
-  </>
-);
+// The path of the money is drawn with the pictures from art.tsx: the wallet, the mark, the box.
 
 export function TechnicalPage() {
   return (
@@ -77,23 +45,23 @@ export function TechnicalPage() {
 
       <header class="tech-head">
         <h1>Four parts. No back door.</h1>
-        <p class="lead">Your wallet, a time lock, a cancel switch, and a box that nobody owns. That is all a Timebox is.</p>
+        <p class="lead">Your wallet, a time lock, a cancel switch, and a box that nobody owns. That is all a Chronobox is.</p>
       </header>
 
-      <ol class="tech-flow" aria-label="How money leaves a Timebox">
+      <ol class="tech-flow" aria-label="How money leaves a Chronobox">
         <li>
-          <Glyph>{WALLET}</Glyph>
+          <WalletArt class="tech-glyph" />
           <strong>Your wallet</strong>
           <span>asks</span>
         </li>
         <li>
-          <Glyph>{LOCK}</Glyph>
+          <SunArt class="tech-glyph" />
           <strong>The time lock</strong>
           <span>makes it wait</span>
         </li>
         <li>
-          <Glyph>{BOX}</Glyph>
-          <strong>The Timebox</strong>
+          <BoxArt class="tech-glyph" />
+          <strong>The Chronobox</strong>
           <span>lets the money go</span>
         </li>
       </ol>
@@ -127,7 +95,7 @@ export function TechnicalPage() {
             </p>
           </li>
           <li>
-            <strong>The Timebox</strong>
+            <strong>The Chronobox</strong>
             <p>Holds the money. Its owner is an address that nobody has a key for. So no person owns it, not even you.</p>
             <p class="tech-meta">
               Safe 1.4.1 · <Contract address={CONTRACTS.safeSingleton} /> ·{" "}
@@ -135,7 +103,7 @@ export function TechnicalPage() {
             </p>
           </li>
         </ul>
-        <p class="tech-note">Timebox adds no contract of its own. These contracts have been in use for years. This app itself has not been audited yet.</p>
+        <p class="tech-note">Chronobox adds no contract of its own. These contracts have been in use for years. This app itself has not been audited yet.</p>
       </div>
 
       <div class="tech-block">
@@ -169,7 +137,7 @@ export function TechnicalPage() {
             "Nothing extra is attached to it.",
             "No person and no key owns it.",
             "The time lock is the only way out.",
-            "Only the Timebox itself can change the time lock.",
+            "Only the Chronobox itself can change the time lock.",
             "One wallet controls it, and only that wallet can cancel.",
             "Cancel is the only thing that does not wait.",
             "Every withdrawal has to wait.",
@@ -180,7 +148,7 @@ export function TechnicalPage() {
             </li>
           ))}
         </ul>
-        <p class="tech-note">The app reads all of this from the chain. Anybody can open any Timebox by its address and see the same checks.</p>
+        <p class="tech-note">The app reads all of this from the chain. Anybody can open any Chronobox by its address and see the same checks.</p>
       </div>
 
       <div class="tech-block">
@@ -195,7 +163,7 @@ export function TechnicalPage() {
           </li>
           <li>
             <strong>It cannot bring a lost wallet back.</strong>
-            <p>If you lose the wallet, the money in the Timebox is lost. There is no recovery.</p>
+            <p>If you lose the wallet, the money in the Chronobox is lost. There is no recovery.</p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>

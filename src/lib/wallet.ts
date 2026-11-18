@@ -5,7 +5,7 @@
  */
 import { type Chain } from "./chains.ts";
 import { type Address, checksum, toQuantity } from "./hex.ts";
-import type { Rpc, TxRequest } from "./timebox.ts";
+import type { Rpc, TxRequest } from "./chronobox.ts";
 
 export type Provider = {
   request(args: { method: string; params?: unknown[] }): Promise<unknown>;

@@ -1,8 +1,8 @@
 /**
- * Everything Timebox does on chain: build the setup transactions, check a
+ * Everything Chronobox does on chain: build the setup transactions, check a
  * vault, read the queue, build withdrawals.
  *
- * A Timebox is three things:
+ * A Chronobox is three things:
  *   - a Safe 1.4.1 that holds the funds. Its only owner is a burn address.
  *   - a Zodiac Delay modifier. Every transaction that goes through it waits
  *     the delay. It is the only way to move funds or change the vault.
@@ -114,7 +114,7 @@ export function safeInitializer(wallet: Address): Hex {
 }
 
 /**
- * The address of the nth Timebox of a wallet. It depends only on the wallet
+ * The address of the nth Chronobox of a wallet. It depends only on the wallet
  * and the index, and it is the same on every chain. The app can find a
  * wallet's vaults again without a server.
  */
@@ -215,7 +215,7 @@ export function usdToCoin(cents: bigint, price: bigint): bigint {
   return (cents * 10n ** 24n) / price;
 }
 
-/** A voluntary payment to the people who maintain Timebox, in the coin of the network. */
+/** A voluntary payment to the people who maintain Chronobox, in the coin of the network. */
 export type Contribution = { to: Address; amount: bigint };
 
 /**
@@ -369,7 +369,7 @@ export type Inspection = {
    * locked: every check passed.
    * unverified: nothing is wrong, but one check could not be done from this
    *   device. Do not deposit until it passes. Withdrawing still works.
-   * invalid: something is different from a Timebox. Do not deposit.
+   * invalid: something is different from a Chronobox. Do not deposit.
    */
   state: "missing" | "open" | "locked" | "unverified" | "invalid";
   checks: Check[];
@@ -459,7 +459,7 @@ export async function verifyCancelPermission(
       kind !== ROLES_TOPIC.execFailure
     ) {
       // Every other event of this contract grants or changes something.
-      return bad(`The history has an event that a Timebox never emits: ${kind}`);
+      return bad(`The history has an event that a Chronobox never emits: ${kind}`);
     }
   }
   if (!created) return bad("The start of the history is missing");
@@ -472,7 +472,7 @@ export async function verifyCancelPermission(
 
 async function modulesOf(rpc: Rpc, address: Address): Promise<Address[] | null> {
   const [list, next] = await read(rpc, address, "getModulesPaginated(address,uint256)", [SENTINEL, 10n], ["address[]", "address"]);
-  // More than one page means more modules than a Timebox can have.
+  // More than one page means more modules than a Chronobox can have.
   return sameAddress(next as Address, SENTINEL) ? (list as Address[]) : null;
 }
 
@@ -577,7 +577,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   const wiringOk = add(
     "wiring",
     sameAddress(owner, safe) && sameAddress(avatar, safe) && sameAddress(target, safe),
-    "Only the Timebox itself can change the time lock",
+    "Only the Chronobox itself can change the time lock",
     "Owner, avatar and target of the Delay are the Safe",
   );
   const controllerOk = add(
@@ -601,7 +601,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     const wiredOk = add(
       "cancel-wiring",
       sameAddress(rolesOwner, safe) && sameAddress(rolesAvatar, safe) && sameAddress(rolesTarget, safe),
-      "Only the Timebox itself can change who can cancel",
+      "Only the Chronobox itself can change who can cancel",
       `Owner, avatar and target of the Roles modifier ${roles} are the Safe`,
     );
     const memberOk = add(

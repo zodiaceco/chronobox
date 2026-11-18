@@ -4,6 +4,7 @@ import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress } from "./lib/hex.ts";
 import { buildChanged, lastWallet, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
+import { AlertsPage } from "./ui/alerts.tsx";
 import { Button, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
@@ -11,10 +12,10 @@ import { StartPage, vaultHref } from "./ui/start.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
-type Route = { page: "start" } | { page: "new" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address } | { page: "unknown" };
+type Route = { page: "start" } | { page: "new" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address } | { page: "alerts"; chain: Chain; safe: Address } | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
-const BUILD = (document.querySelector('meta[name="timebox-build"]')?.getAttribute("content") ?? "unknown").slice(0, 8);
+const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "unknown").slice(0, 8);
 const UPDATED = buildChanged(BUILD);
 
 function parseRoute(hash: string): Route {
@@ -22,11 +23,11 @@ function parseRoute(hash: string): Route {
   if (path === "" || path === "/" || !path.startsWith("/")) return { page: "start" };
   if (path === "/new") return { page: "new" };
   if (path === "/technical") return { page: "technical" };
-  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
+  const match = /^\/(v|alerts)\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
   if (match) {
-    const chain = chainByShort(match[1]);
-    const safe = parseAddress(match[2]);
-    if (chain && safe) return { page: "vault", chain, safe };
+    const chain = chainByShort(match[2]);
+    const safe = parseAddress(match[3]);
+    if (chain && safe) return { page: match[1] === "v" ? "vault" : "alerts", chain, safe };
   }
   return { page: "unknown" };
 }
@@ -111,10 +112,13 @@ export function App() {
     body = <StartPage session={session} chain={chain} onConnect={() => setConnectOpen(true)} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
+  } else if (route.page === "alerts") {
+    // No wallet needed: a person who only gets the alerts opens this page too.
+    body = <AlertsPage chain={route.chain} safe={route.safe} />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
-        <h1>This link does not lead to a Timebox.</h1>
+        <h1>This link does not lead to a Chronobox.</h1>
         <p class="lead">Check that the address is complete.</p>
         <div class="page-actions">
           <a class="button button-primary" href="#/">
@@ -126,9 +130,9 @@ export function App() {
   } else if (!session) {
     body = (
       <section class="page page-center">
-        <h1>{route.page === "new" ? "First, connect your wallet." : "Connect your wallet to open this Timebox."}</h1>
+        <h1>{route.page === "new" ? "First, connect your wallet." : "Connect your wallet to open this Chronobox."}</h1>
         <p class="lead">
-          {route.page === "new" ? "It becomes the only key to your Timebox." : "Timebox has no server. It reads everything through your wallet."}
+          {route.page === "new" ? "It becomes the only key to your Chronobox." : "Chronobox has no server. It reads everything through your wallet."}
         </p>
         <div class="page-actions">
           <Button kind="primary" onClick={() => setConnectOpen(true)}>
@@ -151,7 +155,7 @@ export function App() {
     const target = route.chain;
     body = (
       <section class="page page-center">
-        <h1>This Timebox lives on {target.name}.</h1>
+        <h1>This Chronobox lives on {target.name}.</h1>
         <p class="lead">Your wallet is on {chain?.name ?? "another network"}. Switch to open it.</p>
         <div class="page-actions">
           <Button kind="primary" onClick={() => switchChain(session.wallet.provider, target).catch(() => undefined)}>
@@ -183,8 +187,8 @@ export function App() {
               </Button>
             </div>
           </details>
-        ) : route.page === "start" ? null : (
-          // The welcome screen has its own button. Everywhere else this is the way in.
+        ) : route.page === "start" || route.page === "alerts" ? null : (
+          // The welcome screen has its own button, and alerts need no wallet. Everywhere else this is the way in.
           <Button small onClick={() => setConnectOpen(true)}>
             Connect wallet
           </Button>
@@ -207,7 +211,7 @@ export function App() {
       <div class="horizon" aria-hidden="true" />
 
       {connectOpen ? (
-        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "It becomes the only key to your Timebox. A hardware wallet is the safest choice."} onClose={() => setConnectOpen(false)}>
+        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "It becomes the only key to your Chronobox."} onClose={() => setConnectOpen(false)}>
           {wallets.length === 0 ? (
             <p>
               There is no wallet in this browser yet. Add one, such as Rabby or MetaMask, or open this page inside your wallet app. Then

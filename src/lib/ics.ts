@@ -14,7 +14,7 @@ function escape(text: string): string {
 export type Reminder = { uid: string; at: number; title: string; description: string; url?: string };
 
 export function calendarFile(reminders: Reminder[], createdAt: number): string {
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Zodiac//Timebox//EN", "CALSCALE:GREGORIAN"];
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Zodiac//Chronobox//EN", "CALSCALE:GREGORIAN"];
   for (const r of reminders) {
     lines.push(
       "BEGIN:VEVENT",

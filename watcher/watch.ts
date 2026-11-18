@@ -1,6 +1,7 @@
-// Zodiac Timebox watcher. One file, no dependencies.
+// Zodiac Chronobox watcher. One file, no dependencies.
 // Run: node watch.ts --help   (Node 22.18+; TypeScript by type stripping)
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import process from 'node:process';
 
 // ---------------------------------------------------------------------------
@@ -10,7 +11,15 @@ const SENTINEL = '0x0000000000000000000000000000000000000001';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 export const TOPIC_TRANSACTION_ADDED = '0x4c8a9c748e976c17c2eb2c2bc50da76eac9cd90ff529f0fe900e0c10a179f031';
 export const TOPIC_TX_NONCE_SET = '0xb80aa44b2e3f25cf4fbdf2a6c561d9a3d961528ccfc2097da3741fdf941d6d13'; // TxNonceSet(uint256)
+// SafeModuleTransaction(address module, address to, uint256 value, bytes data, uint8 operation), from a SafeL2.
+// The Delay 1.0.1 that Chronobox pins has no TxNonceSet event, so a cancel is read from the vault: it shows
+// every call a module made, and a cancel is the call setTxNonce on the Delay.
+export const TOPIC_SAFE_MODULE_TRANSACTION = '0xb648d3644f584ed1c2232d53c46d87e693586486ad0d1175f8656013110b714e';
+const SET_TX_NONCE = '0x46ba2307';
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
+// ModuleProxyCreation(address indexed proxy, address indexed masterCopy), from the Zodiac ModuleProxyFactory.
+export const TOPIC_MODULE_PROXY_CREATION = '0x2150ada912bf189ed721c44211199e270903fc88008c2a1e1e889ef30fe67c5f';
+export const MODULE_PROXY_FACTORY = '0x000000000000addb49795b0f9ba5bc298cdda236';
 
 // Both modules are EIP-1167 minimal proxies; the master copy tells them apart.
 export const MASTER_COPY = {
@@ -31,6 +40,7 @@ export const SEL = {
   avatar: '0x5aef7de6',
   target: '0xd4b83992',
   getModulesPaginated: '0xcc2f8452',
+  getOwners: '0xa0e67e2b',
   transfer: '0xa9059cbb',
   symbol: '0x95d89b41',
   decimals: '0x313ce567',
@@ -85,7 +95,7 @@ const FIRST_START_LOOKUP_LIMIT = 50;
 
 export type Config = {
   rpcUrls: string[];
-  timebox?: string;
+  chronobox?: string;
   delay?: string;
   ntfyUrl?: string;
   ntfyToken?: string;
@@ -98,6 +108,11 @@ export type Config = {
   once: boolean;
   dryRun: boolean;
   help: boolean;
+  // --all: watch every Chronobox on the chain and publish each one's alerts to its own public topic.
+  all: boolean;
+  ntfyServer?: string;
+  stateDir: string;
+  startBlock?: number;
 };
 
 export type Settings = {
@@ -108,7 +123,7 @@ export type Settings = {
   owner: string;
   avatar: string;
   target: string;
-  // Only set when TIMEBOX is known. '' / [] when the vault has no Roles modifier (no cancel).
+  // Only set when CHRONOBOX is known. '' / [] when the vault has no Roles modifier (no cancel).
   roles?: string;
   rolesOwner?: string;
   cancellers?: string[];
@@ -169,29 +184,36 @@ class RevertError extends Error {}
 // ---------------------------------------------------------------------------
 // Config
 
-const HELP = `Zodiac Timebox watcher
+const HELP = `Zodiac Chronobox watcher
 
-Watches a Timebox vault (a Safe whose only exit is a Zodiac Delay, optionally
+Watches a Chronobox vault (a Safe whose only exit is a Zodiac Delay, optionally
 with a Roles modifier that lets a few addresses cancel) and sends an alert when
 a transaction is queued, becomes ready, expires soon, is cancelled, leaves the
 queue, or when the vault settings change. Needs only public data, no keys.
 
-Usage: node watch.ts [flags]
+Usage: node watch.ts [flags]          watch one vault
+       node watch.ts --all [flags]    watch every Chronobox on the chain
 
 Settings (environment variable or --flag value):
   RPC_URL          --rpc-url          RPC endpoint; comma-separated list for fallbacks (required)
-  TIMEBOX          --timebox          the vault (Safe) address; the Delay and the Roles modifier are found among its modules
-  DELAY            --delay            the Delay modifier address (instead of, or with, TIMEBOX)
+  CHRONOBOX          --chronobox          the vault (Safe) address; the Delay and the Roles modifier are found among its modules
+  DELAY            --delay            the Delay modifier address (instead of, or with, CHRONOBOX)
   NTFY_URL         --ntfy-url         ntfy topic URL, e.g. https://ntfy.sh/<long-random-topic>
   NTFY_TOKEN       --ntfy-token       optional access token for a protected ntfy server
   WEBHOOK_URL      --webhook-url      URL that receives a JSON POST per alert
   POLL_SECONDS     --poll-seconds     seconds between polls (default 60)
   HEARTBEAT_HOURS  --heartbeat-hours  "All quiet" message interval (default 24, 0 = off)
-  STATE_FILE       --state-file       where the watcher remembers what it sent (default ./timebox-watch-state.json)
+  STATE_FILE       --state-file       where the watcher remembers what it sent (default ./chronobox-watch-state.json)
   FAIL_POLLS       --fail-polls       failed polls in a row before a "watcher problem" alert (default 3)
   LOG_CHUNK        --log-chunk        blocks per eth_getLogs request (default 2000, halved on error)
 
+With --all (instead of CHRONOBOX, DELAY, NTFY_URL and STATE_FILE):
+  NTFY_SERVER      --ntfy-server      ntfy server URL; each Chronobox gets the topic chronobox-<chain id>-<vault address>
+  STATE_DIR        --state-dir        folder for the state files (default ./chronobox-watch-state)
+  START_BLOCK      --start-block      first block to search for Chronoboxes (default: the newest block at the first start)
+
 Flags:
+  --all       watch every Chronobox on the chain; nobody has to sign up, the alerts of a vault go to its public topic
   --once      poll one time and exit (for cron); exit code 1 if the chain could not be read
   --dry-run   print alerts instead of sending them; the state file is not written
   --help      show this text
@@ -203,7 +225,7 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 export function parseConfig(argv: string[], env: Record<string, string | undefined>): Config {
   const vals: Record<string, string | undefined> = { ...env };
-  const bools = { once: false, dryRun: false, help: false };
+  const bools = { once: false, dryRun: false, help: false, all: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) throw new ConfigError(`Unexpected argument: ${a}`);
@@ -214,6 +236,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
     const key = name.toUpperCase().replace(/-/g, '_');
     if (key === 'ONCE') { bools.once = true; continue; }
     if (key === 'DRY_RUN') { bools.dryRun = true; continue; }
+    if (key === 'ALL') { bools.all = true; continue; }
     if (key === 'HELP' || key === 'H') { bools.help = true; continue; }
     if (!KNOWN_KEYS.includes(key)) throw new ConfigError(`Unknown flag: --${name}`);
     if (value === undefined) {
@@ -223,8 +246,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
     vals[key] = value;
   }
   const cfg: Config = {
-    rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './timebox-watch-state.json',
-    failPolls: 3, logChunk: 2000, ...bools,
+    rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './chronobox-watch-state.json',
+    failPolls: 3, logChunk: 2000, stateDir: './chronobox-watch-state', ...bools,
   };
   if (bools.help) return cfg;
 
@@ -234,10 +257,20 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   for (const [i, u] of cfg.rpcUrls.entries()) {
     if (!/^https?:\/\//i.test(u)) throw new ConfigError(`RPC_URL entry ${i + 1} must start with http:// or https://.`);
   }
-  cfg.timebox = str('TIMEBOX')?.toLowerCase();
+  cfg.chronobox = str('CHRONOBOX')?.toLowerCase();
   cfg.delay = str('DELAY')?.toLowerCase();
-  if (!cfg.timebox && !cfg.delay) throw new ConfigError('Set TIMEBOX (the vault address) or DELAY.');
-  if (cfg.timebox && !ADDRESS_RE.test(cfg.timebox)) throw new ConfigError('TIMEBOX is not a valid address.');
+  if (!cfg.all && /^(1|true|yes)$/i.test(str('ALL') ?? '')) cfg.all = true;
+  if (cfg.all) {
+    for (const k of ['CHRONOBOX', 'DELAY', 'NTFY_URL', 'STATE_FILE']) {
+      if (str(k)) throw new ConfigError(`${k} does not work with --all. --all watches every Chronobox and uses NTFY_SERVER and STATE_DIR.`);
+    }
+    cfg.ntfyServer = str('NTFY_SERVER')?.replace(/\/+$/, '');
+    if (cfg.ntfyServer && !/^https?:\/\//i.test(cfg.ntfyServer)) throw new ConfigError('NTFY_SERVER must start with http:// or https://.');
+    cfg.stateDir = str('STATE_DIR') ?? cfg.stateDir;
+  } else if (!cfg.chronobox && !cfg.delay) {
+    throw new ConfigError('Set CHRONOBOX (the vault address) or DELAY, or use --all.');
+  }
+  if (cfg.chronobox && !ADDRESS_RE.test(cfg.chronobox)) throw new ConfigError('CHRONOBOX is not a valid address.');
   if (cfg.delay && !ADDRESS_RE.test(cfg.delay)) throw new ConfigError('DELAY is not a valid address.');
   cfg.ntfyUrl = str('NTFY_URL');
   cfg.ntfyToken = str('NTFY_TOKEN');
@@ -245,8 +278,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   for (const [k, v] of [['NTFY_URL', cfg.ntfyUrl], ['WEBHOOK_URL', cfg.webhookUrl]] as const) {
     if (v && !/^https?:\/\//i.test(v)) throw new ConfigError(`${k} must start with http:// or https://.`);
   }
-  if (!cfg.ntfyUrl && !cfg.webhookUrl && !cfg.dryRun) {
-    throw new ConfigError('Set NTFY_URL and/or WEBHOOK_URL, or use --dry-run.');
+  if (!cfg.ntfyUrl && !cfg.ntfyServer && !cfg.webhookUrl && !cfg.dryRun) {
+    throw new ConfigError(`Set ${cfg.all ? 'NTFY_SERVER' : 'NTFY_URL'} and/or WEBHOOK_URL, or use --dry-run.`);
   }
   const num = (k: string, def: number, min: number, integer: boolean) => {
     const v = str(k);
@@ -262,12 +295,13 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   cfg.failPolls = num('FAIL_POLLS', 3, 1, true);
   cfg.logChunk = num('LOG_CHUNK', 2000, 1, true);
   cfg.stateFile = str('STATE_FILE') ?? cfg.stateFile;
+  if (cfg.all && str('START_BLOCK') !== undefined) cfg.startBlock = num('START_BLOCK', 0, 0, true);
   return cfg;
 }
 
 const KNOWN_KEYS = [
-  'RPC_URL', 'TIMEBOX', 'DELAY', 'NTFY_URL', 'NTFY_TOKEN', 'WEBHOOK_URL', 'POLL_SECONDS',
-  'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK',
+  'RPC_URL', 'CHRONOBOX', 'DELAY', 'NTFY_URL', 'NTFY_TOKEN', 'WEBHOOK_URL', 'POLL_SECONDS',
+  'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK', 'NTFY_SERVER', 'STATE_DIR', 'START_BLOCK',
 ];
 
 // ---------------------------------------------------------------------------
@@ -320,6 +354,26 @@ export function decodeAddressArray(ret: string): { array: string[]; next: string
   const array: string[] = [];
   for (let i = 0; i < len; i++) array.push(toAddr(wordAtByte(ret, off + 32 + i * 32)));
   return { array, next };
+}
+
+/** A returned address[] (for example Safe.getOwners). */
+export function decodeAddresses(ret: string): string[] {
+  const off = Number(toBig(word(ret, 0)));
+  const len = Number(toBig(wordAtByte(ret, off)));
+  const out: string[] = [];
+  for (let i = 0; i < len; i++) out.push(toAddr(wordAtByte(ret, off + 32 + i * 32)));
+  return out;
+}
+
+/** The new nonce if this SafeModuleTransaction log is the call setTxNonce on the Delay, else null. */
+export function decodeCancel(log: { data: string }, delay: string): number | null {
+  const d = log.data;
+  if (toAddr(word(d, 1)) !== delay) return null;
+  const off = Number(toBig(word(d, 3)));
+  const len = Number(toBig(wordAtByte(d, off)));
+  const data = '0x' + strip(d).slice((off + 32) * 2, (off + 32 + len) * 2);
+  if (len !== 36 || !data.toLowerCase().startsWith(SET_TX_NONCE)) return null;
+  return Number(toBig(data.slice(10)));
 }
 
 export function decodeTransactionAdded(log: { topics: string[]; data: string; blockNumber: string }) {
@@ -382,7 +436,8 @@ export type CloseReason =
 
 /**
  * Why a queue item that was pending at the last poll is gone now.
- * An execution and skipExpired emit no Delay event; a cancel (setTxNonce) emits TxNonceSet.
+ * An execution and skipExpired emit no Delay event. A cancel (setTxNonce) is read from the vault's module calls,
+ * and from TxNonceSet on a Delay that has that event.
  */
 export function closeReason(
   nonce: number, createdAt: bigint, sets: NonceSet[], cooldown: bigint, expiration: bigint, lastTs: bigint, now: bigint,
@@ -608,8 +663,8 @@ export class Watcher {
     if (s.delay && cfg.delay && s.delay !== cfg.delay) {
       throw new ConfigError(`STATE_FILE belongs to Delay ${s.delay}, not ${cfg.delay}. Use another STATE_FILE.`);
     }
-    if (s.vault && cfg.timebox && s.vault !== cfg.timebox) {
-      throw new ConfigError(`STATE_FILE belongs to vault ${s.vault}, not ${cfg.timebox}. Use another STATE_FILE.`);
+    if (s.vault && cfg.chronobox && s.vault !== cfg.chronobox) {
+      throw new ConfigError(`STATE_FILE belongs to vault ${s.vault}, not ${cfg.chronobox}. Use another STATE_FILE.`);
     }
   }
 
@@ -673,14 +728,15 @@ export class Watcher {
     return lo;
   }
 
-  async getLogs(from: number, to: number, topics: (string | null)[], delay: string): Promise<any[]> {
+  /** Logs of one contract, or of every contract when no address is given. */
+  async getLogs(from: number, to: number, topics: (string | string[] | null)[], address?: string): Promise<any[]> {
     const out: any[] = [];
     let chunk = this.cfg.logChunk;
     let start = from;
     while (start <= to) {
       const end = Math.min(to, start + chunk - 1);
       try {
-        const logs = await this.rpc.call('eth_getLogs', [{ address: delay, topics, fromBlock: hex(start), toBlock: hex(end) }]);
+        const logs = await this.rpc.call('eth_getLogs', [{ address, topics, fromBlock: hex(start), toBlock: hex(end) }]);
         out.push(...logs);
         start = end + 1;
       } catch (e) {
@@ -725,7 +781,7 @@ export class Watcher {
       return {
         nonce, createdAt: createdAt.toString(), kind: 'unknown', priority: 5,
         summary: `Transaction #${nonce} (details unknown)`,
-        detail: 'The watcher could not read what this transaction does. Check it in the Timebox app or a block explorer.',
+        detail: 'The watcher could not read what this transaction does. Check it in the Chronobox app or a block explorer.',
       };
     }
     const tx = decodeTransactionAdded(log);
@@ -752,12 +808,12 @@ export class Watcher {
 
   private async resolveDelay(tag: string): Promise<string> {
     if (this.cfg.delay) return this.cfg.delay;
-    const vault = this.cfg.timebox!;
+    const vault = this.cfg.chronobox!;
     let mods: string[];
     try {
       mods = await this.modules(vault, tag);
     } catch (e) {
-      if (e instanceof RevertError) throw new ConfigError(`TIMEBOX ${vault} is not a Safe on this chain (getModulesPaginated reverted).`);
+      if (e instanceof RevertError) throw new ConfigError(`CHRONOBOX ${vault} is not a Safe on this chain (getModulesPaginated reverted).`);
       throw e;
     }
     const kinds = await Promise.all(mods.map((m) => this.moduleKind(m, tag)));
@@ -769,9 +825,34 @@ export class Watcher {
     const label = { delay: 'a Delay', roles: 'a Roles modifier', other: 'not a Delay or Roles modifier' };
     const found = mods.map((m, i) => `${m}: ${label[kinds[i]]}`).join(', ');
     throw new ConfigError(
-      `TIMEBOX ${vault} has ${mods.length} enabled module${mods.length === 1 ? '' : 's'}${mods.length ? ` (${found})` : ''}. ` +
-      'A Timebox has the Delay as its only module, or the Delay and a Roles modifier. Set DELAY to watch a specific Delay.',
+      `CHRONOBOX ${vault} has ${mods.length} enabled module${mods.length === 1 ? '' : 's'}${mods.length ? ` (${found})` : ''}. ` +
+      'A Chronobox has the Delay as its only module, or the Delay and a Roles modifier. Set DELAY to watch a specific Delay.',
     );
+  }
+
+  /**
+   * The vault of a Delay that is set up as a Chronobox, or null. A Chronobox is a Safe whose only owner is the
+   * burn address and whose modules are this Delay, or this Delay and a Roles modifier.
+   */
+  async chronoboxOf(delay: string, tag: string): Promise<string | null> {
+    try {
+      if ((await this.moduleKind(delay, tag)) !== 'delay') return null;
+      const [avatar, owner, target] = await Promise.all([
+        this.callAddr(delay, SEL.avatar, tag), this.callAddr(delay, SEL.owner, tag), this.callAddr(delay, SEL.target, tag),
+      ]);
+      if (owner !== avatar || target !== avatar) return null;
+      const owners = decodeAddresses(await this.call(avatar, SEL.getOwners, tag));
+      if (owners.length !== 1 || owners[0] !== BURN_ADDRESS) return null;
+      const mods = await this.modules(avatar, tag);
+      if (!mods.includes(delay) || mods.length > 2) return null;
+      for (const m of mods) {
+        if (m !== delay && (await this.moduleKind(m, tag)) !== 'roles') return null;
+      }
+      return avatar;
+    } catch (e) {
+      if (e instanceof RevertError) return null;
+      throw e;
+    }
   }
 
   /** One poll: read the chain, queue alerts, deliver the outbox, save state. Returns false if the chain could not be read. */
@@ -845,14 +926,14 @@ export class Watcher {
       if (e instanceof RevertError) throw new ConfigError(`${delay} does not look like a Zodiac Delay modifier on chain ${chainId} (a view call reverted).`);
       throw e;
     });
-    const vault = this.cfg.timebox ?? avatar;
+    const vault = this.cfg.chronobox ?? avatar;
     let safeModules: string[] = [];
     try { safeModules = await this.modules(vault, tag); } catch (e) { if (!(e instanceof RevertError)) throw e; }
     const settings: Settings = {
       cooldown: cooldown.toString(), expiration: expiration.toString(), controllers, safeModules, owner, avatar, target,
     };
-    // The Roles modifier (cancel) is only looked for when TIMEBOX is given.
-    const rolesKnown = this.cfg.timebox !== undefined;
+    // The Roles modifier (cancel) is only looked for when CHRONOBOX is given.
+    const rolesKnown = this.cfg.chronobox !== undefined;
     if (rolesKnown) {
       let roles = '';
       for (const m of safeModules) {
@@ -908,7 +989,18 @@ export class Watcher {
     if (!first && closing.length) {
       const sets: NonceSet[] = [];
       if (head > s.lastBlock!) {
-        const logs = await this.getLogs(s.lastBlock! + 1, head, [TOPIC_TX_NONCE_SET], delay);
+        // A cancel shows as TxNonceSet on a Delay that has the event, and always as a module call in the vault.
+        const found = new Map<string, { blockNumber: string; logIndex?: string; nonce: number }>();
+        for (const l of await this.getLogs(s.lastBlock! + 1, head, [TOPIC_TX_NONCE_SET], delay)) {
+          const nonce = Number(toBig(word(l.data, 0)));
+          found.set(`${l.blockNumber}:${nonce}`, { blockNumber: l.blockNumber, logIndex: l.logIndex, nonce });
+        }
+        for (const l of await this.getLogs(s.lastBlock! + 1, head, [TOPIC_SAFE_MODULE_TRANSACTION], vault)) {
+          const nonce = decodeCancel(l, delay);
+          if (nonce === null || found.has(`${l.blockNumber}:${nonce}`)) continue;
+          found.set(`${l.blockNumber}:${nonce}`, { blockNumber: l.blockNumber, logIndex: l.logIndex, nonce });
+        }
+        const logs = [...found.values()];
         logs.sort((a, b) => Number(BigInt(a.blockNumber) - BigInt(b.blockNumber)) || Number(BigInt(a.logIndex ?? 0) - BigInt(b.logIndex ?? 0)));
         for (const l of logs) {
           const block = Number(BigInt(l.blockNumber));
@@ -918,7 +1010,7 @@ export class Watcher {
           } catch (e) {
             this.log(`could not read txNonce at block ${block - 1} (${errText(e)}); cancel detection is less precise`);
           }
-          sets.push({ nonce: Number(toBig(word(l.data, 0))), block, ts: await this.timestampOf(block), before });
+          sets.push({ nonce: l.nonce, block, ts: await this.timestampOf(block), before });
         }
       }
       const lastTs = await this.timestampOf(Math.min(s.lastBlock!, head));
@@ -949,7 +1041,7 @@ export class Watcher {
       const worst = Math.max(3, ...newItems.map((i) => i.priority));
       const others = safeModules.filter((m) => m !== delay && m !== roles);
       const cancellers = (settings.cancellers ?? []).map((a) => `${a}${controllers.includes(a) ? ' (owner wallet)' : ''}`);
-      const cancel = !rolesKnown ? ' Cancel: unknown (set TIMEBOX to check).'
+      const cancel = !rolesKnown ? ' Cancel: unknown (set CHRONOBOX to check).'
         : !roles ? ' Cancel: no. A queued transaction cannot be cancelled.'
         : ` Cancel: yes, through the Roles modifier ${roles}. ` +
           (cancellers.length ? `These addresses can cancel queued transactions: ${cancellers.join(', ')}.` : 'No address can cancel right now.') +
@@ -1004,8 +1096,8 @@ export class Watcher {
         const how = {
           executed: 'It was executed.',
           expired: 'It had expired and was removed from the queue. It did not execute.',
-          executed_or_expired: 'It was executed shortly before it expired, or it expired and was removed. Check it in the Timebox app or a block explorer.',
-          executed_or_cancelled: `It was executed, or cancelled in block ${'block' in r ? r.block : '?'}. The RPC could not show which. Check it in the Timebox app or a block explorer.`,
+          executed_or_expired: 'It was executed shortly before it expired, or it expired and was removed. Check it in the Chronobox app or a block explorer.',
+          executed_or_cancelled: `It was executed, or cancelled in block ${'block' in r ? r.block : '?'}. The RPC could not show which. Check it in the Chronobox app or a block explorer.`,
         }[r.how];
         this.push({
           event: 'closed', nonce: it.nonce, priority: 3, tags: ['white_check_mark'], at: Number(now),
@@ -1134,7 +1226,7 @@ export class Watcher {
   }
 
   private async send(channel: string, a: Alert): Promise<void> {
-    const vault = this.state.vault ?? this.cfg.timebox ?? '';
+    const vault = this.state.vault ?? this.cfg.chronobox ?? '';
     const delay = this.state.delay ?? this.cfg.delay ?? '';
     if (channel === 'dry-run') {
       console.log(`[dry-run] ${a.event} (priority ${a.priority}) ${a.title}\n${a.message}\n`);
@@ -1168,6 +1260,164 @@ const ascii = (s: string) => s.replace(/[^\x20-\x7e]/g, '?');
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 // ---------------------------------------------------------------------------
+// --all: every Chronobox on the chain
+//
+// Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can
+// watch every Chronobox without a list of users: it finds new Chronoboxes by the Delay they deploy and
+// by the transactions they queue, and it publishes the alerts of each vault to a topic that
+// anybody can work out from the vault address. Nobody signs up, and nothing is stored about who listens.
+
+/** The public ntfy topic of a vault. The same rule is in the app (src/lib/alerts.ts). */
+export function alertTopic(chainId: number, vault: string): string {
+  return `chronobox-${chainId}-${vault.toLowerCase()}`;
+}
+
+type Known = { delay: string; active: boolean; heartbeatAt?: number };
+
+export type AllState = {
+  version: 1;
+  chainId?: number;
+  lastBlock?: number;
+  vaults: Record<string, Known>;
+};
+
+export class AllWatcher {
+  cfg: Config;
+  state: AllState;
+  log: Log;
+  private opts: { fetch?: FetchFn; log?: Log };
+  private probe: Watcher;
+  private file: string;
+
+  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log } = {}) {
+    this.cfg = cfg;
+    this.opts = opts;
+    try { fs.mkdirSync(cfg.stateDir, { recursive: true }); } catch (e) {
+      throw new ConfigError(`Cannot create STATE_DIR: ${errText(e)}`);
+    }
+    this.file = path.join(cfg.stateDir, 'all.json');
+    // Reads the chain only. Its state file never exists and is never written.
+    this.probe = new Watcher({ ...cfg, dryRun: true, stateFile: path.join(cfg.stateDir, 'probe.none') }, opts);
+    this.log = this.probe.log;
+    this.state = this.load();
+  }
+
+  redact(msg: string): string { return this.probe.redact(msg); }
+
+  private load(): AllState {
+    let text: string;
+    try { text = fs.readFileSync(this.file, 'utf8'); } catch (e: any) {
+      if (e?.code === 'ENOENT') return { version: 1, vaults: {} };
+      throw new ConfigError(`Cannot read ${this.file}: ${e?.message ?? e}`);
+    }
+    try {
+      const s = JSON.parse(text);
+      if (s?.version !== 1 || typeof s.vaults !== 'object') throw new Error('unknown format');
+      return s as AllState;
+    } catch (e) {
+      throw new ConfigError(`${this.file} is not a valid watcher state (${errText(e)}). Fix or remove it.`);
+    }
+  }
+
+  private save(): void {
+    if (this.cfg.dryRun) return;
+    const tmp = `${this.file}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify(this.state, null, 2) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, this.file);
+  }
+
+  /** The watcher of one vault: the same code as for a single vault, with the vault's public topic. */
+  private watcherOf(vault: string, known: Known, chainId: number): Watcher {
+    return new Watcher({
+      ...this.cfg,
+      chronobox: vault,
+      delay: known.delay,
+      ntfyUrl: this.cfg.ntfyServer ? `${this.cfg.ntfyServer}/${alertTopic(chainId, vault)}` : undefined,
+      stateFile: path.join(this.cfg.stateDir, `${vault}.json`),
+    }, { fetch: this.opts.fetch, log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`) });
+  }
+
+  /** Find new Chronoboxes and see which known ones queued something. Returns the vaults to look at now. */
+  private async scan(): Promise<{ chainId: number; now: number; touched: Set<string> }> {
+    const s = this.state;
+    const rpc = this.probe.rpc;
+    const chainId = Number(await rpc.call('eth_chainId'));
+    if (s.chainId !== undefined && s.chainId !== chainId) {
+      throw new ConfigError(`The RPC is on chain ${chainId}, but STATE_DIR belongs to chain ${s.chainId}. Check RPC_URL.`);
+    }
+    const head = Number(await rpc.call('eth_blockNumber'));
+    const block = await rpc.call('eth_getBlockByNumber', [hex(head), false]);
+    if (!block) throw new Error(`block ${head} not found`);
+    const now = Number(BigInt(block.timestamp));
+    const tag = hex(head);
+    const touched = new Set<string>();
+    const from = s.lastBlock !== undefined ? s.lastBlock + 1 : this.cfg.startBlock ?? head + 1;
+    if (from <= head) {
+      const logs = await this.probe.getLogs(from, head, [[TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED]]);
+      const byDelay = new Map(Object.entries(s.vaults).map(([vault, k]) => [k.delay, vault]));
+      const candidates = new Set<string>();
+      for (const l of logs) {
+        const emitter = String(l.address).toLowerCase();
+        if (l.topics[0] === TOPIC_MODULE_PROXY_CREATION) {
+          if (emitter !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
+          const delay = toAddr(strip(l.topics[1]));
+          if (!byDelay.has(delay)) candidates.add(delay);
+        } else {
+          const vault = byDelay.get(emitter);
+          if (vault) touched.add(vault); else candidates.add(emitter);
+        }
+      }
+      for (const delay of candidates) {
+        const vault = await this.probe.chronoboxOf(delay, tag);
+        if (!vault || s.vaults[vault]) continue;
+        s.vaults[vault] = { delay, active: true };
+        touched.add(vault);
+        this.log(`new Chronobox ${vault} (Delay ${delay})`);
+      }
+    }
+    s.chainId = chainId;
+    s.lastBlock = head;
+    return { chainId, now, touched };
+  }
+
+  /**
+   * One poll. A vault with an empty queue cannot change until it queues something, so only vaults
+   * with something pending, with a new queued transaction or with a heartbeat due are read.
+   */
+  async poll(): Promise<boolean> {
+    const s = this.state;
+    let ok = true;
+    let now = Math.floor(Date.now() / 1000);
+    try {
+      const r = await this.scan();
+      now = r.now;
+      for (const vault of r.touched) s.vaults[vault].active = true;
+    } catch (e) {
+      if (e instanceof ConfigError) throw e;
+      ok = false;
+      this.log(`search for Chronoboxes failed: ${errText(e)}`);
+    }
+    if (s.chainId === undefined) return false;
+    const beat = this.cfg.heartbeatHours * 3600;
+    for (const [vault, known] of Object.entries(s.vaults)) {
+      if (!known.active && !(beat > 0 && now - (known.heartbeatAt ?? 0) >= beat)) continue;
+      try {
+        const w = this.watcherOf(vault, known, s.chainId);
+        if (!(await w.poll())) ok = false;
+        const ws = w.state;
+        known.active = Object.keys(ws.items).length > 0 || ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
+        known.heartbeatAt = ws.lastHeartbeat;
+      } catch (e) {
+        ok = false;
+        this.log(`${vault}: ${errText(e)}`);
+      }
+    }
+    this.save();
+    return ok;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 
 export async function main(argv: string[], env: Record<string, string | undefined>): Promise<number> {
@@ -1179,14 +1429,15 @@ export async function main(argv: string[], env: Record<string, string | undefine
     return 2;
   }
   if (cfg.help) { process.stdout.write(HELP); return 0; }
-  let w: Watcher;
+  let w: Watcher | AllWatcher;
   try {
-    w = new Watcher(cfg);
+    w = cfg.all ? new AllWatcher(cfg) : new Watcher(cfg);
   } catch (e) {
     console.error(`Configuration error: ${errText(e)}`);
     return 2;
   }
-  w.log(`watching ${cfg.timebox ?? ''}${cfg.timebox && cfg.delay ? ' / ' : ''}${cfg.delay ?? ''} every ${cfg.pollSeconds}s${cfg.dryRun ? ' (dry run)' : ''}`);
+  const what = cfg.all ? 'every Chronobox on the chain' : `${cfg.chronobox ?? ''}${cfg.chronobox && cfg.delay ? ' / ' : ''}${cfg.delay ?? ''}`;
+  w.log(`watching ${what} every ${cfg.pollSeconds}s${cfg.dryRun ? ' (dry run)' : ''}`);
   for (;;) {
     let ok: boolean;
     try {

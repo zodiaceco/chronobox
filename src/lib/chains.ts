@@ -3,7 +3,7 @@ import type { Address } from "./hex.ts";
 /**
  * Canonical contract addresses. They are the same on every supported chain.
  * The fork test checks that code exists at each address and that the
- * pinned code hashes in timebox.ts match.
+ * pinned code hashes in chronobox.ts match.
  */
 export const CONTRACTS = {
   /** SafeProxyFactory 1.4.1 */
@@ -23,7 +23,7 @@ export const CONTRACTS = {
    */
   rolesMastercopy: "0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5",
   /**
-   * The owner of a locked Timebox. Nobody has a key for this address and
+   * The owner of a locked Chronobox. Nobody has a key for this address and
    * it has no code, so it can never sign or approve a Safe transaction.
    */
   burn: "0x000000000000000000000000000000000000dEaD",
@@ -63,6 +63,14 @@ export type Chain = {
  * supported network, for example a Safe with the same address everywhere.
  */
 export const CONTRIBUTION_RECEIVER: Address | null = null;
+
+/**
+ * The ntfy server of a watcher that runs with --all (see watcher/README.md),
+ * for example "https://alerts.example.org". Null means: this build has no
+ * alert service, and the app shows how to run the watcher yourself. The app
+ * never connects to this server. It only builds links to it.
+ */
+export const ALERTS_SERVER: string | null = null;
 
 /** The suggested contribution in US dollars, the lower choices, and the hint in the free field. */
 export const CONTRIBUTION_USD = { suggested: 50, less: [25, 10], hint: 5 } as const;

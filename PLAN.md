@@ -1,4 +1,4 @@
-# Zodiac Timebox: PoC plan
+# Zodiac Chronobox: PoC plan
 
 Status: PoC built 2026-11-17 (phases 0 to 3 in section 6). Fork-tested, not yet run with a real wallet or real funds. See README.md for how to run it. Not built yet: everything in section 7.
 
@@ -57,7 +57,7 @@ A one-transaction setup is not possible with stock contracts: the Safe address d
 
 The app shows the deposit address only after step 2 and after the check below is green.
 
-**Verify, do not trust.** On every load the app reads the chain and checks: Safe singleton, owners, threshold, module list, guard slot, fallback handler slot, Delay master copy, Delay owner/avatar/target, Delay module list, cooldown, expiration. Any mismatch shows a red state and hides the deposit address. Any Timebox opens by URL (`#/eth:0x…`), so anyone can check anyone's vault.
+**Verify, do not trust.** On every load the app reads the chain and checks: Safe singleton, owners, threshold, module list, guard slot, fallback handler slot, Delay master copy, Delay owner/avatar/target, Delay module list, cooldown, expiration. Any mismatch shows a red state and hides the deposit address. Any Chronobox opens by URL (`#/eth:0x…`), so anyone can check anyone's vault.
 
 **Delay facts that drive the UI** (read from `Delay.sol`)
 
@@ -94,7 +94,7 @@ The stock Delay cannot enforce a destination. In the PoC the app builds only two
 
 1. *Start*: headline, Connect wallet.
 2. *Create*: network, delay (12 h / 1 day / 1 week / custom), two transactions with a clear step indicator. Warning: "If you lose this wallet, the funds are lost."
-3. *Timebox*: balance, deposit address + QR, verification state, queue.
+3. *Chronobox*: balance, deposit address + QR, verification state, queue.
 4. *Withdraw*: token and amount only (destination is fixed). Confirmation, draft copy:
    > **This withdrawal takes 7 days.** Nobody can make it faster. Not you, not Zodiac, not a person who has your wallet. You can execute it from Tue 24 Nov, 19:04. It expires on Tue 1 Dec, 19:04. You cannot cancel it.
 5. *Queue item*: Waiting (countdown + exact date), Ready (Execute button, expiry date), Executed, Expired (Skip).
@@ -119,7 +119,7 @@ Stages:
 |---|---|---|
 | N0, in PoC | In-app queue state, browser notification while the app is open, calendar file (.ics) for "ready" and "expires" | None |
 | N1, in PoC | Self-hosted watcher: one Deno file, no dependencies, polls any RPC, posts to ntfy (self-hostable), a webhook, Matrix or Telegram. Runs on a Pi, a VPS or a cron job | The user's own |
-| N2 | Hosted Zodiac watcher with Web Push: the app registers vault address + push subscription. No email, no account. Server stores a pseudonymous endpoint, payloads are end-to-end encrypted | Small service |
+| N2, built 2026-11-18 | Hosted watcher that broadcasts (`watch.ts --all`): it finds every Chronobox on the chain by itself and publishes each vault's alerts to the public ntfy topic `chronobox-<chain id>-<address>`. No registration, no subscriber list. The app shows a QR code that opens `#/alerts/...`, a page without a wallet. Replaces the Web Push idea, which needed a service worker and a subscription database. Open: a real ntfy server (`ALERTS_SERVER` is null), a test on real phones, the server sees the IP address of a listener | Small service (ntfy + watcher) |
 | N3 | Redundant and decentralized: several independent watcher operators, alerts published as encrypted Nostr events to many relays, optional contacts list, anyone can run a watcher from the same open-source file | Community |
 
 Known limit: a web app cannot wake up by itself when it is closed. Real push needs a watcher somewhere. N1 gives that without trusting us.
@@ -158,6 +158,6 @@ Repo: new folder `zodiac-timebox/`, own git repo, local until you ask for a push
 ## 9. Risks to state openly
 
 - Lost wallet = lost funds until a recovery path exists.
-- The vault is publicly linked to the wallet that created it. Timebox protects against speed, not against being known. Funding from a KYC exchange links identity.
+- The vault is publicly linked to the wallet that created it. Chronobox protects against speed, not against being known. Funding from a KYC exchange links identity.
 - Deterrence works only if attackers believe the delay. The public, verifiable setup is part of the product.
 - A stolen key still wins after the delay in the PoC. The README must say this in the first screen of text.

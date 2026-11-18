@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { Chain } from "../lib/chains.ts";
 import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { type Rpc, nativeBalance, tokenBalance } from "../lib/timebox.ts";
+import { type Rpc, nativeBalance, tokenBalance } from "../lib/chronobox.ts";
 import { type WalletOption, errorText } from "../lib/wallet.ts";
 
 export type Session = {

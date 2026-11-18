@@ -3,10 +3,12 @@
 //
 // ?account=<n> picks the nth default anvil account (default 0). Anvil holds the
 // keys of its default accounts, so signing and sending are forwarded to it.
+// ?as=<address> acts as any real wallet instead: anvil impersonates it, so the
+// app sees that wallet as it is on the forked chain, with all its tokens.
 // Announced via EIP-6963 only; window.ethereum is not set.
 // window.__anvil.rpc(method, params) and window.__anvil.warp(seconds) help in the console and tests.
 
-import { createTx, ownerBatchTx, predictSafe } from "./lib/timebox.ts";
+import { createTx, ownerBatchTx, predictSafe } from "./lib/chronobox.ts";
 
 const RPC_URL = "http://127.0.0.1:8545";
 
@@ -51,7 +53,13 @@ class ProviderRpcError extends Error {
   }
 }
 
+const AS = new URLSearchParams(location.search).get("as");
+
 function pickAccount(): string {
+  if (AS !== null) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(AS)) throw new Error(`dev-wallet: ?as=${AS} is not an address`);
+    return AS;
+  }
   const raw = new URLSearchParams(location.search).get("account") ?? "0";
   const index = Number(raw);
   const account = Number.isInteger(index) ? ANVIL_ACCOUNTS[index] : undefined;
@@ -171,7 +179,9 @@ if (SAFE_MODE) {
 // On mainnet the well-known anvil keys carry EIP-7702 delegations to sweeper
 // contracts, which take any ETH the account receives. Clear the delegation on
 // the fork so the test account behaves like a fresh wallet.
-rpc("anvil_setCode", [owner, "0x"]).catch(() => undefined);
+// A real wallet (?as=) keeps what it has on the chain, and anvil signs for it.
+if (AS === null) rpc("anvil_setCode", [owner, "0x"]).catch(() => undefined);
+else rpc("anvil_impersonateAccount", [owner]).catch((err) => console.warn("dev-wallet: could not impersonate", err));
 
 const detail = Object.freeze({
   info: Object.freeze({

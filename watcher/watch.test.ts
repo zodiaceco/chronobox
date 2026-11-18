@@ -5,8 +5,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
-  TOPIC_TRANSACTION_ADDED, TOPIC_TX_NONCE_SET, SEL, encUint, encAddr, proxyCode, MASTER_COPY, BURN_ADDRESS,
+  Watcher, AllWatcher, alertTopic, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  TOPIC_TRANSACTION_ADDED, TOPIC_TX_NONCE_SET, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_MODULE_PROXY_CREATION, MODULE_PROXY_FACTORY,
+  SEL, encUint, encAddr, proxyCode, MASTER_COPY, BURN_ADDRESS,
 } from './watch.ts';
 import type { Config } from './watch.ts';
 
@@ -38,12 +39,17 @@ class MockChain {
   safeModules = [DELAY];
   rolesModules = [OWNER_WALLET, GUARDIAN];
   rolesOwner = BURN_ADDRESS;
+  safeOwners = [BURN_ADDRESS];
+  created: number | null = null; // block of the ModuleProxyCreation log of the Delay
+  create() { this.mine(12n); this.created = this.head; this.mine(12n); }
   codes: Record<string, string> = {
     [DELAY]: proxyCode(MASTER_COPY.delay),
     [ROLES]: proxyCode(MASTER_COPY.roles),
     [OTHER_PROXY]: proxyCode('0x' + '11'.repeat(20)),
   };
-  nonceSets: { block: number; nonce: number }[] = []; // TxNonceSet logs
+  nonceSets: { block: number; nonce: number }[] = []; // cancels
+  // The Delay 1.0.1 of a Chronobox has no TxNonceSet event: a cancel shows only as a module call in the Safe.
+  delayHasNonceEvent = false;
   nonceHistory: { block: number; nonce: number }[] = []; // txNonce from that block on
   noArchive = false; // eth_call at an old block fails
   maxLogRange = 100000;
@@ -108,10 +114,39 @@ function handle(chain: MockChain, method: string, params: any[]): { result?: unk
       const from = Number(BigInt(f.fromBlock)), to = Number(BigInt(f.toBlock));
       if (to - from + 1 > chain.maxLogRange) return { error: { code: -32005, message: 'query returned more than 10000 results' } };
       const out: unknown[] = [];
+      if (!f.address) {
+        // The search of --all: every contract, ModuleProxyCreation or TransactionAdded.
+        const wanted: string[] = [f.topics[0]].flat();
+        if (wanted.includes(TOPIC_MODULE_PROXY_CREATION) && chain.created !== null && chain.created >= from && chain.created <= to) {
+          out.push({
+            address: MODULE_PROXY_FACTORY, blockNumber: '0x' + chain.created.toString(16),
+            topics: [TOPIC_MODULE_PROXY_CREATION, '0x' + encAddr(DELAY), '0x' + encAddr(MASTER_COPY.delay)], data: '0x',
+          });
+        }
+        if (wanted.includes(TOPIC_TRANSACTION_ADDED)) {
+          chain.queue.forEach((q, n) => {
+            if (q.block < from || q.block > to) return;
+            out.push({ address: DELAY, blockNumber: '0x' + q.block.toString(16), topics: [TOPIC_TRANSACTION_ADDED, '0x' + u(n), '0x' + 'ab'.repeat(32)], data: encAdded(q) });
+          });
+        }
+        return { result: out };
+      }
       if (f.topics[0] === TOPIC_TX_NONCE_SET && f.address.toLowerCase() === DELAY) {
-        for (const l of chain.nonceSets) {
+        for (const l of chain.delayHasNonceEvent ? chain.nonceSets : []) {
           if (l.block < from || l.block > to) continue;
           out.push({ address: DELAY, blockNumber: '0x' + l.block.toString(16), logIndex: '0x0', topics: [TOPIC_TX_NONCE_SET], data: '0x' + u(l.nonce) });
+        }
+        return { result: out };
+      }
+      if (f.topics[0] === TOPIC_SAFE_MODULE_TRANSACTION && f.address.toLowerCase() === SAFE) {
+        // Every module call in the Safe: the cancels (Roles calls setTxNonce on the Delay) and one other call.
+        const moduleTx = (module: string, to: string, data: string) =>
+          '0x' + encAddr(module) + encAddr(to) + u(0) + u(160) + u(0) + u((data.length - 2) / 2) + data.slice(2).padEnd(128, '0');
+        for (const l of chain.nonceSets) {
+          if (l.block < from || l.block > to) continue;
+          const at = '0x' + l.block.toString(16);
+          out.push({ address: SAFE, blockNumber: at, logIndex: '0x0', topics: [TOPIC_SAFE_MODULE_TRANSACTION], data: moduleTx(DELAY, OWNER_WALLET, '0x') });
+          out.push({ address: SAFE, blockNumber: at, logIndex: '0x1', topics: [TOPIC_SAFE_MODULE_TRANSACTION], data: moduleTx(ROLES, DELAY, '0x46ba2307' + u(l.nonce)) });
         }
         return { result: out };
       }
@@ -143,6 +178,7 @@ function handle(chain: MockChain, method: string, params: any[]): { result?: unk
         if (sel === SEL.getModulesPaginated) return ok(encAddrArray(chain.delayModules, SENTINEL));
       }
       if (to === SAFE && sel === SEL.getModulesPaginated) return ok(encAddrArray(chain.safeModules, SENTINEL));
+      if (to === SAFE && sel === SEL.getOwners) return ok(u(32) + u(chain.safeOwners.length) + chain.safeOwners.map(encAddr).join(''));
       if (to === ROLES && sel === SEL.owner) return ok(encAddr(chain.rolesOwner));
       if (to === ROLES && sel === SEL.getModulesPaginated) return ok(encAddrArray(chain.rolesModules, SENTINEL));
       if (to === TOKEN && sel === SEL.symbol) return ok(encString('USDC'));
@@ -174,7 +210,7 @@ function startServer(fn: (req: http.IncomingMessage, body: string, res: http.Ser
 let chain: MockChain;
 let rpc: { url: string; close: () => Promise<void> };
 let notify: { url: string; close: () => Promise<void> };
-type Sent = { channel: string; headers: http.IncomingHttpHeaders; body: string; json?: any };
+type Sent = { channel: string; url: string; headers: http.IncomingHttpHeaders; body: string; json?: any };
 let sent: Sent[] = [];
 let notifyFails = false;
 let dir: string;
@@ -190,7 +226,7 @@ before(async () => {
   notify = await startServer((req, body, res) => {
     if (notifyFails) { res.writeHead(500).end(); return; }
     const channel = req.url!.startsWith('/hook') ? 'webhook' : 'ntfy';
-    sent.push({ channel, headers: req.headers, body, json: channel === 'webhook' ? JSON.parse(body) : undefined });
+    sent.push({ channel, url: req.url!, headers: req.headers, body, json: channel === 'webhook' ? JSON.parse(body) : undefined });
     res.writeHead(200).end('ok');
   });
 });
@@ -201,13 +237,13 @@ beforeEach(() => {
   sent = [];
   notifyFails = false;
   logs.length = 0;
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'timebox-watch-'));
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chronobox-watch-'));
 });
 
 function config(extra: Partial<Config> = {}): Config {
   return {
     ...parseConfig([], {
-      RPC_URL: rpc.url, TIMEBOX: SAFE, NTFY_URL: `${notify.url}/secret-topic-123`, WEBHOOK_URL: `${notify.url}/hook`,
+      RPC_URL: rpc.url, CHRONOBOX: SAFE, NTFY_URL: `${notify.url}/secret-topic-123`, WEBHOOK_URL: `${notify.url}/hook`,
       STATE_FILE: path.join(dir, 'state.json'), HEARTBEAT_HOURS: '0',
     }),
     ...extra,
@@ -397,7 +433,7 @@ test('RPC fallback, log chunk halving and watcher problem alerts', async () => {
   assert.deepEqual(hooks().map((h) => h.json.event), ['watcher_recovered']);
 });
 
-test('TIMEBOX with more than one module is a configuration error', async () => {
+test('CHRONOBOX with more than one module is a configuration error', async () => {
   chain.safeModules = [DELAY, STRANGER];
   await assert.rejects(watcher().poll(), ConfigError);
 });
@@ -444,6 +480,18 @@ test('a cancel is reported as Cancelled, once', async () => {
   await watcher().poll();
   await watcher().poll();
   assert.equal(sent.length, 0, 'no second alert, also after a restart');
+});
+
+test('a cancel is also read from TxNonceSet on a Delay that has the event, and not counted twice', async () => {
+  chain.delayHasNonceEvent = true;
+  chain.withCancel();
+  const w = watcher();
+  await w.poll();
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await w.poll();
+  chain.cancel(1);
+  await w.poll();
+  assert.deepEqual(ntfy().slice(2).map((s) => s.headers.title), ['Cancelled: transaction #0']);
 });
 
 test('an execution followed by a cancel in the same poll interval is told apart', async () => {
@@ -536,10 +584,138 @@ test('a new canceller and a call on the Roles modifier get the highest priority'
   assert.match(n.body, /enableModule\(0xbaba.*\) on the Roles modifier 0x7e7e/);
 });
 
+// ---------------------------------------------------------------------------
+// --all
+
+function allConfig(extra: Record<string, string> = {}): Config {
+  return parseConfig(['--all'], {
+    RPC_URL: rpc.url, NTFY_SERVER: `${notify.url}/`, STATE_DIR: path.join(dir, 'all'), HEARTBEAT_HOURS: '0', ...extra,
+  });
+}
+const all = (extra: Record<string, string> = {}) => new AllWatcher(allConfig(extra), { log: (m) => logs.push(m) });
+const TOPIC = `/chronobox-1-${SAFE}`;
+
+test('--all finds a new Chronobox by its Delay and publishes to the public topic of the vault', async () => {
+  chain.withCancel();
+  const w = all();
+  await w.poll(); // first start: begins at the newest block
+  assert.equal(sent.length, 0);
+  chain.create();
+  assert.equal(await w.poll(), true);
+  assert.equal(alertTopic(1, SAFE.toUpperCase().replace('0X', '0x')), TOPIC.slice(1));
+  assert.deepEqual(ntfy().map((s) => s.url), [TOPIC]);
+  assert.match(ntfy()[0].headers.title as string, /Watching the vault/);
+
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await w.poll();
+  assert.equal(ntfy().length, 2);
+  assert.equal(ntfy()[1].url, TOPIC);
+  assert.match(ntfy()[1].headers.title as string, /^Queued: Withdrawal of 1\.5 ETH/);
+  assert.match(ntfy()[1].body, /can be cancelled/);
+
+  // A restart sends nothing twice.
+  await all().poll();
+  assert.equal(ntfy().length, 2);
+});
+
+test('--all reads a quiet Chronobox only when it queues something', async () => {
+  const w = all();
+  await w.poll();
+  chain.create();
+  await w.poll();
+  chain.calls.length = 0;
+  chain.mine(600n);
+  await w.poll();
+  assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
+  assert.equal(chain.calls.filter((c) => c === 'eth_getLogs').length, 1);
+
+  // Something waits: the vault is read on every poll until the queue is empty again.
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await w.poll();
+  chain.mine(2n * DAY);
+  await w.poll();
+  assert.match(ntfy().at(-1)!.headers.title as string, /^Ready to execute/);
+  chain.execute();
+  await w.poll();
+  assert.match(ntfy().at(-1)!.headers.title as string, /^Closed/);
+  chain.calls.length = 0;
+  chain.mine(600n);
+  await w.poll();
+  assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
+});
+
+test('--all finds an older Chronobox when it queues a transaction', async () => {
+  const w = all();
+  await w.poll();
+  chain.mine(12n);
+  chain.enqueue(STRANGER, ONE_HALF_ETH);
+  await w.poll();
+  assert.equal(ntfy().length, 1);
+  assert.equal(ntfy()[0].url, TOPIC);
+  assert.match(ntfy()[0].headers.title as string, /Watching the vault/);
+  assert.equal(ntfy()[0].headers.priority, '4');
+  assert.match(ntfy()[0].body, /#0: Transfer of 1\.5 ETH to/);
+});
+
+test('--all with START_BLOCK finds Chronoboxes that are already there', async () => {
+  chain.create();
+  chain.mine(600n);
+  await all({ START_BLOCK: '900' }).poll();
+  assert.deepEqual(ntfy().map((s) => s.url), [TOPIC]);
+});
+
+test('--all ignores a Delay that is not a Chronobox', async () => {
+  const cases: (() => void)[] = [
+    () => { chain.safeOwners = [OWNER_WALLET]; },
+    () => { chain.safeOwners = [BURN_ADDRESS, OWNER_WALLET]; },
+    () => { chain.safeModules = [DELAY, OTHER_PROXY]; },
+    () => { chain.safeModules = [ROLES]; },
+    () => { chain.codes[DELAY] = proxyCode('0x' + '11'.repeat(20)); },
+  ];
+  for (const [i, change] of cases.entries()) {
+    chain = new MockChain();
+    change();
+    const w = all({ STATE_DIR: path.join(dir, `not-${i}`) });
+    await w.poll();
+    chain.create();
+    chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+    assert.equal(await w.poll(), true);
+    assert.equal(sent.length, 0, `case ${i}`);
+    assert.deepEqual(w.state.vaults, {});
+  }
+});
+
+test('--all settings', () => {
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x' }), /NTFY_SERVER/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', NTFY_SERVER: 'http://n', CHRONOBOX: SAFE }), /CHRONOBOX does not work with --all/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', NTFY_SERVER: 'ftp://n' }), /NTFY_SERVER must start/);
+  const c = parseConfig([], { ALL: '1', RPC_URL: 'http://x', NTFY_SERVER: 'https://n.example//', START_BLOCK: '12' });
+  assert.equal(c.all, true);
+  assert.equal(c.ntfyServer, 'https://n.example');
+  assert.equal(c.startBlock, 12);
+});
+
+test('--all tries a failed delivery again on the next poll', async () => {
+  const w = all();
+  await w.poll();
+  chain.create();
+  notifyFails = true;
+  await w.poll();
+  assert.equal(sent.length, 0);
+  assert.equal(w.state.vaults[SAFE].active, true);
+  notifyFails = false;
+  await w.poll();
+  assert.deepEqual(ntfy().map((s) => s.url), [TOPIC]);
+  assert.equal(w.state.vaults[SAFE].active, false);
+});
+
 test('config, time and status helpers', () => {
   assert.throws(() => parseConfig([], {}), ConfigError);
-  assert.throws(() => parseConfig(['--rpc-url', 'http://x'], { TIMEBOX: SAFE }), /NTFY_URL/);
-  const c = parseConfig(['--rpc-url', 'http://a, https://b', '--timebox', SAFE, '--dry-run', '--once', '--poll-seconds=5'], {});
+  assert.throws(() => parseConfig(['--rpc-url', 'http://x'], { CHRONOBOX: SAFE }), /NTFY_URL/);
+  const c = parseConfig(['--rpc-url', 'http://a, https://b', '--chronobox', SAFE, '--dry-run', '--once', '--poll-seconds=5'], {});
   assert.deepEqual(c.rpcUrls, ['http://a', 'https://b']);
   assert.equal(c.pollSeconds, 5);
   assert.equal(c.once && c.dryRun, true);

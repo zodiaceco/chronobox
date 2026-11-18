@@ -1,8 +1,8 @@
-# Zodiac Timebox
+# Zodiac Chronobox
 
 A vault that nobody can empty quickly.
 
-You connect a wallet, pick a delay (12 hours, 1 day, 1 week or your own), and Timebox creates a Safe that has no owner. The only way out is a time lock that your wallet controls. Every withdrawal waits the full delay on chain. Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
+You connect a wallet, pick a delay (12 hours, 1 day, 1 week or your own), and Chronobox creates a Safe that has no owner. The only way out is a time lock that your wallet controls. Every withdrawal waits the full delay on chain. Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
 
 **Status: proof of concept.** Tested on a local fork of Ethereum mainnet. Not yet run with real funds. Read "Limits" before you use it.
 
@@ -12,7 +12,7 @@ People who hold crypto are targets. Leaked customer lists and tax data put names
 
 ## How it works
 
-Timebox adds no contract of its own. It uses contracts that are audited and already deployed at the same addresses on every supported chain:
+Chronobox adds no contract of its own. It uses contracts that are audited and already deployed at the same addresses on every supported chain:
 
 | Contract | Address |
 |---|---|
@@ -23,7 +23,7 @@ Timebox adds no contract of its own. It uses contracts that are audited and alre
 | Zodiac Delay | `0xd54895B1121A2eE3f37b502F507631FA1331BED6` |
 | Zodiac Roles 2.1.1 | `0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5` |
 
-A finished Timebox has four parts:
+A finished Chronobox has four parts:
 
 - **Your setup wallet**: the control unit. It is the only module of the Delay. It can queue any transaction, and it can cancel what is in the queue.
 - **Delay**: the only way to move funds or to change the vault. Owner, avatar and target are the Safe. The cooldown is the delay you picked. A queued transaction can be executed for 7 days after the cooldown, then it expires.
@@ -39,7 +39,7 @@ Setup takes two transactions from your wallet:
 
 ### The contribution
 
-The hosted app can ask for a one-time contribution when a Timebox is created. It is voluntary: the suggested amount is selected, "Donate less" shows lower amounts and a free field, and 0 is allowed. Timebox is free software, and anybody can run it without this.
+The hosted app can ask for a one-time contribution when a Chronobox is created. It is voluntary: the suggested amount is selected, "Donate less" shows lower amounts and a free field, and 0 is allowed. Chronobox is free software, and anybody can run it without this.
 
 - The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask.
 - The coin rides in the lock transaction: the wallet sends it along, and the same batch that locks the vault passes it on. Either the vault is locked and the contribution arrives, or neither happens. A plain wallet gets no third prompt.
@@ -84,8 +84,8 @@ Read these. They are the honest edge of what a delay can do.
 - **One wallet.** There is no second key, no guardian and no recovery.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** There is no recovery.
-- **The vault is public.** It is linked on chain to the wallet that created it. Timebox protects against speed, not against being known.
-- **No alerts by itself.** A web page cannot wake up when it is closed. Use the calendar file and the watcher (below).
+- **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
+- **No alerts by itself.** A web page cannot wake up when it is closed. Use the calendar file and the alerts (below).
 
 
 
@@ -95,13 +95,32 @@ Read these. They are the honest edge of what a delay can do.
 - The production page makes no network requests. The Content Security Policy is `connect-src 'none'`. All chain data comes through your wallet, so no extra party learns which vault you look at.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
+- Alerts need no sign-up. See the next section for what an alert server can see.
 
-## Get told: calendar and watcher
+## Get told: calendar and alerts
 
 - Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires.
-- `watcher/watch.ts` is a single file with no dependencies. It watches one vault through any RPC and sends alerts to [ntfy](https://ntfy.sh) or a webhook: queued, ready, expires soon, cancelled, executed, settings changed, and a regular "all quiet" so that silence is different from failure. It needs only the vault address. See `watcher/README.md`.
+- `watcher/watch.ts` is a single file with no dependencies. It reads the chain through any RPC and sends alerts to [ntfy](https://ntfy.sh) or a webhook: queued, ready, expires soon, cancelled, executed, settings changed, and a regular "all quiet" so that silence is different from failure. See `watcher/README.md`.
 
-Give the alert channel to a person you trust too. In the case this product is for, you may not be able to look at your phone.
+The watcher runs in two ways:
+
+- **For one vault, on your own machine.** It needs only the vault address. Nobody else is involved.
+- **For every Chronobox on a chain (`--all`), as an alert service.** Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can find every Chronobox by itself and publish the alerts of each one to a topic that follows from the address: `chronobox-<chain id>-<vault address>`. Nobody signs up, and the service keeps no list of people or of vaults that somebody asked for.
+
+### The alert service in the app
+
+`ALERTS_SERVER` in `src/lib/chains.ts` is the ntfy server of a watcher that runs with `--all`. It is `null` in the source, so a build shows how to run the watcher yourself until somebody sets it.
+
+With a server set, "Get told" in a Chronobox shows a QR code. It opens a page of this app (`#/alerts/<network>:<address>`) that needs no wallet: it shows the topic of the vault and opens the ntfy app. The owner scans it, and so can a person the owner trusts. The app only builds links. It sends nothing to the alert server, and `connect-src 'none'` stays as it is.
+
+What this design gives and what it does not:
+
+- No account, no email, no phone number, no registration request. There is nothing to leak and nothing a thief can switch off.
+- The alerts of a vault are public, like the vault. Anybody who knows the address can listen.
+- The alert server can see the internet address of a phone while it listens to a topic, and the topic names the vault. A server that keeps no access logs is a promise, not a proof. A person who does not accept that runs the watcher for one vault on their own machine.
+- The "Open in ntfy" link (`ntfy://`) is documented for the Android app. On an iPhone the page shows the server and the topic to add by hand. Not yet tested on real phones.
+
+Give the alerts to a person you trust too. In the case this product is for, you may not be able to look at your phone.
 
 ## Run it
 
@@ -118,6 +137,7 @@ The dev build injects a test wallet ("Anvil test wallet") that signs with anvil'
 ```bash
 npm test             # unit tests (library and watcher)
 npm run test:fork    # the full flow against the real contracts on the fork
+npm run test:fork:alerts   # the watcher with --all against the real contracts on the fork
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```
@@ -138,7 +158,7 @@ npm run build        # production build in out/, prints the build hash
 
 The page updates like any website: you get the current version when you open it. There is no update prompt.
 
-An earlier version asked for consent before each update. That was removed. A prompt cannot stop a host that has been taken over, because the browser always lets the host replace the code that shows the prompt. It only slowed down honest fixes. Timebox also holds no keys: every transaction is signed in your wallet.
+An earlier version asked for consent before each update. That was removed. A prompt cannot stop a host that has been taken over, because the browser always lets the host replace the code that shows the prompt. It only slowed down honest fixes. Chronobox also holds no keys: every transaction is signed in your wallet.
 
 What you get instead:
 
@@ -153,7 +173,7 @@ The build hash is the sha256 over the sorted lines `<path> <sha256>` of every fi
 `out/` is the whole site. `out/_headers` sets the response headers on Netlify and Cloudflare Pages. On another host, set the same headers yourself:
 
 - `index.html` must not be cached (`Cache-Control: no-cache`), so that a fix reaches people on their next visit. The files in `assets/` have a content hash in the name and can be cached for ever.
-- `Content-Security-Policy: frame-ancestors 'none'` stops other sites from showing Timebox in a frame. This one cannot be set from inside the page.
+- `Content-Security-Policy: frame-ancestors 'none'` stops other sites from showing Chronobox in a frame. This one cannot be set from inside the page.
 
 A possible later step: publish each release on IPFS under an ENS name whose content can be changed only through a Zodiac Delay. Then every update is public and waits before it goes live.
 
@@ -163,19 +183,21 @@ Runtime: `preact` (UI), `@noble/hashes` (keccak-256) and `qrcode-generator` (the
 
 Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`.
 
-The ABI encoder, the wallet connection and the dev server are small files in this repository, written for exactly what Timebox needs.
+The ABI encoder, the wallet connection and the dev server are small files in this repository, written for exactly what Chronobox needs.
 
 ## Layout
 
 ```
-src/lib/timebox.ts   setup transactions, checks, queue, withdrawals
+src/lib/chronobox.ts   setup transactions, checks, queue, withdrawals
 src/lib/abi.ts       minimal ABI encoder and decoder
 src/lib/chains.ts    contract addresses, networks, token lists
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/ui/              screens
 build.mjs            build, dev server, build hash
-watcher/             self-hosted notification watcher
+src/lib/alerts.ts    the public alert topic of a vault
+watcher/             the watcher: one vault on your machine, or every Chronobox as an alert service
 test/fork.ts         end-to-end proof on a fork
+test/alerts-fork.ts  the alert service on a fork
 brand/               logo concepts
 ```
 

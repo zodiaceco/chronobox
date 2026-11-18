@@ -1,5 +1,5 @@
 /**
- * One Timebox: what is inside, how it is protected, what is waiting, and a
+ * One Chronobox: what is inside, how it is protected, what is waiting, and a
  * short list of things you can look at or change. Every action opens a sheet
  * with one decision and one main button.
  */
@@ -33,8 +33,9 @@ import {
   skipExpiredTx,
   tokenBalance,
   withdrawalTx,
-} from "../lib/timebox.ts";
+} from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
+import { AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, Button, Choice, Modal, Notice, type Session, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
@@ -109,22 +110,22 @@ function useChainClock(data: VaultData | null): bigint {
 
 /** A calendar file with "ready" and "collect it soon" for one waiting item. */
 function saveReminders(chain: Chain, safe: Address, nonce: bigint, title: string, status: ItemStatus, now: bigint) {
-  const base = `timebox-${chain.short}-${safe.toLowerCase()}-${nonce}`;
+  const base = `chronobox-${chain.short}-${safe.toLowerCase()}-${nonce}`;
   const reminders = [
     {
-      uid: `${base}-ready@timebox`,
+      uid: `${base}-ready@chronobox`,
       at: Number(status.readyAt),
-      title: `Timebox: ${title} is ready`,
-      description: `The wait has ended. Open your Timebox to finish it.\n${location.href}`,
+      title: `Chronobox: ${title} is ready`,
+      description: `The wait has ended. Open your Chronobox to finish it.\n${location.href}`,
       url: location.href,
     },
   ];
   if (status.expiresAt !== null) {
     const before = status.expiresAt - status.readyAt >= 172_800n ? 86_400n : (status.expiresAt - status.readyAt) / 2n;
     reminders.push({
-      uid: `${base}-expires@timebox`,
+      uid: `${base}-expires@chronobox`,
       at: Number(status.expiresAt - before),
-      title: `Timebox: ${title} expires soon`,
+      title: `Chronobox: ${title} expires soon`,
       description: `It expires on ${formatDate(status.expiresAt)}. After that you must ask again and wait again.\n${location.href}`,
       url: location.href,
     });
@@ -148,7 +149,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   if (error && !data) {
     return (
       <section class="page page-center">
-        <h1>We could not read your Timebox.</h1>
+        <h1>We could not read your Chronobox.</h1>
         <p class="lead">Your money is not affected. Check the connection of your wallet and try again.</p>
         <p class="hint">{error}</p>
         <div class="page-actions">
@@ -159,7 +160,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       </section>
     );
   }
-  if (!data) return <section class="page page-center muted">Opening your Timebox…</section>;
+  if (!data) return <section class="page page-center muted">Opening your Chronobox…</section>;
 
   const { inspection, queue, assets, balances } = data;
   // "unverified": one check could not be done from this device. Money can still come out, so only deposits are held back.
@@ -211,7 +212,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
       {inspection.state !== "missing" ? (
         <div class="vault-main">
-          <p class="eyebrow">Your Timebox on {chain.name}</p>
+          <p class="eyebrow">Your Chronobox on {chain.name}</p>
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
@@ -240,7 +241,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {locked && !isController ? (
             <p class="hint">
-              You are looking at this Timebox. Only the wallet <AddressText address={inspection.controller!} chain={chain} /> can withdraw.
+              You are looking at this Chronobox. Only the wallet <AddressText address={inspection.controller!} chain={chain} /> can withdraw.
             </p>
           ) : null}
         </div>
@@ -305,7 +306,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? (
-        <Modal title="Safety checks" lead="Timebox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
+        <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
           <ul class="checks">
             {inspection.checks.map((check) => (
               <li key={check.id} class={check.ok ? "check-ok" : check.unknown ? "check-unknown" : "check-bad"}>
@@ -320,35 +321,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             ))}
           </ul>
           <p class="hint">
-            Anybody can open this Timebox by its address and run the same checks. <a href="#/technical">How it is built</a>
+            Anybody can open this Chronobox by its address and run the same checks. <a href="#/technical">How it is built</a>
           </p>
         </Modal>
       ) : null}
-      {sheet === "alerts" ? (
-        <Modal
-          title="Get told"
-          lead="The wait protects you only if you hear about a withdrawal in time. Timebox has no server, so it cannot message you by itself."
-          onClose={() => setSheet(null)}
-        >
-          <div class="sheet-block">
-            <strong>Calendar</strong>
-            <p>Each waiting item has "Add to calendar". It reminds you when the wait ends and before the item expires.</p>
-          </div>
-          <div class="sheet-block">
-            <strong>Alerts on your phone</strong>
-            <p>
-              A small script watches this Timebox and sends an alert the moment something is asked for. It needs only this address and
-              runs on any computer that stays on. Share the alerts with a person you trust.
-            </p>
-            <pre class="code">{`TIMEBOX=${safe} \\\nRPC_URL=<your RPC URL for ${chain.name}> \\\nNTFY_URL=https://ntfy.sh/<a-long-random-topic> \\\nnode watcher/watch.ts`}</pre>
-          </div>
-        </Modal>
-      ) : null}
+      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
       {cancelling && vault ? (
         <Modal title="Cancel this?" onClose={() => setCancelling(null)}>
           <p class="big-line">{describe(cancelling.tx ? classify(cancelling.tx, vault) : null, assets, {}).title}</p>
           <p>
-            Nothing moves. Your money stays in the Timebox.
+            Nothing moves. Your money stays in the Chronobox.
             {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
           </p>
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -396,7 +378,7 @@ function Row(props: { label: string; value: ComponentChildren; hint?: string; on
   );
 }
 
-/** Shown only when something needs attention. A healthy Timebox shows nothing here. */
+/** Shown only when something needs attention. A healthy Chronobox shows nothing here. */
 function Status(props: { inspection: Inspection; session: Session; chain: Chain }) {
   const { inspection, session } = props;
   if (inspection.state === "locked") return null;
@@ -410,7 +392,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   }
   if (inspection.state === "missing") {
     return (
-      <Notice kind="bad" title={`There is no Timebox at this address on ${props.chain.name}.`}>
+      <Notice kind="bad" title={`There is no Chronobox at this address on ${props.chain.name}.`}>
         Check the address and the network. Do not send money here.
       </Notice>
     );
@@ -418,7 +400,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "open") {
     const mine = sameAddress(inspection.owners[0], session.account);
     return (
-      <Notice kind="risk" title="This Timebox is not locked yet. Do not send money.">
+      <Notice kind="risk" title="This Chronobox is not locked yet. Do not send money.">
         {mine ? (
           <>
             The setup stopped halfway. <a href="#/new">Finish it now</a>
@@ -430,7 +412,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
     );
   }
   return (
-    <Notice kind="bad" title="This is not a Timebox. Do not send money here.">
+    <Notice kind="bad" title="This is not a Chronobox. Do not send money here.">
       One or more safety checks failed. Open "Safety checks" to see which.
     </Notice>
   );
@@ -450,7 +432,7 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
     case "change-delay":
       return { title: `Change the delay to ${formatDuration(action.cooldown)}`, warning: null, finish: "Apply now" };
     case "change-wallet":
-      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Timebox.`, finish: "Apply now" };
+      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Chronobox.`, finish: "Apply now" };
     case "transfer-elsewhere":
       return {
         title: `Send ${amountOf(action.token, action.amount)} to ${shortAddress(action.to)}`,
@@ -458,7 +440,7 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
         finish: "Send now",
       };
     case "settings":
-      return { title: action.label, warning: "This changes the Timebox, and this app did not create it. If you did not ask for it, cancel it.", finish: "Apply now" };
+      return { title: action.label, warning: "This changes the Chronobox, and this app did not create it. If you did not ask for it, cancel it.", finish: "Apply now" };
     default:
       return { title: "Something this app cannot read", warning: "This app did not create it and cannot tell what it does. If you did not ask for it, cancel it.", finish: "Finish" };
   }
@@ -760,7 +742,7 @@ function ChangeWalletSheet(props: { session: Session; vault: VaultRef; inspectio
   };
   if (done) {
     return (
-      <Modal title="The wait has started." lead={`In ${wait} you can apply the hand-over. Keep the address of this Timebox: the new wallet needs it to open it.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${wait} you can apply the hand-over. Keep the address of this Chronobox: the new wallet needs it to open it.`} onClose={props.onClose}>
         <button type="button" class="deposit-address" onClick={copy}>
           <code>{vault.safe}</code>
           <span class="deposit-copy">{copied ? "Copied" : "Tap to copy"}</span>
@@ -794,7 +776,7 @@ function ChangeWalletSheet(props: { session: Session; vault: VaultRef; inspectio
         role="checkbox"
         on={sure}
         title="I checked the address, and I hold its key."
-        text="If it is wrong, the money in this Timebox is gone."
+        text="If it is wrong, the money in this Chronobox is gone."
         disabled={!!action.busy}
         onClick={() => setSure(!sure)}
       />
@@ -822,7 +804,7 @@ function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void
       props.onClose();
     });
   return (
-    <Modal title="Add a token" lead={`Your Timebox can hold any token on ${props.chain.name}. Paste its address to see it here.`} onClose={props.onClose}>
+    <Modal title="Add a token" lead={`Your Chronobox can hold any token on ${props.chain.name}. Paste its address to see it here.`} onClose={props.onClose}>
       <input
         class="input"
         placeholder="Token address"

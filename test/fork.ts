@@ -50,7 +50,7 @@ import {
   skipExpiredTx,
   tokenBalance,
   withdrawalTx,
-} from "../src/lib/timebox.ts";
+} from "../src/lib/chronobox.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 3 and 4. The dev wallet in the browser uses accounts 0 to 2,

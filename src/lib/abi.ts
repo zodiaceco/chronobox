@@ -1,5 +1,5 @@
 /**
- * A small ABI encoder and decoder. It supports only the types that Timebox
+ * A small ABI encoder and decoder. It supports only the types that Chronobox
  * uses: address, bool, uintN, bytesN, bytes, string and arrays of static types.
  * Tuples and nested arrays are not supported on purpose.
  */

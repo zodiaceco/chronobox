@@ -1,4 +1,4 @@
-// Build pipeline for Zodiac Timebox. Plain Node + esbuild, no other dependencies.
+// Build pipeline for Zodiac Chronobox. Plain Node + esbuild, no other dependencies.
 //
 //   node build.mjs          production build into out/ (reproducible)
 //   node build.mjs --dev    watch + rebuild into out/, serve on PORT (default 3130)
