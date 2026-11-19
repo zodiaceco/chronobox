@@ -270,13 +270,14 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       ? [
           {
             id: ["batch", "waiting"],
-            text: (parsedDeposits.length > 0 ? "Create, lock and fill your Chronobox" : "Create and lock your Chronobox") + (contribution ? `, and send your contribution of ${giveText}` : ""),
+            text: (parsedDeposits.length > 0 ? "Create your Chronobox, switch on the time delay and put money in" : "Create your Chronobox and switch on the time delay") +
+              (contribution ? `, and send your contribution of ${giveText}` : ""),
           },
           { id: ["check"], text: "Run the safety checks" },
         ]
       : [
           { id: ["create"], text: "Create your Chronobox" },
-          { id: ["lock"], text: contribution ? `Lock it and send your contribution of ${giveText}` : "Lock it" },
+          { id: ["lock"], text: contribution ? `Switch on the time delay and send your contribution of ${giveText}` : "Switch on the time delay" },
           { id: ["check"], text: "Run the safety checks" },
         ];
     const at = rows.findIndex((r) => r.id.includes(progress));
@@ -399,7 +400,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     screen = (
       <Screen
         title="Put money in now?"
-        lead="Your wallet can create, lock and fill your Chronobox in one go. Or skip this and add money later."
+        lead="Your wallet can create your Chronobox, switch on the time delay and put money in, all in one go. Or skip this and add money later."
       >
         <div class="wiz-fund">
           {deposits.map((d, i) => (
@@ -434,8 +435,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           batch
             ? `Your wallet asks you to confirm once.${contribution ? ` Your contribution of ${giveText} goes with it.` : ""} If any part fails, nothing happens.`
             : contribution
-              ? `Your wallet asks you to confirm twice: first to create your Chronobox, then to lock it and send your contribution of ${giveText}.`
-              : "Your wallet asks you to confirm twice: once to create, once to lock."
+              ? `Your wallet asks you to confirm twice: first to create your Chronobox, then to switch on the time delay and send your contribution of ${giveText}.`
+              : "Your wallet asks you to confirm twice: once to create your Chronobox, once to switch on the time delay."
         }>
         <dl class="wiz-summary">
           <div>
@@ -462,7 +463,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             <strong>{giveCents > 0 ? `Contribute ${giveText}` : "No contribution"}</strong>
             {contribution ? (
               <span class="wiz-give-coin">
-                about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}. Your wallet shows this amount {batch ? "in the same confirmation" : "when you lock your Chronobox"}.
+                about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}. Your wallet shows this amount {batch ? "in the same confirmation" : "when you switch on the time delay"}.
               </span>
             ) : null}
             <p>
@@ -508,7 +509,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             )}
           </div>
         ) : null}
-        {plan?.created ? <Notice kind="info">The first half is done already. Only the lock is missing.</Notice> : null}
+        {plan?.created ? <Notice kind="info">Your Chronobox is created already. Only the time delay is not on yet.</Notice> : null}
         {loadError ? <Notice kind="bad">{loadError}</Notice> : null}
         {error ? <Notice kind="bad">{error}</Notice> : null}
       </Screen>
@@ -552,7 +553,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
       <div class="wiz-foot">
         <Button kind="primary" disabled={!canContinue} onClick={last ? run : () => setStep(step + 1)}>
-          {last ? (plan?.created && !batch ? "Lock my Chronobox" : "Create my Chronobox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
+          {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
         </Button>
       </div>
     </section>

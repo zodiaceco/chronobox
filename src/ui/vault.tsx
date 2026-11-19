@@ -225,7 +225,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             <p class="vault-lock">
               <span class="dot" aria-hidden="true" />
               <span>
-                Locked. Every withdrawal waits <b>{formatDuration(inspection.cooldown)}</b>.
+                Every withdrawal waits <b>{formatDuration(inspection.cooldown)}</b>.
               </span>
             </p>
           ) : null}
@@ -400,7 +400,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "open") {
     const mine = sameAddress(inspection.owners[0], session.account);
     return (
-      <Notice kind="risk" title="This Chronobox is not locked yet. Do not send money.">
+      <Notice kind="risk" title="The time delay of this Chronobox is not on yet. Do not send money.">
         {mine ? (
           <>
             The setup stopped halfway. <a href="#/new">Finish it now</a>
