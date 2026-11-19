@@ -4,7 +4,7 @@ import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
-import { AddressText, Button, Modal, Notice, type Session } from "./ui/common.tsx";
+import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
@@ -226,7 +226,10 @@ export function App() {
               </Button>
             </div>
           </details>
-        ) : route.page === "start" ? null : (
+        ) : route.page === "start" ? (
+          // The landing page has its own button to connect. This corner says that the app is new.
+          <Experimental />
+        ) : (
           // The welcome screen has its own button. Everywhere else this is the way in.
           <Button small onClick={() => setConnectOpen(true)}>
             Connect wallet

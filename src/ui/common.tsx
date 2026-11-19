@@ -139,6 +139,18 @@ export function Notice(props: { kind: "risk" | "bad" | "info" | "good"; title?: 
   );
 }
 
+/** The app is new. This says so, and where feedback goes. It sits at the top right of the landing page. */
+export function Experimental() {
+  return (
+    <p class="experimental">
+      <span class="experimental-tag">Experimental</span>
+      <span>
+        Test funds only. Feedback to <a href="mailto:johannes@zodiac.eco">johannes@zodiac.eco</a> ❤️
+      </span>
+    </p>
+  );
+}
+
 /** Copies text. True when it worked. Some browsers and frames do not allow the modern way, so the old one is tried too. */
 export async function copyText(text: string): Promise<boolean> {
   try {

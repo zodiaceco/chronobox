@@ -146,6 +146,7 @@ strong {
 
 .top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -553,10 +554,6 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-.hiw-after {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
 
 @container (max-width: 480px) {
   .hiw ol {
@@ -668,6 +665,11 @@ a:focus-visible {
 .film-section {
   justify-items: center;
   text-align: center;
+}
+
+/* The film has no heading of its own. It belongs to "How it works", so it sits closer. */
+.start > .film-section {
+  margin-top: 72px;
 }
 
 .film-poster {
@@ -1940,12 +1942,6 @@ a:focus-visible {
   padding: 10vh 0 6vh;
 }
 
-.hiw-after {
-  text-align: center;
-  text-wrap: pretty;
-  max-width: 52ch;
-  margin: 0 auto;
-}
 
 .section-center {
   justify-items: center;
@@ -2357,6 +2353,16 @@ button.row-strong:hover .row-hint {
   margin: 0;
 }
 
+.info-box-center {
+  justify-content: center;
+  text-align: center;
+}
+
+.experimental-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* The app is new. This is a risk, so it has the colour of a risk. */
 .experimental {
   display: inline-flex;
@@ -2365,12 +2371,12 @@ button.row-strong:hover .row-hint {
   justify-content: center;
   gap: 6px 10px;
   margin: 0;
-  padding: 6px 16px 6px 6px;
+  padding: 5px 14px 5px 5px;
   border: 1px solid var(--risk-line);
   border-radius: 20px;
   background: var(--risk-bg);
   color: var(--risk-fg);
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   text-wrap: pretty;
 }
 

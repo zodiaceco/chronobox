@@ -9,7 +9,7 @@ import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
 import { isRejection, switchChain } from "../lib/wallet.ts";
 import { discover, inspect } from "../lib/chronobox.ts";
-import { Button, type Session } from "./common.tsx";
+import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
 
@@ -193,13 +193,13 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
 
   return (
     <div class="start">
+      {/* Without a wallet the notice is in the header. With one, the wallet is there, so the notice is here. */}
+      {session ? (
+        <div class="experimental-row">
+          <Experimental />
+        </div>
+      ) : null}
       <section class="hero">
-        <p class="experimental">
-          <span class="experimental-tag">Experimental</span>
-          <span>
-            Do not put serious money in yet. Send feedback to <a href="mailto:johannes@zodiac.eco">johannes@zodiac.eco</a>.
-          </span>
-        </p>
         <h1>Money that cannot leave in a hurry.</h1>
         <p class="lead">Every withdrawal has to wait. No password, no threat and no stolen key can make it faster. Not even you can.</p>
         <div class="hero-actions">
@@ -251,11 +251,12 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       <section class="section" id="how">
         <h2>How it works</h2>
         <HowItWorks />
-        <p class="hiw-after">When you need the money, you ask for it. When the wait ends, you collect it and it goes back to your wallet. You can cancel until then.</p>
+        <div class="info-box info-box-center">
+          <p>When you need the money, you ask for it. When the wait ends, you collect it and it goes back to your wallet. You can cancel until then.</p>
+        </div>
       </section>
 
       <section class="section film-section">
-        <h2>See it in 35 seconds</h2>
         {film ? (
           <video class="film" src={FILM} poster={POSTER} controls autoplay playsinline />
         ) : (
