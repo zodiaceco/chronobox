@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { call, decode, encode, selector } from "../src/lib/abi.ts";
+import { alertLinks, alertTopic } from "../src/lib/alerts.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
@@ -164,4 +165,22 @@ test("calendar file is well formed", () => {
   assert.ok(text.includes("SUMMARY:Ready" + String.fromCharCode(92) + "; now"), "semicolons are escaped");
   assert.ok(text.includes("DESCRIPTION:Line 1" + String.fromCharCode(92) + "nLine 2"), "line breaks are escaped");
   assert.ok(text.endsWith("END:VCALENDAR\r\n"));
+});
+
+test("alert topics follow from the address and match the watcher", async () => {
+  const safe = "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762";
+  const topic = alertTopic(11155111, safe);
+  assert.equal(topic, "chronobox-11155111-0x29fcb43b46531bca003ddc8fcb67ffe91900c762");
+  // ntfy allows letters, digits, "-" and "_", up to 64 characters.
+  assert.match(topic, /^[-_A-Za-z0-9]{1,64}$/);
+  const watcher = await import("../watcher/watch.ts");
+  assert.equal(watcher.alertTopic(11155111, safe), topic);
+
+  assert.deepEqual(alertLinks("https://alerts.example.org/", 1, safe), {
+    server: "https://alerts.example.org",
+    topic: "chronobox-1-0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+    web: "https://alerts.example.org/chronobox-1-0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+    app: "ntfy://alerts.example.org/chronobox-1-0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+  });
+  assert.match(alertLinks("http://localhost:3133", 1, safe).app, /^ntfy:\/\/localhost:3133\/chronobox-1-0x[0-9a-f]{40}\?secure=false$/);
 });

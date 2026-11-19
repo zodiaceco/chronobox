@@ -158,7 +158,7 @@ export function TechnicalPage() {
             <strong>It cannot keep your wallet safe.</strong>
             <p>
               A person who has your wallet can ask for a withdrawal and wait. You can cancel it, and they can ask again. The wait gives you
-              time to see it and to cancel.
+              time. Alerts are what make that time useful.
             </p>
           </li>
           <li>

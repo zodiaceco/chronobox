@@ -9,10 +9,11 @@
     "dev": "node build.mjs --dev",
     "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts watcher/*.test.ts",
     "fork": "anvil --fork-url https://mainnet.gateway.tenderly.co --chain-id 1 --port 8545 --silent",
     "test:fork": "node test/fork.ts",
-    "test:tokens": "node test/tokens-live.ts"
+    "test:tokens": "node test/tokens-live.ts",
+    "test:fork:alerts": "node test/alerts-fork.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",

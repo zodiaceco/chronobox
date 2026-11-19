@@ -4,6 +4,7 @@ import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress } from "./lib/hex.ts";
 import { buildChanged, lastWallet, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
+import { AlertsPage } from "./ui/alerts.tsx";
 import { Button, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
@@ -11,7 +12,7 @@ import { StartPage, vaultHref } from "./ui/start.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
-type Route = { page: "start" } | { page: "new" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address } | { page: "unknown" };
+type Route = { page: "start" } | { page: "new" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address } | { page: "alerts"; chain: Chain; safe: Address } | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
 const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "unknown").slice(0, 8);
@@ -22,11 +23,11 @@ function parseRoute(hash: string): Route {
   if (path === "" || path === "/" || !path.startsWith("/")) return { page: "start" };
   if (path === "/new") return { page: "new" };
   if (path === "/technical") return { page: "technical" };
-  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
+  const match = /^\/(v|alerts)\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
   if (match) {
-    const chain = chainByShort(match[1]);
-    const safe = parseAddress(match[2]);
-    if (chain && safe) return { page: "vault", chain, safe };
+    const chain = chainByShort(match[2]);
+    const safe = parseAddress(match[3]);
+    if (chain && safe) return { page: match[1] === "v" ? "vault" : "alerts", chain, safe };
   }
   return { page: "unknown" };
 }
@@ -134,6 +135,9 @@ export function App() {
     body = <StartPage session={session} chain={chain} onConnect={() => setConnectOpen(true)} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
+  } else if (route.page === "alerts") {
+    // No wallet needed: a person who only gets the alerts opens this page too.
+    body = <AlertsPage chain={route.chain} safe={route.safe} />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
@@ -215,8 +219,8 @@ export function App() {
               </Button>
             </div>
           </details>
-        ) : route.page === "start" ? null : (
-          // The welcome screen has its own button. Everywhere else this is the way in.
+        ) : route.page === "start" || route.page === "alerts" ? null : (
+          // The welcome screen has its own button, and alerts need no wallet. Everywhere else this is the way in.
           <Button small onClick={() => setConnectOpen(true)}>
             Connect wallet
           </Button>

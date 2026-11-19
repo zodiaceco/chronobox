@@ -40,6 +40,7 @@ import {
   receiptTime,
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
+import { AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, Button, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
@@ -54,7 +55,7 @@ type VaultData = {
 };
 
 type VaultRef = { safe: Address; delay: Address; controller: Address; roles?: Address | null };
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "checks" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "checks" | "alerts" | null;
 
 function assetsOf(chain: Chain): Asset[] {
   const tokens: Asset[] = [];
@@ -368,6 +369,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
             onClick={() => setSheet("checks")}
           />
+          <Row label="Get told" value="Calendar and alerts" onClick={() => setSheet("alerts")} />
           <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
         </ul>
       ) : inspection.checks.length > 0 ? (
@@ -407,6 +409,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           </p>
         </Modal>
       ) : null}
+      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
       {cancelling && vault ? (
         <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (

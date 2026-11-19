@@ -79,13 +79,13 @@ The address of your nth vault depends only on your wallet address and n. The app
 
 Read these. They are the honest edge of what a delay can do.
 
-- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly.
+- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you are told in time, so set up the alerts.
 - **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. Frozen funds are better than lost funds.
 - **One wallet.** There is no second key, no guardian and no recovery.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** There is no recovery.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
-- **No alerts.** A web page cannot wake up when it is closed, and this version has no alert service. Use the calendar file (below), and look at your Chronobox regularly.
+- **No alerts by itself.** A web page cannot wake up when it is closed. Use the calendar file and the alerts (below).
 
 
 
@@ -95,12 +95,32 @@ Read these. They are the honest edge of what a delay can do.
 - The production page makes no network requests. The Content Security Policy is `connect-src 'none'`. All chain data comes through your wallet, so no extra party learns which vault you look at.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
+- Alerts need no sign-up. See the next section for what an alert server can see.
 
-## Get told: calendar
+## Get told: calendar and alerts
 
-Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires.
+- Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires.
+- `watcher/watch.ts` is a single file with no dependencies. It reads the chain through any RPC and sends alerts to [ntfy](https://ntfy.sh) or a webhook: queued, ready, expires soon, cancelled, executed, settings changed, and a regular "all quiet" so that silence is different from failure. See `watcher/README.md`.
 
-Alerts to a phone when something is queued are not part of this version yet.
+The watcher runs in two ways:
+
+- **For one vault, on your own machine.** It needs only the vault address. Nobody else is involved.
+- **For every Chronobox on a chain (`--all`), as an alert service.** Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can find every Chronobox by itself and publish the alerts of each one to a topic that follows from the address: `chronobox-<chain id>-<vault address>`. Nobody signs up, and the service keeps no list of people or of vaults that somebody asked for.
+
+### The alert service in the app
+
+`ALERTS_SERVER` in `src/lib/chains.ts` is the ntfy server of a watcher that runs with `--all`. It is `null` in the source, so a build shows how to run the watcher yourself until somebody sets it.
+
+With a server set, "Get told" in a Chronobox shows a QR code. It opens a page of this app (`#/alerts/<network>:<address>`) that needs no wallet: it shows the topic of the vault and opens the ntfy app. The owner scans it, and so can a person the owner trusts. The app only builds links. It sends nothing to the alert server, and `connect-src 'none'` stays as it is.
+
+What this design gives and what it does not:
+
+- No account, no email, no phone number, no registration request. There is nothing to leak and nothing a thief can switch off.
+- The alerts of a vault are public, like the vault. Anybody who knows the address can listen.
+- The alert server can see the internet address of a phone while it listens to a topic, and the topic names the vault. A server that keeps no access logs is a promise, not a proof. A person who does not accept that runs the watcher for one vault on their own machine.
+- The "Open in ntfy" link (`ntfy://`) is documented for the Android app. On an iPhone the page shows the server and the topic to add by hand. Not yet tested on real phones.
+
+Give the alerts to a person you trust too. In the case this product is for, you may not be able to look at your phone.
 
 ## Run it
 
@@ -115,8 +135,9 @@ npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :
 The dev build injects a test wallet ("Anvil test wallet") that signs with anvil's unlocked accounts. Add `?account=1` for another account, or `?safe=1` to make it act as a Safe that can batch. It does not exist in the production build. In the browser console, `__anvil.warp(seconds)` moves the fork's clock.
 
 ```bash
-npm test             # unit tests
+npm test             # unit tests (library and watcher)
 npm run test:fork    # the full flow against the real contracts on the fork
+npm run test:fork:alerts   # the watcher with --all against the real contracts on the fork
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```
@@ -177,7 +198,10 @@ src/lib/chains.ts    contract addresses, networks, token lists
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/ui/              screens
 build.mjs            build, dev server, build hash
+src/lib/alerts.ts    the public alert topic of a vault
+watcher/             the watcher: one vault on your machine, or every Chronobox as an alert service
 test/fork.ts         end-to-end proof on a fork
+test/alerts-fork.ts  the alert service on a fork
 brand/               logo concepts
 ```
 

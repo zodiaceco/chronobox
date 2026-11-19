@@ -2260,6 +2260,85 @@ button.row:focus-visible {
   background: #fff;
 }
 
+/* Alerts */
+
+.alerts {
+  max-width: 520px;
+  margin: 0 auto;
+  padding-top: 6vh;
+  gap: 28px;
+}
+
+.alerts-head {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+}
+
+.alerts-head h1 {
+  font-size: clamp(1.8rem, 6vw, 2.3rem);
+}
+
+.alerts-which {
+  color: var(--muted);
+}
+
+.alerts-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+  counter-reset: step;
+}
+
+.alerts-steps > li {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  counter-increment: step;
+}
+
+.alerts-steps > li > strong::before {
+  content: counter(step) ". ";
+  color: var(--blue-text);
+}
+
+.alerts-steps p {
+  color: var(--muted);
+}
+
+.alerts-steps .button {
+  width: 100%;
+  min-height: 50px;
+  font-size: 1.02rem;
+}
+
+.alerts-apps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+
+.alerts-rows .row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 10px 14px;
+}
+
+.alerts .details p + p {
+  margin-top: 8px;
+}
+
+.alerts-share {
+  display: flex;
+  justify-content: center;
+  min-height: 36px;
+  align-items: center;
+}
+
 /* Failures that are not the person's fault: say what is not known, and offer another try. */
 .read-failed {
   color: var(--muted);
