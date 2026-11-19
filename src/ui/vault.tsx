@@ -186,8 +186,9 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   line.current = data?.queue ?? [];
 
   useEffect(() => {
-    if (data?.inspection.state === "locked") rememberVault({ chainId: chain.id, safe });
-  }, [data?.inspection.state, chain.id, safe]);
+    // It is remembered for the wallet that is its key, so it shows in that wallet's list only.
+    if (data?.inspection.state === "locked" && data.inspection.controller) rememberVault({ chainId: chain.id, safe, wallet: data.inspection.controller });
+  }, [data?.inspection.state, data?.inspection.controller, chain.id, safe]);
 
   if (error && !data) {
     return (
@@ -211,6 +212,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const locked = verified || inspection.state === "unverified";
   const isController = locked && sameAddress(inspection.controller, session.account);
   const canCancel = isController && !!inspection.roles;
+  // Another wallet is the key. This wallet can look, and nothing else.
+  const viewOnly = locked && !isController;
   const vault: VaultRef | null = locked ? { safe, delay: inspection.delay!, controller: inspection.controller!, roles: inspection.roles } : null;
   const close = () => {
     setSheet(null);
@@ -285,7 +288,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
       {inspection.state !== "missing" ? (
         <div class="vault-main">
-          <p class="eyebrow">Your Chronobox on {chain.name}</p>
+          {viewOnly ? (
+            <p class="view-only">
+              <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+                <path d="M1.5 10S4.6 4.5 10 4.5 18.5 10 18.5 10 15.4 15.5 10 15.5 1.5 10 1.5 10z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+                <circle cx="10" cy="10" r="2.6" fill="currentColor" />
+              </svg>
+              View only
+            </p>
+          ) : null}
+          <p class="eyebrow">{viewOnly ? `A Chronobox on ${chain.name}` : `Your Chronobox on ${chain.name}`}</p>
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
@@ -305,18 +317,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </p>
           ) : null}
           {locked ? (
-            <div class="vault-actions">
-              <Button kind="primary" disabled={!verified} onClick={() => setSheet("deposit")}>
+            <div class={viewOnly ? "vault-actions vault-actions-one" : "vault-actions"}>
+              <Button kind={viewOnly ? "plain" : "primary"} disabled={!verified} onClick={() => setSheet("deposit")}>
                 Add money
               </Button>
-              <Button disabled={!isController} onClick={() => setSheet("withdraw")}>
-                Withdraw
-              </Button>
+              {viewOnly ? null : <Button onClick={() => setSheet("withdraw")}>Withdraw</Button>}
             </div>
           ) : null}
-          {locked && !isController ? (
+          {viewOnly ? (
             <p class="hint">
-              You are looking at this Chronobox. Only the wallet <AddressText address={inspection.controller!} chain={chain} /> can withdraw.
+              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} chain={chain} />. Your wallet can look and add money. It cannot withdraw.
             </p>
           ) : null}
         </div>

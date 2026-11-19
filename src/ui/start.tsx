@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
-import { blockHints, savedVaults } from "../lib/store.ts";
+import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
+import { isRejection, switchChain } from "../lib/wallet.ts";
 import { discover, inspect } from "../lib/chronobox.ts";
 import { Button, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
@@ -53,18 +54,20 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     (async () => {
       // Chronoboxes on other networks come from this browser's memory.
       const list: Row[] = [];
-      for (const saved of savedVaults()) {
+      for (const saved of vaultsOf(session.account)) {
         const other = chainById(saved.chainId);
         if (other && other.id !== chain?.id) list.push({ chain: other, safe: saved.safe, title: "Chronobox", note: other.name });
       }
       if (chain) {
         try {
           const found = await discover(session.rpc, session.account);
-          const known = savedVaults().filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f.safe, v.safe)));
+          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f.safe, v.safe)));
           const here = [...found.map((f) => f.safe), ...known.map((k) => k.safe)];
           const inspected = await Promise.all(
             here.map(async (safe): Promise<Row> => {
               const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
+              // A wallet shows one network at a time. What is found here stays in the list when the wallet moves on.
+              if (result?.controller && sameAddress(result.controller, session.account)) rememberVault({ chainId: chain.id, safe, wallet: session.account });
               const title =
                 result === null
                   ? "Could not read it now"
@@ -79,7 +82,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           list.unshift(...inspected);
         } catch {
           // The wallet could not read the chain. Show what the browser remembers, and say so.
-          for (const saved of savedVaults()) {
+          for (const saved of vaultsOf(session.account)) {
             if (saved.chainId === chain.id) list.unshift({ chain, safe: saved.safe, title: "Could not read it now", note: chain.name });
           }
           if (!stale) setReadFailed(true);
@@ -107,6 +110,35 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       </button>
     </p>
   ) : null;
+
+  // The app reads through the wallet, and the wallet is on one network. The others are one tap away.
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const others = CHAINS.filter((c) => c.id !== chain?.id && (!c.testnet || __DEV__));
+  const lookElsewhere =
+    session && rows !== null ? (
+      <p class="look-elsewhere">
+        {chain ? `This is what your wallet has on ${chain.name}, and what this browser has seen before.` : "Chronobox does not work on the network of your wallet."} Look on{" "}
+        {others.map((c, i) => (
+          <>
+            {i === 0 ? "" : i === others.length - 1 ? " or " : ", "}
+            <button
+              type="button"
+              class="link-button"
+              key={c.id}
+              onClick={() => {
+                setSwitchError(null);
+                switchChain(session.wallet.provider, c).catch((e) => {
+                  if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${c.name} in your wallet itself.`);
+                });
+              }}
+            >
+              {c.name}
+            </button>
+          </>
+        ))}
+        .{switchError ? <span class="look-elsewhere-error"> {switchError}</span> : null}
+      </p>
+    ) : null;
 
   const openAddress = parseAddress(openText);
   const openTarget = chainById(openChain);
@@ -146,6 +178,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             </button>
           </div>
           {opening ? <OpenByAddress chainId={openChain} onChain={setOpenChain} text={openText} onText={setOpenText} target={openTarget && openAddress ? vaultHref(openTarget, openAddress) : null} /> : null}
+          {lookElsewhere}
         </section>
       </div>
     );
@@ -176,6 +209,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           )}
         </div>
         {readNotice}
+        {lookElsewhere}
       </section>
 
       <ul class="trust">

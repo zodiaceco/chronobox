@@ -222,7 +222,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     setProgress(batch ? "batch" : plan.created ? "lock" : "create");
     const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current };
     const finish = (safe: Address, state: "locked" | "unverified") => {
-      rememberVault({ chainId: chain.id, safe });
+      rememberVault({ chainId: chain.id, safe, wallet: session.account });
       setDone({ chain, safe, funded: batch && parsedDeposits.length > 0, unverified: state === "unverified" });
     };
     let target = plan.safe;

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, chainByShort } from "./lib/chains.ts";
 import { shortAddress } from "./lib/format.ts";
-import { type Address, parseAddress } from "./lib/hex.ts";
-import { buildChanged, lastWallet, setLastWallet } from "./lib/store.ts";
+import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
+import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { Button, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
@@ -126,6 +126,15 @@ export function App() {
       setConnecting(null);
     }
   };
+
+  // Another account in the wallet is another person, as far as the app can tell. It gets its own
+  // list, and not the Chronobox of the account before it in a view that can do nothing.
+  useEffect(() => {
+    if (!session) return;
+    const before = lastAccount();
+    setLastAccount(session.account);
+    if (before && !sameAddress(before, session.account) && route.page === "vault") location.hash = "#/";
+  }, [session?.account]);
 
   const chain = useMemo(() => (session ? chainById(session.chainId) : undefined), [session?.chainId]);
 

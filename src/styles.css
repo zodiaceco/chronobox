@@ -2009,6 +2009,25 @@ a:focus-visible {
   font-size: clamp(2.8rem, 12vw, 3.6rem);
 }
 
+.view-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px 6px 11px;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.vault-actions.vault-actions-one {
+  grid-template-columns: 1fr;
+}
+
 .vault-lock {
   display: inline-flex;
   align-items: center;
@@ -2261,6 +2280,19 @@ button.row:focus-visible {
 }
 
 /* Failures that are not the person's fault: say what is not known, and offer another try. */
+.look-elsewhere {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+  text-wrap: pretty;
+  max-width: 34rem;
+  margin-inline: auto;
+}
+
+.look-elsewhere-error {
+  color: var(--bad-fg);
+}
+
 .read-failed {
   color: var(--muted);
   font-size: 0.95rem;

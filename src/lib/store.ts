@@ -5,7 +5,7 @@
  */
 import type { Token } from "./chains.ts";
 import { type Address, type Hex, sameAddress } from "./hex.ts";
-import { type BlockHints, type DelayTx, type TxCache, delayTxHash } from "./chronobox.ts";
+import { type BlockHints, type DelayTx, type TxCache, delayTxHash, predictSafe } from "./chronobox.ts";
 import { parseAddress } from "./hex.ts";
 
 function load<T>(key: string, fallback: T): T {
@@ -25,7 +25,8 @@ function save(key: string, value: unknown): void {
   }
 }
 
-export type SavedVault = { chainId: number; safe: Address };
+/** `wallet` is the wallet that was the key of the Chronobox when this browser last saw it. */
+export type SavedVault = { chainId: number; safe: Address; wallet?: Address };
 
 /** What is in storage can be old, broken, or changed by hand. Only entries of the right shape are used. */
 function list<T>(key: string, valid: (entry: any) => boolean): T[] {
@@ -34,13 +35,43 @@ function list<T>(key: string, valid: (entry: any) => boolean): T[] {
 }
 
 export function savedVaults(): SavedVault[] {
-  return list<SavedVault>("chronobox:vaults", (v) => Number.isInteger(v.chainId) && typeof v.safe === "string" && parseAddress(v.safe) !== null);
+  return list<SavedVault>(
+    "chronobox:vaults",
+    (v) => Number.isInteger(v.chainId) && typeof v.safe === "string" && parseAddress(v.safe) !== null && (v.wallet === undefined || (typeof v.wallet === "string" && parseAddress(v.wallet) !== null)),
+  );
 }
 
 export function rememberVault(vault: SavedVault): void {
   const all = savedVaults();
-  if (all.some((v) => v.chainId === vault.chainId && sameAddress(v.safe, vault.safe))) return;
-  save("chronobox:vaults", [...all, vault]);
+  const at = all.findIndex((v) => v.chainId === vault.chainId && sameAddress(v.safe, vault.safe));
+  if (at < 0) return save("chronobox:vaults", [...all, vault]);
+  if (!vault.wallet || sameAddress(all[at].wallet, vault.wallet)) return;
+  all[at] = { ...all[at], wallet: vault.wallet };
+  save("chronobox:vaults", all);
+}
+
+/**
+ * The remembered Chronoboxes of one wallet. A browser can have seen the
+ * Chronoboxes of several wallets. An entry without a wallet is from an older
+ * version: it counts when its address is one that this wallet creates.
+ */
+export function vaultsOf(wallet: Address): SavedVault[] {
+  let mine: Address[] | null = null;
+  return savedVaults().filter((v) => {
+    if (v.wallet) return sameAddress(v.wallet, wallet);
+    mine ??= Array.from({ length: 20 }, (_, index) => predictSafe(wallet, index));
+    return mine.some((safe) => sameAddress(safe, v.safe));
+  });
+}
+
+/** The account that was connected at the last visit. */
+export function lastAccount(): Address | null {
+  const value = load<string | null>("chronobox:account", null);
+  return typeof value === "string" ? parseAddress(value) : null;
+}
+
+export function setLastAccount(account: Address): void {
+  save("chronobox:account", account);
 }
 
 export function customTokens(chainId: number): Token[] {

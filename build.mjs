@@ -43,7 +43,7 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
 const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src http://127.0.0.1:8545 http://localhost:8545";
+const DEV_CONNECT = "connect-src http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */

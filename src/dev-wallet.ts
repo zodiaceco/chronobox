@@ -10,7 +10,25 @@
 
 import { createTx, ownerBatchTx, predictSafe } from "./lib/chronobox.ts";
 
-const RPC_URL = "http://127.0.0.1:8545";
+// The wallet can switch between local forks: a fork of another network on 127.0.0.1:8546 is a second network.
+// The choice stays over a reload, as in a real wallet.
+const FORKS = ["http://127.0.0.1:8545", "http://127.0.0.1:8546"];
+let RPC_URL = FORKS[0];
+try {
+  const kept = sessionStorage.getItem("dev-wallet:fork");
+  if (kept && FORKS.includes(kept)) RPC_URL = kept;
+} catch {
+  // No storage: the wallet starts on the first fork.
+}
+
+async function chainIdOfFork(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "eth_chainId", params: [] }) });
+    return ((await res.json()) as { result?: string }).result ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ?safe=1 makes the wallet act as a 1 of 1 Safe that the anvil account owns.
 // It then answers the EIP-5792 methods, like a smart contract wallet does.
@@ -147,6 +165,18 @@ function createProvider(account: string, owner: string) {
           const wanted = (list[0] as { chainId?: string } | undefined)?.chainId;
           const current = (await rpc("eth_chainId")) as string;
           if (wanted !== undefined && BigInt(wanted) === BigInt(current)) return null;
+          for (const url of FORKS) {
+            const id = await chainIdOfFork(url);
+            if (wanted === undefined || id === null || BigInt(id) !== BigInt(wanted)) continue;
+            RPC_URL = url;
+            try {
+              sessionStorage.setItem("dev-wallet:fork", url);
+            } catch {
+              // The choice lasts until the page loads again.
+            }
+            emit("chainChanged", id);
+            return null;
+          }
           throw new ProviderRpcError(4902, `Unrecognized chain ${String(wanted)}: anvil runs chain ${BigInt(current)}`);
         }
         case "eth_sendTransaction": {

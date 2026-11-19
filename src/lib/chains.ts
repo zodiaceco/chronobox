@@ -63,14 +63,14 @@ export type Chain = {
 };
 
 /**
- * Where a voluntary contribution goes. Null means: this build does not ask
- * for one. Set it to an address that the maintainers control on every
- * supported network, for example a Safe with the same address everywhere.
+ * Where a voluntary contribution goes: an address that Zodiac controls on
+ * every supported network. Null means: this build does not ask for one.
+ * If you host the app yourself, set it to null or to your own address.
  */
-export const CONTRIBUTION_RECEIVER: Address | null = null;
+export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da81505d736Efd61c8d";
 
 /** The suggested contribution in US dollars, the lower choices, and the hint in the free field. */
-export const CONTRIBUTION_USD = { suggested: 50, less: [25, 10], hint: 5 } as const;
+export const CONTRIBUTION_USD = { suggested: 10, less: [5, 2], hint: 1 } as const;
 
 export const CHAINS: Chain[] = [
   {
