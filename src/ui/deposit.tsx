@@ -9,7 +9,7 @@ import type { Chain } from "../lib/chains.ts";
 import { formatAmount, formatUnits, parseUnits } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
 import { arrivedInReceipt, depositTx, feeReserve, sendAndWait } from "../lib/chronobox.ts";
-import { type Asset, AssetAmount, Button, Notice, type Session, SlowNote, useAction, useBalances } from "./common.tsx";
+import { type Asset, AssetAmount, Button, copyText, Notice, type Session, SlowNote, useAction, useBalances } from "./common.tsx";
 
 /** A QR code as one SVG path. No image file, no inline style. */
 export function QrCode(props: { text: string; label: string }) {
@@ -51,7 +51,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(safe);
+      if (!(await copyText(safe))) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {

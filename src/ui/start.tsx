@@ -238,7 +238,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       <section class="section" id="how">
         <h2>How it works</h2>
         <HowItWorks />
-        <p class="hiw-after">When you need the money, you ask for it. It comes back to your wallet when the wait ends, and you can cancel until then.</p>
+        <p class="hiw-after">When you need the money, you ask for it. When the wait ends, you collect it and it goes back to your wallet. You can cancel until then.</p>
       </section>
 
       <section class="section film-section">

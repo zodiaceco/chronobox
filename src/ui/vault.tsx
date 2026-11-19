@@ -41,7 +41,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
 type VaultData = {
@@ -257,7 +257,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   };
   const copyAddress = async () => {
     try {
-      await navigator.clipboard.writeText(safe);
+      if (!(await copyText(safe))) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
@@ -326,7 +326,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {viewOnly ? (
             <p class="hint">
-              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} chain={chain} />. Your wallet can look and add money. It cannot withdraw.
+              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} />. Your wallet can look and add money. It cannot withdraw.
             </p>
           ) : null}
         </div>
@@ -364,9 +364,9 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
       {locked ? (
         <ul class="rows">
+          <Row label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" strong />
           <Row label="Delay" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
-          <Row label="Wallet" value={shortAddress(inspection.controller!)} onClick={isController ? () => setSheet("wallet") : undefined} />
-          <Row label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" />
+          <Row label="Wallet" value={isController ? shortAddress(inspection.controller!) : <AddressText address={inspection.controller!} />} onClick={isController ? () => setSheet("wallet") : undefined} />
           <Row
             label="Safety checks"
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
@@ -471,7 +471,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 }
 
 /** One line in the list under the balance. With an action it is a button. */
-function Row(props: { label: string; value: ComponentChildren; hint?: string; onClick?: () => void }) {
+/** `strong` marks the one row that people come for: the address of the Chronobox. */
+function Row(props: { label: string; value: ComponentChildren; hint?: string; onClick?: () => void; strong?: boolean }) {
   const inner = (
     <>
       <span class="row-label">{props.label}</span>
@@ -490,7 +491,7 @@ function Row(props: { label: string; value: ComponentChildren; hint?: string; on
   return (
     <li>
       {props.onClick ? (
-        <button type="button" class="row" onClick={props.onClick}>
+        <button type="button" class={props.strong ? "row row-strong" : "row"} onClick={props.onClick}>
           {inner}
         </button>
       ) : (
@@ -794,7 +795,7 @@ function WithdrawSheet(props: {
           <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
           {props.canCancel ? <li>You can cancel it while it waits.</li> : null}
           <li>
-            Then it goes to your wallet <AddressText address={vault.controller} />.
+            After the wait, you come back here and collect it. Then it goes to your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
         <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
@@ -830,7 +831,7 @@ function WithdrawSheet(props: {
         <p class="field-error">{problem}</p>
       ) : (
         <p class="hint">
-          It goes to your wallet <AddressText address={vault.controller} />, after {delayText}.
+          After {delayText}, you collect it here. Then it goes to your wallet <AddressText address={vault.controller} />.
         </p>
       )}
       <div class="modal-actions">
@@ -983,7 +984,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
     });
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(vault.safe);
+      if (!(await copyText(vault.safe))) return;
       setCopied(true);
     } catch {
       // The address is on screen and can be selected by hand.

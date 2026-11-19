@@ -29,7 +29,7 @@ import {
   tokenBalance,
 } from "../lib/chronobox.ts";
 import { assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
-import { type Asset, AssetAmount, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { Mark } from "./logo.tsx";
 
@@ -535,7 +535,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           </div>
           <div>
             <dt>Your wallet, the only key</dt>
-            <dd class="mono">{session.account}</dd>
+            <dd class="mono">
+              <AddressText address={session.account} full />
+            </dd>
           </div>
           {batch ? (
             <div>

@@ -1395,10 +1395,36 @@ a:focus-visible {
 }
 
 .address {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
   font-family: var(--mono);
   font-size: 0.875rem;
+  text-align: inherit;
+  text-decoration: underline dotted;
   text-underline-offset: 3px;
   overflow-wrap: anywhere;
+  cursor: copy;
+}
+
+.address:hover {
+  text-decoration-style: solid;
+}
+
+.address:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.address-copied {
+  color: var(--blue-text);
+  text-decoration: none;
+}
+
+.mono .address {
+  font-size: inherit;
 }
 
 /* The lock: the one thing on this page that carries Zodiac blue. */
@@ -2125,6 +2151,26 @@ button.row:focus-visible {
   font-weight: 500;
 }
 
+.row-strong,
+button.row-strong:hover {
+  background: var(--blue-wash);
+}
+
+button.row-strong:hover .row-hint {
+  text-decoration: underline;
+}
+
+.row-strong .row-value {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.row-strong .row-hint {
+  font-weight: 600;
+}
+
 .row-value {
   color: var(--muted);
   text-align: right;
@@ -2311,4 +2357,14 @@ button.row:focus-visible {
   color: var(--muted);
   font-size: 0.9rem;
   text-wrap: pretty;
+}
+
+/* A field that only carries text to the clipboard. Nobody sees it. */
+.copy-field {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }

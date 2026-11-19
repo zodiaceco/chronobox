@@ -139,16 +139,45 @@ export function Notice(props: { kind: "risk" | "bad" | "info" | "good"; title?: 
   );
 }
 
-export function AddressText(props: { address: Address; chain?: Chain; full?: boolean }) {
+/** Copies text. True when it worked. Some browsers and frames do not allow the modern way, so the old one is tried too. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // The old way: select the text in a field that is not seen, and copy the selection.
+  }
+  try {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.className = "copy-field";
+    document.body.appendChild(field);
+    field.select();
+    const ok = document.execCommand("copy");
+    field.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** An address on the page. A click copies the whole address, also where only a short form is shown. */
+export function AddressText(props: { address: Address; full?: boolean }) {
+  const [copied, setCopied] = useState(false);
   const text = props.full ? props.address : shortAddress(props.address);
-  return props.chain ? (
-    <a class="address" href={`${props.chain.explorer}/address/${props.address}`} target="_blank" rel="noreferrer noopener" title={props.address}>
-      {text}
-    </a>
-  ) : (
-    <span class="address" title={props.address}>
-      {text}
-    </span>
+  const copy = async (event: Event) => {
+    // The address can sit inside a row or a menu that has its own click.
+    event.stopPropagation();
+    // When the browser does not allow it, the address is still on screen and can be selected by hand.
+    if (!(await copyText(props.address))) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+  return (
+    <button type="button" class={copied ? "address address-copied" : "address"} title={`Copy ${props.address}`} aria-label={`Copy the address ${props.address}`} onClick={copy}>
+      {copied ? "Copied" : text}
+    </button>
   );
 }
 

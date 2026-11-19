@@ -4,7 +4,7 @@ import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
-import { Button, Modal, Notice, type Session } from "./ui/common.tsx";
+import { AddressText, Button, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
@@ -218,7 +218,9 @@ export function App() {
             </summary>
             <div class="wallet-menu">
               <p class="muted">{session.wallet.name}</p>
-              <p class="mono">{session.account}</p>
+              <p class="mono">
+                <AddressText address={session.account} full />
+              </p>
               <Button small onClick={disconnect}>
                 Disconnect
               </Button>
