@@ -14,6 +14,8 @@
   --blue-light: #b1d3f2;
   --blue-wash: #eef6fd;
   --blue-text: #1f5fa3;
+  /* Gold is for the promises on the welcome page only. It is not the amber of a risk notice. */
+  --gold: #dba63a;
   --risk-bg: #fff6e5;
   --risk-fg: #7a4a00;
   --risk-line: #f2d49b;
@@ -613,7 +615,7 @@ a:focus-visible {
 
 .trust-tick {
   flex: none;
-  color: var(--blue);
+  color: var(--gold);
 }
 
 .trust strong {
