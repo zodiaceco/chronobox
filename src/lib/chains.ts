@@ -64,14 +64,6 @@ export type Chain = {
  */
 export const CONTRIBUTION_RECEIVER: Address | null = null;
 
-/**
- * The ntfy server of a watcher that runs with --all (see watcher/README.md),
- * for example "https://alerts.example.org". Null means: this build has no
- * alert service, and the app shows how to run the watcher yourself. The app
- * never connects to this server. It only builds links to it.
- */
-export const ALERTS_SERVER: string | null = null;
-
 /** The suggested contribution in US dollars, the lower choices, and the hint in the free field. */
 export const CONTRIBUTION_USD = { suggested: 50, less: [25, 10], hint: 5 } as const;
 
