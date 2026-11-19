@@ -2332,13 +2332,70 @@ button.row-strong:hover .row-hint {
 }
 
 /* Failures that are not the person's fault: say what is not known, and offer another try. */
-.look-elsewhere {
-  color: var(--muted);
-  font-size: 0.9rem;
-  text-align: center;
-  text-wrap: pretty;
+/* A quiet box for something that is good to know and needs no action. */
+.info-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   max-width: 34rem;
   margin-inline: auto;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: left;
+  text-wrap: pretty;
+}
+
+.info-box svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.info-box p {
+  margin: 0;
+}
+
+/* The app is new. This is a risk, so it has the colour of a risk. */
+.experimental {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 10px;
+  margin: 0;
+  padding: 6px 16px 6px 6px;
+  border: 1px solid var(--risk-line);
+  border-radius: 20px;
+  background: var(--risk-bg);
+  color: var(--risk-fg);
+  font-size: 0.9rem;
+  text-wrap: pretty;
+}
+
+@media (max-width: 560px) {
+  /* The text goes under the tag here, so the box is even on all sides. */
+  .experimental {
+    padding: 10px 14px;
+  }
+}
+
+.experimental-tag {
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--risk-fg);
+  color: var(--risk-bg);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.experimental a {
+  color: inherit;
+  font-weight: 600;
+  text-underline-offset: 3px;
 }
 
 .look-elsewhere-error {

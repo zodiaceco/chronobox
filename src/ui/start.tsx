@@ -116,7 +116,13 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   const others = CHAINS.filter((c) => c.id !== chain?.id && (!c.testnet || __DEV__));
   const lookElsewhere =
     session && rows !== null ? (
-      <p class="look-elsewhere">
+      <div class="info-box">
+        <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+          <circle cx="10" cy="10" r="8.2" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <path d="M10 9.2v4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <circle cx="10" cy="6.3" r="1.1" fill="currentColor" />
+        </svg>
+        <p>
         {chain ? `This is what your wallet has on ${chain.name}, and what this browser has seen before.` : "Chronobox does not work on the network of your wallet."} Look on{" "}
         {others.map((c, i) => (
           <>
@@ -137,7 +143,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           </>
         ))}
         .{switchError ? <span class="look-elsewhere-error"> {switchError}</span> : null}
-      </p>
+        </p>
+      </div>
     ) : null;
 
   const openAddress = parseAddress(openText);
@@ -187,6 +194,12 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   return (
     <div class="start">
       <section class="hero">
+        <p class="experimental">
+          <span class="experimental-tag">Experimental</span>
+          <span>
+            Do not put serious money in yet. Send feedback to <a href="mailto:johannes@zodiac.eco">johannes@zodiac.eco</a>.
+          </span>
+        </p>
         <h1>Money that cannot leave in a hurry.</h1>
         <p class="lead">Every withdrawal has to wait. No password, no threat and no stolen key can make it faster. Not even you can.</p>
         <div class="hero-actions">
