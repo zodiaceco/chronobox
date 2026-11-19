@@ -1,9 +1,22 @@
 import type { Address } from "./hex.ts";
 
+/**
+ * Makes one plain decimal number out of what a person typed, or null when it can be read in two ways.
+ * "1,5" is one and a half. "1,234,567.5" has thousands separators. "1,000" alone can be one or
+ * one thousand, and a wrong guess moves money, so it is refused.
+ */
+export function plainNumber(text: string): string | null {
+  const value = text.trim().replace(/[\s_']/g, "");
+  if (!value.includes(",")) return value;
+  if (/^\d{1,3}(,\d{3})+\.\d*$/.test(value) || /^\d{1,3}(,\d{3}){2,}$/.test(value)) return value.replace(/,/g, "");
+  if (/^\d*,\d*$/.test(value)) return /^[1-9]\d{0,2},\d{3}$/.test(value) ? null : value.replace(",", ".");
+  return null;
+}
+
 /** "1.5" with 18 decimals becomes 1500000000000000000n. Returns null for bad input. */
 export function parseUnits(text: string, decimals: number): bigint | null {
-  const value = text.trim().replace(",", ".");
-  if (!/^\d*\.?\d*$/.test(value) || value === "" || value === ".") return null;
+  const value = plainNumber(text);
+  if (value === null || !/^\d*\.?\d*$/.test(value) || value === "" || value === ".") return null;
   const [whole, fraction = ""] = value.split(".");
   if (fraction.length > decimals) return null;
   return BigInt((whole || "0") + fraction.padEnd(decimals, "0"));

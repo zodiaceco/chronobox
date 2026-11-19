@@ -4,7 +4,7 @@
  * with the address to send money to. Every answer stays when you go back.
  */
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDuration, parseUnits } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
@@ -18,15 +18,17 @@ import {
   createTx,
   discover,
   inspect,
+  isHalfMade,
   lockTx,
   nativeBalance,
   predictSafe,
   safeFromReceipt,
   sendAndWait,
   setupCalls,
+  slowAfterMs,
   tokenBalance,
 } from "../lib/chronobox.ts";
-import { canBatch, errorText, sendBatch, switchChain } from "../lib/wallet.ts";
+import { assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { type Asset, AssetAmount, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { Mark } from "./logo.tsx";
@@ -85,7 +87,13 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [price, setPrice] = useState<bigint | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ chain: Chain; safe: Address; funded: boolean } | null>(null);
+  const [done, setDone] = useState<{ chain: Chain; safe: Address; funded: boolean; unverified: boolean } | null>(null);
+  const [reload, setReload] = useState(0);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  // A confirmation that takes long gets a way out. Stopping the wait does not undo what was sent.
+  const [slow, setSlow] = useState(false);
+  const stop = useRef(false);
+  const running = useRef(false);
 
   useEffect(() => {
     let stale = false;
@@ -96,30 +104,39 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     };
   }, [session.wallet, session.account, chain]);
 
+  /**
+   * What is the next step for this wallet on this network? Read from the chain every time, so
+   * that a step which has landed is never sent again.
+   */
+  const findPlan = async (): Promise<Plan> => {
+    const found = await discover(session.rpc, session.account);
+    // A Chronobox whose setup stopped after the first step comes first.
+    for (const vault of found) {
+      if (await isHalfMade(session.rpc, vault.safe, session.account)) return { index: vault.index, safe: vault.safe, created: true };
+    }
+    return { index: found.length, safe: predictSafe(session.account, found.length), created: false };
+  };
+
   useEffect(() => {
     if (!chain) return;
     let stale = false;
     setPlan(null);
     setLoadError(null);
-    (async () => {
-      try {
-        const found = await discover(session.rpc, session.account);
-        // A vault whose setup stopped after the first transaction comes first.
-        for (const vault of found) {
-          if ((await inspect(session.rpc, vault.safe)).state === "open") {
-            if (!stale) setPlan({ index: vault.index, safe: vault.safe, created: true });
-            return;
-          }
-        }
-        if (!stale) setPlan({ index: found.length, safe: predictSafe(session.account, found.length), created: false });
-      } catch (e) {
-        if (!stale) setLoadError(errorText(e));
-      }
-    })();
+    findPlan().then(
+      (next) => !stale && setPlan(next),
+      (e) => !stale && setLoadError(errorText(e)),
+    );
     return () => {
       stale = true;
     };
-  }, [session.rpc, session.account, chain]);
+  }, [session.rpc, session.account, chain, reload]);
+
+  useEffect(() => {
+    setSlow(false);
+    if (!progress || progress === "check") return;
+    const timer = setTimeout(() => setSlow(true), slowAfterMs());
+    return () => clearTimeout(timer);
+  }, [progress]);
 
   const assets: Asset[] = chain
     ? [
@@ -182,10 +199,42 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             ? !depositProblem
             : !!plan && !giveProblem;
 
+  /**
+   * Is the Chronobox at this address finished? A wallet's network can be a few blocks behind
+   * right after a transaction, so "not there yet" is asked again before it counts.
+   */
+  const verify = async (safe: Address, tries: number): Promise<"locked" | "unverified" | "invalid" | null> => {
+    for (let attempt = 0; attempt < tries; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
+      try {
+        const result = await inspect(session.rpc, safe, chain ? blockHints(chain.id) : undefined);
+        if ((result.state === "locked" || result.state === "unverified") && result.cooldown === cooldown) return result.state;
+        if (result.state === "invalid" || result.state === "locked" || result.state === "unverified") return "invalid";
+      } catch {
+        // Ask again.
+      }
+    }
+    return null;
+  };
+
   const run = async () => {
-    if (!plan || !chain || cooldown === null) return;
+    if (running.current || !plan || !chain || cooldown === null) return;
+    running.current = true;
+    stop.current = false;
     setError(null);
+    setProgress(batch ? "batch" : plan.created ? "lock" : "create");
+    const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current };
+    const finish = (safe: Address, state: "locked" | "unverified") => {
+      rememberVault({ chainId: chain.id, safe });
+      setDone({ chain, safe, funded: batch && parsedDeposits.length > 0, unverified: state === "unverified" });
+    };
+    let target = plan.safe;
+    // True from the moment a request goes to the wallet. After that, the chain says what happened, not an error.
+    let asked = false;
     try {
+      let now = await findPlan();
+      setPlan(now);
+      target = now.safe;
       if (contribution && !batch) {
         const held = await nativeBalance(session.rpc, session.account);
         if (held <= contribution.amount) {
@@ -200,39 +249,54 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           const held = asset.token ? await tokenBalance(session.rpc, asset.token, session.account) : await nativeBalance(session.rpc, session.account);
           if (total > held) throw new Error(`Your wallet has only ${formatAmount(held, asset.decimals)} ${asset.symbol}.`);
         }
-        setProgress("batch");
         const calls = setupCalls(
           session.account,
-          plan.index,
-          plan.created,
+          now.index,
+          now.created,
           cooldown,
           parsedDeposits.map((d) => ({ token: d.asset.token, amount: d.amount! })),
           contribution,
         );
-        await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"));
+        await assertWallet(session.rpc, session.account, chain.id, chain.name);
+        asked = true;
+        await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"), () => stop.current);
       } else {
-        let now = plan;
         if (!now.created) {
           setProgress("create");
-          const receipt = await sendAndWait(session.rpc, session.account, createTx(session.account, now.index));
+          asked = true;
+          const receipt = await sendAndWait(session.rpc, session.account, createTx(session.account, now.index), send);
           const safe = safeFromReceipt(receipt);
           if (!safe || safe !== now.safe) throw new Error("Something is not right: your Chronobox is not where it should be. Stop here, and do not send money.");
           now = { ...now, created: true };
           setPlan(now);
         }
         setProgress("lock");
-        await sendAndWait(session.rpc, session.account, lockTx(session.account, now.safe, cooldown, EXPIRATION_SECONDS, contribution));
+        asked = true;
+        await sendAndWait(session.rpc, session.account, lockTx(session.account, now.safe, cooldown, EXPIRATION_SECONDS, contribution), send);
       }
       setProgress("check");
-      const result = await inspect(session.rpc, plan.safe, blockHints(chain.id));
-      if (result.state !== "locked" || result.cooldown !== cooldown) {
-        throw new Error("Your Chronobox did not pass the safety checks. Do not send money to it.");
-      }
-      rememberVault({ chainId: chain.id, safe: plan.safe });
-      setDone({ chain, safe: plan.safe, funded: batch && parsedDeposits.length > 0 });
+      const state = await verify(target, 5);
+      if (state === "locked" || state === "unverified") return finish(target, state);
+      if (state === "invalid") throw new Error("Your Chronobox did not pass the safety checks. Do not send money to it.");
+      throw new Error("Your wallet's network does not show the result yet. Wait a minute, then go to the start page: your Chronobox appears there when it is ready.");
     } catch (e) {
+      if (asked && !isRejection(e)) {
+        // Something may have reached the chain all the same. Look before saying that it failed.
+        setProgress("check");
+        const state = await verify(target, 2);
+        if (state === "locked" || state === "unverified") return finish(target, state);
+        try {
+          const next = await findPlan();
+          setPlan(next);
+          // The first step did land. The page says so, and the next press goes on from there.
+          if (next.created && !plan.created) return setError(null);
+        } catch {
+          // The plan stays as it was. The next try reads it again.
+        }
+      }
       setError(errorText(e));
     } finally {
+      running.current = false;
       setProgress(null);
     }
   };
@@ -248,7 +312,12 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           title="Your Chronobox is ready."
           lead={done.funded ? `Your money is inside. From now on, every withdrawal waits ${delayText}.` : `From now on, every withdrawal waits ${delayText}.`}
         >
-          {done.funded ? null : (
+          {done.unverified ? (
+            <Notice kind="risk" title="One safety check could not run here.">
+              Nothing looks wrong. Your wallet's network did not give the old records that the check needs. Open your Chronobox and wait with
+              deposits until the check passes.
+            </Notice>
+          ) : done.funded ? null : (
             <>
               <p class="wiz-label">Put money in whenever you like</p>
               <DepositPanel session={session} chain={done.chain} safe={done.safe} assets={assets} quiet />
@@ -306,6 +375,21 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               );
             })}
           </ol>
+          {slow ? (
+            <div class="wiz-slow">
+              <p class="wiz-note">This takes longer than usual. Look in your wallet: the request may still wait for you there, or the network is busy.</p>
+              <button
+                type="button"
+                class="link-button"
+                onClick={() => {
+                  stop.current = true;
+                }}
+              >
+                Stop waiting
+              </button>
+              <p class="wiz-note">That does not undo anything. This page then looks at the chain and shows where your setup stands.</p>
+            </div>
+          ) : null}
         </Screen>
       </section>
     );
@@ -327,11 +411,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               onClick={() => {
                 // Show the choice at once. The wallet needs a moment, and sometimes a confirmation, to follow.
                 setPickedChain(c.id);
-                switchChain(session.wallet.provider, c).catch(() => setPickedChain(null));
+                setSwitchError(null);
+                switchChain(session.wallet.provider, c).catch((e) => {
+                  setPickedChain(null);
+                  if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${c.name} in your wallet itself.`);
+                });
               }}
             />
           ))}
         </div>
+        {switchError ? <p class="field-error">{switchError}</p> : null}
         {!chain ? <p class="wiz-note">Your wallet is on another network. Choose one of these to go on.</p> : null}
       </Screen>
     );
@@ -510,7 +599,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           </div>
         ) : null}
         {plan?.created ? <Notice kind="info">Your Chronobox is created already. Only the time delay is not on yet.</Notice> : null}
-        {loadError ? <Notice kind="bad">{loadError}</Notice> : null}
+        {loadError ? (
+          <Notice kind="bad" title="We could not read what your wallet has already.">
+            {loadError}{" "}
+            <button type="button" class="link-button" onClick={() => setReload(reload + 1)}>
+              Try again
+            </button>
+          </Notice>
+        ) : !plan ? (
+          <p class="wiz-note">Looking at what your wallet has already…</p>
+        ) : null}
         {error ? <Notice kind="bad">{error}</Notice> : null}
       </Screen>
     );

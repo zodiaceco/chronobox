@@ -1016,6 +1016,13 @@ a:focus-visible {
   text-wrap: pretty;
 }
 
+.wiz-slow {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .wiz-list {
   display: grid;
   gap: 10px;
@@ -2330,4 +2337,25 @@ button.row:focus-visible {
   justify-content: center;
   min-height: 36px;
   align-items: center;
+}
+
+/* Failures that are not the person's fault: say what is not known, and offer another try. */
+.read-failed {
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.wallet-wait {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.slow-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-wrap: pretty;
 }

@@ -17,6 +17,7 @@
  */
 import { call, decode, encode, selector, topic } from "./abi.ts";
 import { CONTRACTS, SENTINEL, ZERO } from "./chains.ts";
+import { assertWallet, isTemporary } from "./wallet.ts";
 import {
   type Address,
   type Hex,
@@ -313,8 +314,49 @@ export type Receipt = {
   logs: { address: Address; topics: Hex[]; data: Hex }[];
 };
 
-/** Sends a transaction through the wallet and waits until it is mined. */
-export async function sendAndWait(rpc: Rpc, from: Address, tx: TxRequest, onHash?: (hash: Hex) => void): Promise<Receipt> {
+/** The transaction that was sent is gone, and the account has moved on: the wallet sent another one in its place. */
+export class Replaced extends Error {
+  constructor() {
+    super("Your wallet replaced this transaction with another one (speed up or cancel). This page now shows what is on chain.");
+    this.name = "Replaced";
+  }
+}
+
+/** The person stopped waiting. The transaction may still arrive. */
+export class StoppedWaiting extends Error {
+  constructor() {
+    super("The transaction was sent, but it is not confirmed yet. Look in your wallet. This page shows it when it arrives.");
+    this.name = "StoppedWaiting";
+  }
+}
+
+export type SendOptions = {
+  /** The network the page shows. With it, the wallet is checked directly before the request. */
+  chainId?: number;
+  chainName?: string;
+  onHash?: (hash: Hex) => void;
+  /** Called once when the wait for the receipt gets long. */
+  onSlow?: () => void;
+  /** Return true to stop waiting. The transaction is not undone by that. */
+  shouldStop?: () => boolean;
+  /** Time between two looks for the receipt. */
+  pollMs?: number;
+};
+
+/** After this long, a wait is called long and gets a way out. A test can set a shorter time. */
+export const slowAfterMs = (): number => (globalThis as { __CHRONOBOX_SLOW_MS?: number }).__CHRONOBOX_SLOW_MS ?? 75_000;
+
+/**
+ * Sends a transaction through the wallet and waits until it is mined.
+ *
+ * The wallet and its network are not ours, so: the wallet is checked first, a bad answer while
+ * waiting is not taken as a failure, a replaced transaction is noticed, and the caller can stop a
+ * wait that never ends. After the wallet has returned a hash, the only failures are "failed on
+ * chain", Replaced and StoppedWaiting.
+ */
+export async function sendAndWait(rpc: Rpc, from: Address, tx: TxRequest, options: SendOptions | ((hash: Hex) => void) = {}): Promise<Receipt> {
+  const opts: SendOptions = typeof options === "function" ? { onHash: options } : options;
+  if (opts.chainId !== undefined) await assertWallet(rpc, from, opts.chainId, opts.chainName);
   const request: Record<string, string> = { from, to: tx.to, data: tx.data };
   if (tx.value && tx.value > 0n) request.value = toQuantity(tx.value);
   // Estimate first: a transaction that would fail is stopped before the wallet
@@ -322,14 +364,64 @@ export async function sendAndWait(rpc: Rpc, from: Address, tx: TxRequest, onHash
   const estimate = toBigInt(await rpc("eth_estimateGas", [request]));
   request.gas = toQuantity((estimate * 5n) / 4n + 10_000n);
   const hash = (await rpc("eth_sendTransaction", [request])) as Hex;
-  onHash?.(hash);
-  for (;;) {
-    const receipt = (await rpc("eth_getTransactionReceipt", [hash])) as Receipt | null;
+  if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    throw new Error("Your wallet did not confirm that it sent the transaction. Look in your wallet before you try again.");
+  }
+  opts.onHash?.(hash);
+
+  const started = Date.now();
+  let told = false;
+  let nonce: bigint | null = null;
+  let gone = 0;
+  for (let round = 0; ; round++) {
+    let receipt: Receipt | null = null;
+    try {
+      receipt = (await rpc("eth_getTransactionReceipt", [hash])) as Receipt | null;
+    } catch {
+      // A bad answer about a sent transaction says nothing about the transaction. Ask again.
+    }
     if (receipt && receipt.blockNumber) {
-      if (toBigInt(receipt.status) !== 1n) throw new Error("The transaction failed on chain");
+      if (toBigInt(receipt.status) !== 1n) throw new Error("The transaction failed on chain. Nothing was changed.");
       return receipt;
     }
-    await new Promise((r) => setTimeout(r, 1500));
+    // Now and then: is the transaction still known? If it is gone and the account has sent
+    // something else with its number, the wallet replaced it.
+    if (round % 4 === 3) {
+      try {
+        const sent = (await rpc("eth_getTransactionByHash", [hash])) as { nonce?: Hex } | null;
+        if (sent?.nonce) {
+          nonce = toBigInt(sent.nonce);
+          gone = 0;
+        } else if (nonce !== null && ++gone >= 2) {
+          const used = toBigInt(await rpc("eth_getTransactionCount", [from, "latest"]));
+          const late = (await rpc("eth_getTransactionReceipt", [hash])) as Receipt | null;
+          if (!late?.blockNumber && used > nonce) throw new Replaced();
+        }
+      } catch (error) {
+        if (error instanceof Replaced) throw error;
+      }
+    }
+    if (!told && Date.now() - started > slowAfterMs()) {
+      told = true;
+      opts.onSlow?.();
+    }
+    if (opts.shouldStop?.()) throw new StoppedWaiting();
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? 1500));
+  }
+}
+
+/** When a mined transaction happened, in chain time. Never fails: the latest block or this device's clock stand in. */
+export async function receiptTime(rpc: Rpc, receipt: Receipt): Promise<bigint> {
+  try {
+    const block = await rpc("eth_getBlockByNumber", [receipt.blockNumber, false]);
+    if (block?.timestamp) return toBigInt(block.timestamp);
+  } catch {
+    // Fall through.
+  }
+  try {
+    return await chainTime(rpc);
+  } catch {
+    return BigInt(Math.floor(Date.now() / 1000));
   }
 }
 
@@ -393,6 +485,35 @@ export type BlockHints = {
 
 type Log = { address: Address; topics: Hex[]; data: Hex; blockNumber: Hex };
 
+const LOG_CHUNK = 10_000n;
+const LOG_CHUNKS_MAX = 80n;
+
+/**
+ * Every log of one contract from a block to now. Many wallet networks refuse a wide range, so
+ * when the one query fails and the start is known, the range is read in pieces. With no known
+ * start, or a range too long to read in pieces, it throws: the caller then says "could not check".
+ */
+async function logsOf(rpc: Rpc, address: Address, from: bigint | null): Promise<Log[]> {
+  try {
+    return (await rpc("eth_getLogs", [{ address, fromBlock: from === null ? "0x0" : toQuantity(from), toBlock: "latest" }])) as Log[];
+  } catch (error) {
+    if (from === null) throw error;
+    const latest = toBigInt(await rpc("eth_blockNumber", []));
+    if (latest < from || (latest - from) / LOG_CHUNK >= LOG_CHUNKS_MAX) throw error;
+    const ranges: [bigint, bigint][] = [];
+    for (let start = from; start <= latest; start += LOG_CHUNK) ranges.push([start, start + LOG_CHUNK - 1n > latest ? latest : start + LOG_CHUNK - 1n]);
+    const all: Log[] = [];
+    // A few at a time: fast enough, and not so many that the network refuses them.
+    for (let i = 0; i < ranges.length; i += 4) {
+      const parts = await Promise.all(
+        ranges.slice(i, i + 4).map(([a, b]) => rpc("eth_getLogs", [{ address, fromBlock: toQuantity(a), toBlock: toQuantity(b) }]) as Promise<Log[]>),
+      );
+      for (const part of parts) all.push(...part);
+    }
+    return all;
+  }
+}
+
 /**
  * Proves what the Roles modifier allows, from its whole event history.
  *
@@ -411,8 +532,7 @@ export async function verifyCancelPermission(
   controller: Address,
   hints?: BlockHints,
 ): Promise<{ ok: boolean; detail: string } | null> {
-  const read = async (from: bigint | null) =>
-    (await rpc("eth_getLogs", [{ address: roles, fromBlock: from === null ? "0x0" : toQuantity(from), toBlock: "latest" }])) as Log[];
+  const read = (from: bigint | null) => logsOf(rpc, roles, from);
   let logs: Log[];
   try {
     const hint = hints?.get(roles) ?? null;
@@ -500,7 +620,12 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     return ok;
   };
 
-  const code = await getCode(rpc, safe);
+  let code = await getCode(rpc, safe);
+  if (size(code) === 0) {
+    // One node of a wallet's network can be a few blocks behind. Ask once more before saying "nothing here".
+    await new Promise((r) => setTimeout(r, 1200));
+    code = await getCode(rpc, safe);
+  }
   if (size(code) === 0) {
     result.state = "missing";
     return result;
@@ -634,6 +759,12 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   return result;
 }
 
+/** True when the setup of this Safe stopped after its first step: the wallet is still its only owner. */
+export async function isHalfMade(rpc: Rpc, safe: Address, wallet: Address): Promise<boolean> {
+  const [owners] = (await read(rpc, safe, "getOwners()", [], ["address[]"])) as [Address[]];
+  return owners.length === 1 && sameAddress(owners[0], wallet);
+}
+
 /** Finds the vaults of a wallet on the connected chain. Stops at the first unused index. */
 export async function discover(rpc: Rpc, wallet: Address, limit = 10): Promise<{ index: number; safe: Address }[]> {
   const found: { index: number; safe: Address }[] = [];
@@ -733,27 +864,41 @@ export type TxCache = {
   set(nonce: bigint, hash: Hex, tx: DelayTx): void;
 };
 
+/** Lookups that found nothing, and when. They are tried again later, not on every refresh. */
+const notFound = new Map<string, number>();
+const LOOK_AGAIN_MS = 120_000;
+
 /** Reads every pending queue item, oldest first. */
 export async function readQueue(rpc: Rpc, inspection: Inspection, cache?: TxCache): Promise<QueueItem[]> {
   const delay = inspection.delay;
   if (!delay) return [];
-  const items: QueueItem[] = [];
-  for (let nonce = inspection.txNonce; nonce < inspection.queueNonce; nonce++) {
+  const nonces: bigint[] = [];
+  for (let nonce = inspection.txNonce; nonce < inspection.queueNonce; nonce++) nonces.push(nonce);
+
+  const one = async (nonce: bigint): Promise<QueueItem> => {
     const [createdAt, hash] = await Promise.all([
       read(rpc, delay, "getTxCreatedAt(uint256)", [nonce], ["uint256"]).then((r) => r[0] as bigint),
       read(rpc, delay, "getTxHash(uint256)", [nonce], ["bytes32"]).then((r) => r[0] as Hex),
     ]);
     let tx = cache?.get(nonce, hash) ?? null;
-    if (!tx) {
+    const key = `${delay.toLowerCase()}:${nonce}:${hash}`;
+    const last = notFound.get(key);
+    if (!tx && (last === undefined || Date.now() - last > LOOK_AGAIN_MS)) {
       try {
         tx = await findQueuedTx(rpc, delay, nonce, createdAt, hash);
         if (tx) cache?.set(nonce, hash, tx);
       } catch {
         tx = null;
       }
+      if (tx) notFound.delete(key);
+      else notFound.set(key, Date.now());
     }
-    items.push({ nonce, createdAt, hash, tx });
-  }
+    return { nonce, createdAt, hash, tx };
+  };
+
+  // A few at a time. The order of the line is the order of the numbers, not of the answers.
+  const items: QueueItem[] = [];
+  for (let i = 0; i < nonces.length; i += 3) items.push(...(await Promise.all(nonces.slice(i, i + 3).map(one))));
   return items;
 }
 
@@ -884,8 +1029,10 @@ export function changeDelayTx(delay: Address, cooldown: bigint): DelayTx {
  * and disables the old one, and it moves the right to cancel the same way.
  * After it executes, only the new wallet can queue and cancel.
  */
-export function changeWalletTx(delay: Address, from: Address, to: Address | null, roles: Address | null = null): DelayTx | null {
-  if (!to || sameAddress(to, from) || sameAddress(to, ZERO) || sameAddress(to, SENTINEL) || sameAddress(to, delay) || sameAddress(to, roles)) return null;
+export function changeWalletTx(delay: Address, from: Address, to: Address | null, roles: Address | null = null, safe: Address | null = null): DelayTx | null {
+  // An address that nobody can sign with would lock the Chronobox for ever: its own parts, and the burn address.
+  const dead = [ZERO, SENTINEL, delay, roles, safe, CONTRACTS.burn];
+  if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
   const item = (target: Address, data: Hex) => "00" + strip(target) + uintWord(0n) + uintWord(size(data)) + strip(data);
   const batch = concat(
     item(delay, call("enableModule(address)", [to])),
@@ -976,7 +1123,35 @@ export async function readToken(rpc: Rpc, token: Address): Promise<{ symbol: str
     symbol = symbol.replace(/[^\x20-\x7E]/g, "").trim().slice(0, 12);
     if (!symbol || Number(decimals) > 36) return null;
     return { symbol, decimals: Number(decimals) };
-  } catch {
+  } catch (error) {
+    // "The network did not answer" is not "there is no token here".
+    if (isTemporary(error)) throw error;
     return null;
   }
+}
+
+const TOPIC_TRANSFER = topic("Transfer(address,address,uint256)");
+
+/** How much of a token a mined transaction moved to an address, by the token's own Transfer events. */
+export function arrivedInReceipt(receipt: Receipt, token: Address, to: Address): bigint {
+  let sum = 0n;
+  for (const log of receipt.logs) {
+    if (!sameAddress(log.address, token) || log.topics[0] !== TOPIC_TRANSFER || log.topics.length < 3) continue;
+    if (sameAddress(("0x" + log.topics[2].slice(-40)) as Address, to)) sum += toBigInt(log.data);
+  }
+  return sum;
+}
+
+/**
+ * How much coin to leave in a wallet so that it can still pay for a simple transaction: a
+ * generous amount of gas at twice the price of now. With no price from the network, a fixed amount.
+ */
+export async function feeReserve(rpc: Rpc): Promise<bigint> {
+  try {
+    const price = toBigInt(await rpc("eth_gasPrice", []));
+    if (price > 0n) return price * 2n * 150_000n;
+  } catch {
+    // Fall through.
+  }
+  return 5_000_000_000_000_000n;
 }

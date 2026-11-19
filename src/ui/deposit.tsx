@@ -8,8 +8,8 @@ import qrcode from "qrcode-generator";
 import type { Chain } from "../lib/chains.ts";
 import { formatAmount, formatUnits, parseUnits } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { depositTx, sendAndWait } from "../lib/chronobox.ts";
-import { type Asset, AssetAmount, Button, Notice, type Session, useAction, useBalances } from "./common.tsx";
+import { arrivedInReceipt, depositTx, feeReserve, sendAndWait } from "../lib/chronobox.ts";
+import { type Asset, AssetAmount, Button, Notice, type Session, SlowNote, useAction, useBalances } from "./common.tsx";
 
 /** A QR code as one SVG path. No image file, no inline style. */
 export function QrCode(props: { text: string; label: string }) {
@@ -60,16 +60,51 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
   };
 
   const send = () =>
-    action.run("deposit", async () => {
+    action.run("deposit", async (waiting) => {
+      const symbol = asset.symbol;
       if (held !== null && held !== undefined && amount! > held) {
-        throw new Error(`Your wallet has only ${formatAmount(held, asset.decimals)} ${asset.symbol}.`);
+        throw new Error(`Your wallet has only ${formatAmount(held, asset.decimals)} ${symbol}.`);
       }
-      await sendAndWait(session.rpc, session.account, depositTx(safe, asset.token, amount!));
-      setSent(`${formatAmount(amount!, asset.decimals)} ${asset.symbol}`);
-      setAmountText("");
-      setRound((r) => r + 1);
-      props.onSent?.();
+      if (!asset.token && held !== null && held !== undefined) {
+        // The coin also pays the network fee. Sending all of it cannot work.
+        const reserve = await feeReserve(session.rpc);
+        if (amount! + reserve > held) {
+          const most = held > reserve ? held - reserve : 0n;
+          throw new Error(
+            most > 0n
+              ? `Leave some ${symbol} in your wallet for the network fee. You can send up to ${formatAmount(most, asset.decimals)} ${symbol}.`
+              : `Your wallet needs its ${symbol} for the network fee. There is none left to send.`,
+          );
+        }
+      }
+      if (asset.token) {
+        // A transfer to an address with no token behind it succeeds and moves nothing.
+        const code = (await session.rpc("eth_getCode", [asset.token, "latest"])) as string;
+        if (typeof code !== "string" || code.length <= 2) throw new Error(`There is no ${symbol} token at this address on ${chain.name}. Nothing was sent.`);
+      }
+      try {
+        const receipt = await sendAndWait(session.rpc, session.account, depositTx(safe, asset.token, amount!), { chainId: chain.id, chainName: chain.name, ...waiting });
+        // A token can report success and still not move the money, or keep a part as a fee. Its own events say what arrived.
+        const arrived = asset.token ? arrivedInReceipt(receipt, asset.token, safe) : amount!;
+        if (arrived === 0n) throw new Error(`The transaction went through, but this token did not move the money. Nothing arrived in your Chronobox.`);
+        setSent(
+          arrived === amount!
+            ? `${formatAmount(arrived, asset.decimals)} ${symbol} is in your Chronobox.`
+            : `${formatAmount(arrived, asset.decimals)} ${symbol} arrived in your Chronobox. The token kept the rest of the ${formatAmount(amount!, asset.decimals)} ${symbol}.`,
+        );
+        setAmountText("");
+      } finally {
+        setRound((r) => r + 1);
+        props.onSent?.();
+      }
     });
+
+  const max = async () => {
+    if (!held) return;
+    const most = asset.token ? held : held - (await feeReserve(session.rpc));
+    setAmountText(most > 0n ? formatUnits(most, asset.decimals) : "0");
+  };
+  const bad = amountText.trim() !== "" && amount === null;
 
   return (
     <div class="deposit">
@@ -93,7 +128,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
             balances={balances}
             onAsset={setAssetIndex}
             onAmount={setAmountText}
-            onMax={held ? () => setAmountText(formatUnits(held, asset.decimals)) : undefined}
+            onMax={held ? max : undefined}
             disabled={!!action.busy}
           />
           {held !== null && held !== undefined ? (
@@ -101,10 +136,12 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
               In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
             </p>
           ) : null}
-          {sent ? <Notice kind="good">{sent} is in your Chronobox.</Notice> : null}
+          {bad ? <p class="field-error">Enter the amount as a plain number, for example 1000 or 1.5.</p> : null}
+          {sent ? <Notice kind="good">{sent}</Notice> : null}
+          <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
           <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
-            Send {amount ? `${amountText} ${asset.symbol}` : ""}
+            Send {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : ""}
           </Button>
         </div>
       ) : (

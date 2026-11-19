@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
-import { savedVaults } from "../lib/store.ts";
+import { blockHints, savedVaults } from "../lib/store.ts";
 import { discover, inspect } from "../lib/chronobox.ts";
 import { Button, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
@@ -36,6 +36,9 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   const [film, setFilm] = useState(false);
   // "Get started" was pressed here: when the wallet is connected and has no Chronobox, go straight on to the setup.
   const wantsSetup = useRef(false);
+  // The wallet's network did not answer. That is not the same as "this wallet has no Chronobox".
+  const [readFailed, setReadFailed] = useState(false);
+  const [again, setAgain] = useState(0);
   const [openChain, setOpenChain] = useState(chain?.id ?? CHAINS[0].id);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     if (!session) return setRows(null);
     let stale = false;
     setRows(null);
+    setReadFailed(false);
     (async () => {
       // Chronoboxes on other networks come from this browser's memory.
       const list: Row[] = [];
@@ -60,19 +64,25 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           const here = [...found.map((f) => f.safe), ...known.map((k) => k.safe)];
           const inspected = await Promise.all(
             here.map(async (safe): Promise<Row> => {
-              const result = await inspect(session.rpc, safe).catch(() => null);
+              const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
               const title =
-                result?.state === "locked" || result?.state === "unverified"
-                  ? `Waits ${formatDuration(result.cooldown)}`
-                  : result?.state === "open"
-                    ? "Setup not finished"
-                    : "Needs a look";
+                result === null
+                  ? "Could not read it now"
+                  : result.state === "locked" || result.state === "unverified"
+                    ? `Waits ${formatDuration(result.cooldown)}`
+                    : result.state === "open"
+                      ? "Setup not finished"
+                      : "Needs a look";
               return { chain, safe, title, note: chain.name };
             }),
           );
           list.unshift(...inspected);
         } catch {
-          // The wallet could not read the chain. Show what the browser remembers.
+          // The wallet could not read the chain. Show what the browser remembers, and say so.
+          for (const saved of savedVaults()) {
+            if (saved.chainId === chain.id) list.unshift({ chain, safe: saved.safe, title: "Could not read it now", note: chain.name });
+          }
+          if (!stale) setReadFailed(true);
         }
       }
       if (!stale) setRows(list);
@@ -80,13 +90,23 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     return () => {
       stale = true;
     };
-  }, [session?.rpc, session?.account, chain]);
+  }, [session?.rpc, session?.account, chain, again]);
 
   useEffect(() => {
     if (!wantsSetup.current || !session || rows === null) return;
     wantsSetup.current = false;
-    if (rows.length === 0) location.hash = "#/new";
-  }, [session, rows]);
+    // Only when the chain was read: an unanswered question must not look like "you have none".
+    if (rows.length === 0 && !readFailed) location.hash = "#/new";
+  }, [session, rows, readFailed]);
+
+  const readNotice = readFailed ? (
+    <p class="read-failed" role="status">
+      Your wallet's network did not answer, so this list may be incomplete.{" "}
+      <button type="button" class="link-button" onClick={() => setAgain(again + 1)}>
+        Try again
+      </button>
+    </p>
+  ) : null;
 
   const openAddress = parseAddress(openText);
   const openTarget = chainById(openChain);
@@ -98,6 +118,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       <div class="start">
         <section class="home">
           <h1>Your Chronoboxes</h1>
+          {readNotice}
           <ul class="vault-list">
             {rows!.map((row) => (
               <li key={`${row.chain.id}:${row.safe}`}>
@@ -154,6 +175,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             </a>
           )}
         </div>
+        {readNotice}
       </section>
 
       <ul class="trust">

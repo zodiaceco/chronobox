@@ -95,6 +95,8 @@ async function sendAsSafe(owner: string, safe: string, calls: RawCall[]): Promis
   return (await rpc("eth_sendTransaction", [{ from: owner, to: tx.to, data: tx.data }])) as string;
 }
 
+let recent: number[] = [];
+
 function createProvider(account: string, owner: string) {
   const listeners = new Map<string, Set<Listener>>();
   const emit = (event: string, ...args: unknown[]) => {
@@ -106,6 +108,37 @@ function createProvider(account: string, owner: string) {
 
     async request({ method, params }: RequestArguments): Promise<unknown> {
       const list = Array.isArray(params) ? params : [];
+      // A wallet that misbehaves on purpose: ?fault=<name>, or set window.__fault while the page runs.
+      //   reject     the owner says no to every send
+      //   hang       a send never gets an answer
+      //   drop       a send returns a hash that is never mined (nothing is sent)
+      //   lost       a send goes out, but the wallet reports another hash (as after "speed up")
+      //   down       every read fails
+      //   busy       only six reads a second pass, the rest are refused as a rate limit
+      //   nologs     the network refuses to search old logs
+      //   otherchain the wallet is on another network than the page thinks
+      const fault = (window as { __fault?: string }).__fault;
+      if (fault) {
+        const sends = method === "eth_sendTransaction" || method === "wallet_sendCalls";
+        const asks = ["eth_accounts", "eth_requestAccounts", "eth_chainId", "wallet_switchEthereumChain", "wallet_getCapabilities"].includes(method);
+        if (fault === "reject" && sends) throw new ProviderRpcError(4001, "User rejected the request.");
+        if (fault === "hang" && sends) return new Promise(() => undefined);
+        if (fault === "drop" && method === "eth_sendTransaction") return "0x" + "de".repeat(32);
+        if (fault === "lost" && method === "eth_sendTransaction") {
+          await rpc(method, [{ ...((list[0] ?? {}) as Record<string, unknown>), from: account }]);
+          return "0x" + "ad".repeat(32);
+        }
+        if (fault === "down" && !sends && !asks) throw new ProviderRpcError(-32603, "Internal JSON-RPC error: 503 Service Unavailable");
+        if (fault === "busy" && !sends && !asks) {
+          // A rate limit as networks have it: a few requests a second pass, the rest are refused.
+          const now = Date.now();
+          recent = recent.filter((at) => now - at < 1000);
+          if (recent.length >= 6) throw new ProviderRpcError(-32005, "Too Many Requests");
+          recent.push(now);
+        }
+        if (fault === "nologs" && method === "eth_getLogs") throw new ProviderRpcError(-32005, "query returned more than 10000 results");
+        if (fault === "otherchain" && method === "eth_chainId") return "0x2105";
+      }
       switch (method) {
         case "eth_requestAccounts":
         case "eth_accounts":
@@ -165,6 +198,8 @@ function createProvider(account: string, owner: string) {
 
   return provider;
 }
+
+(window as { __fault?: string }).__fault = new URLSearchParams(location.search).get("fault") ?? undefined;
 
 const owner = pickAccount();
 const account = SAFE_MODE ? predictSafe(owner as `0x${string}`, SAFE_INDEX) : owner;

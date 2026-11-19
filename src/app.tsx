@@ -3,7 +3,7 @@ import { type Chain, CHAINS, chainById, chainByShort } from "./lib/chains.ts";
 import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress } from "./lib/hex.ts";
 import { buildChanged, lastWallet, setLastWallet } from "./lib/store.ts";
-import { type WalletOption, accountsOf, chainIdOf, errorText, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
+import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AlertsPage } from "./ui/alerts.tsx";
 import { Button, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
@@ -38,6 +38,8 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [connectOpen, setConnectOpen] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const detach = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -61,7 +63,10 @@ export function App() {
 
   const connect = useCallback(async (wallet: WalletOption, prompt: boolean) => {
     const accounts = await accountsOf(wallet.provider, prompt);
-    if (accounts.length === 0) return;
+    if (accounts.length === 0) {
+      if (prompt) throw new Error("Your wallet did not share an account. Unlock it, then try again.");
+      return;
+    }
     const chainId = await chainIdOf(wallet.provider);
     const rpc = rpcOf(wallet.provider);
     detach.current?.();
@@ -78,7 +83,20 @@ export function App() {
         setSession((s) => (s ? { ...s, account: next } : s));
       }
     };
-    const onChain = (id: string) => setSession((s) => (s ? { ...s, chainId: Number(BigInt(id)) } : s));
+    const onChain = (id: string) => {
+      // Wallets send this as hex text. One that sends something else is asked directly.
+      let next: number | null = null;
+      try {
+        next = Number(BigInt(id));
+      } catch {
+        chainIdOf(wallet.provider).then(
+          (value) => setSession((s) => (s ? { ...s, chainId: value } : s)),
+          () => undefined,
+        );
+        return;
+      }
+      setSession((s) => (s ? { ...s, chainId: next! } : s));
+    };
     wallet.provider.on?.("accountsChanged", onAccounts);
     wallet.provider.on?.("chainChanged", onChain);
     detach.current = () => {
@@ -96,12 +114,17 @@ export function App() {
   }, [wallets, session, connect]);
 
   const choose = async (wallet: WalletOption) => {
+    // One request at a time: a second one makes many wallets answer "already pending".
+    if (connecting) return;
     setConnectError(null);
+    setConnecting(wallet.id);
     try {
       await connect(wallet, true);
       setConnectOpen(false);
     } catch (e) {
       setConnectError(errorText(e));
+    } finally {
+      setConnecting(null);
     }
   };
 
@@ -158,10 +181,19 @@ export function App() {
         <h1>This Chronobox lives on {target.name}.</h1>
         <p class="lead">Your wallet is on {chain?.name ?? "another network"}. Switch to open it.</p>
         <div class="page-actions">
-          <Button kind="primary" onClick={() => switchChain(session.wallet.provider, target).catch(() => undefined)}>
+          <Button
+            kind="primary"
+            onClick={() => {
+              setSwitchError(null);
+              switchChain(session.wallet.provider, target).catch((e) => {
+                if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${target.name} in your wallet itself.`);
+              });
+            }}
+          >
             Switch to {target.name}
           </Button>
         </div>
+        {switchError ? <Notice kind="bad">{switchError}</Notice> : null}
       </section>
     );
   } else {
@@ -221,9 +253,10 @@ export function App() {
             <ul class="wallet-list">
               {wallets.map((wallet) => (
                 <li key={wallet.id}>
-                  <button type="button" onClick={() => choose(wallet)}>
+                  <button type="button" disabled={connecting !== null} onClick={() => choose(wallet)}>
                     {wallet.icon ? <img src={wallet.icon} alt="" width="28" height="28" /> : <span class="wallet-blank" />}
                     {wallet.name}
+                    {connecting === wallet.id ? <span class="wallet-wait">Look in your wallet…</span> : null}
                   </button>
                 </li>
               ))}

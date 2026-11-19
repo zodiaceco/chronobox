@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useState, useRef } from "preact/hooks";
 import type { Chain } from "../lib/chains.ts";
 import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
@@ -38,10 +38,17 @@ export function Button(props: {
   );
 }
 
-export function Modal(props: { title: string; lead?: string; wide?: boolean; onClose: () => void; children: ComponentChildren }) {
+/**
+ * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing
+ * would hide what becomes of it. A wait that gets long has its own way out ("Stop waiting").
+ */
+export function Modal(props: { title: string; lead?: string; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
+  const close = () => {
+    if (!props.busy) props.onClose();
+  };
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onClose();
+      if (event.key === "Escape") close();
     };
     document.addEventListener("keydown", onKey);
     document.body.classList.add("modal-open");
@@ -49,13 +56,13 @@ export function Modal(props: { title: string; lead?: string; wide?: boolean; onC
       document.removeEventListener("keydown", onKey);
       document.body.classList.remove("modal-open");
     };
-  }, [props.onClose]);
+  }, [props.onClose, props.busy]);
   return (
-    <div class="modal-backdrop" onClick={(event) => event.target === event.currentTarget && props.onClose()}>
+    <div class="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
       <div class={props.wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-label={props.title}>
         <div class="modal-head">
           <h2>{props.title}</h2>
-          <button type="button" class="icon-button" aria-label="Close" onClick={props.onClose}>
+          <button type="button" class="icon-button" aria-label="Close" disabled={props.busy} onClick={close}>
             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
               <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
             </svg>
@@ -139,21 +146,56 @@ export function AddressText(props: { address: Address; chain?: Chain; full?: boo
 }
 
 /** Runs one wallet action at a time and keeps its error. */
+/** What a running action gives to `sendAndWait`: a call when the wait gets long, and the wish to stop waiting. */
+export type Waiting = { onSlow: () => void; shouldStop: () => boolean };
+
+/**
+ * One thing the page does with the wallet. Only one runs at a time, so a second press does
+ * nothing. An error is shown in plain words. When the wait for the chain gets long, `slow`
+ * turns true and `stop` ends the wait (it does not undo what was sent).
+ */
 export function useAction() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const run = useCallback(async (name: string, action: () => Promise<void>) => {
+  const [slow, setSlow] = useState(false);
+  const running = useRef(false);
+  const stopped = useRef(false);
+  const run = useCallback(async (name: string, action: (waiting: Waiting) => Promise<void>) => {
+    if (running.current) return;
+    running.current = true;
+    stopped.current = false;
+    setSlow(false);
     setBusy(name);
     setError(null);
     try {
-      await action();
+      await action({ onSlow: () => setSlow(true), shouldStop: () => stopped.current });
     } catch (e) {
       setError(errorText(e));
     } finally {
+      running.current = false;
       setBusy(null);
+      setSlow(false);
     }
   }, []);
-  return { busy, error, run, clearError: () => setError(null) };
+  const stop = useCallback(() => {
+    stopped.current = true;
+  }, []);
+  // A page that is gone must not keep asking the wallet's network about its transaction.
+  useEffect(() => stop, [stop]);
+  return { busy, error, slow, run, stop, clearError: () => setError(null) };
+}
+
+/** Shown when a confirmation takes long: what to do, and a way to stop waiting. */
+export function SlowNote(props: { action: { slow: boolean; stop: () => void } }) {
+  if (!props.action.slow) return null;
+  return (
+    <p class="slow-note" role="status">
+      This takes longer than usual. Look in your wallet: the request may still wait for you there, or the network is busy.{" "}
+      <button type="button" class="link-button" onClick={props.action.stop}>
+        Stop waiting
+      </button>
+    </p>
+  );
 }
 
 /** Balances of one address for a list of assets. Null while loading or when a read failed. */

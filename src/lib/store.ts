@@ -5,7 +5,8 @@
  */
 import type { Token } from "./chains.ts";
 import { type Address, type Hex, sameAddress } from "./hex.ts";
-import type { BlockHints, DelayTx, TxCache } from "./chronobox.ts";
+import { type BlockHints, type DelayTx, type TxCache, delayTxHash } from "./chronobox.ts";
+import { parseAddress } from "./hex.ts";
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -26,8 +27,14 @@ function save(key: string, value: unknown): void {
 
 export type SavedVault = { chainId: number; safe: Address };
 
+/** What is in storage can be old, broken, or changed by hand. Only entries of the right shape are used. */
+function list<T>(key: string, valid: (entry: any) => boolean): T[] {
+  const value = load<unknown>(key, []);
+  return Array.isArray(value) ? (value.filter((entry) => entry && typeof entry === "object" && valid(entry)) as T[]) : [];
+}
+
 export function savedVaults(): SavedVault[] {
-  return load<SavedVault[]>("chronobox:vaults", []);
+  return list<SavedVault>("chronobox:vaults", (v) => Number.isInteger(v.chainId) && typeof v.safe === "string" && parseAddress(v.safe) !== null);
 }
 
 export function rememberVault(vault: SavedVault): void {
@@ -44,13 +51,18 @@ export function forgetVault(vault: SavedVault): void {
 }
 
 export function customTokens(chainId: number): Token[] {
-  return load<Token[]>(`chronobox:tokens:${chainId}`, []);
+  return list<Token>(
+    `chronobox:tokens:${chainId}`,
+    (t) => typeof t.address === "string" && parseAddress(t.address) !== null && typeof t.symbol === "string" && Number.isInteger(t.decimals) && t.decimals >= 0 && t.decimals <= 36,
+  );
 }
 
-export function addCustomToken(chainId: number, token: Token): void {
+/** Returns false when the browser did not keep the token (storage is blocked or full). */
+export function addCustomToken(chainId: number, token: Token): boolean {
   const all = customTokens(chainId);
-  if (all.some((t) => sameAddress(t.address, token.address))) return;
+  if (all.some((t) => sameAddress(t.address, token.address))) return true;
   save(`chronobox:tokens:${chainId}`, [...all, token]);
+  return customTokens(chainId).some((t) => sameAddress(t.address, token.address));
 }
 
 /** Remembers the content of queued transactions, so the logs are searched only once. */
@@ -60,7 +72,13 @@ export function txCache(chainId: number, delay: Address): TxCache {
     get(nonce: bigint, hash: Hex): DelayTx | null {
       const entry = load<{ hash: Hex; to: Address; value: string; data: Hex; operation: number } | null>(key(nonce), null);
       if (!entry || entry.hash !== hash) return null;
-      return { to: entry.to, value: BigInt(entry.value), data: entry.data, operation: entry.operation };
+      try {
+        const tx: DelayTx = { to: entry.to, value: BigInt(entry.value), data: entry.data, operation: entry.operation };
+        // Storage is not proof. The content must give the hash that is on chain.
+        return delayTxHash(tx) === hash ? tx : null;
+      } catch {
+        return null;
+      }
     },
     set(nonce: bigint, hash: Hex, tx: DelayTx): void {
       save(key(nonce), { hash, to: tx.to, value: tx.value.toString(), data: tx.data, operation: tx.operation });
