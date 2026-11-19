@@ -268,12 +268,15 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   if (progress) {
     const rows: { id: Progress[]; text: string }[] = batch
       ? [
-          { id: ["batch", "waiting"], text: parsedDeposits.length > 0 ? "Create, lock and fill your Chronobox" : "Create and lock your Chronobox" },
+          {
+            id: ["batch", "waiting"],
+            text: (parsedDeposits.length > 0 ? "Create, lock and fill your Chronobox" : "Create and lock your Chronobox") + (contribution ? `, and send your contribution of ${giveText}` : ""),
+          },
           { id: ["check"], text: "Run the safety checks" },
         ]
       : [
           { id: ["create"], text: "Create your Chronobox" },
-          { id: ["lock"], text: "Lock it" },
+          { id: ["lock"], text: contribution ? `Lock it and send your contribution of ${giveText}` : "Lock it" },
           { id: ["check"], text: "Run the safety checks" },
         ];
     const at = rows.findIndex((r) => r.id.includes(progress));
@@ -427,7 +430,13 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     );
   } else {
     screen = (
-      <Screen title="Ready?" lead={batch ? "Your wallet asks you to confirm once. If any part fails, nothing happens." : "Your wallet asks you to confirm twice: once to create, once to lock."}>
+      <Screen title="Ready?" lead={
+          batch
+            ? `Your wallet asks you to confirm once.${contribution ? ` Your contribution of ${giveText} goes with it.` : ""} If any part fails, nothing happens.`
+            : contribution
+              ? `Your wallet asks you to confirm twice: first to create your Chronobox, then to lock it and send your contribution of ${giveText}.`
+              : "Your wallet asks you to confirm twice: once to create, once to lock."
+        }>
         <dl class="wiz-summary">
           <div>
             <dt>Network</dt>
@@ -453,7 +462,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             <strong>{giveCents > 0 ? `Contribute ${giveText}` : "No contribution"}</strong>
             {contribution ? (
               <span class="wiz-give-coin">
-                about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}, sent with the {batch ? "same" : "second"} transaction
+                about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}. Your wallet shows this amount {batch ? "in the same confirmation" : "when you lock your Chronobox"}.
               </span>
             ) : null}
             <p>
