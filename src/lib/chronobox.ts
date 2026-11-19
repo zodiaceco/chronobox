@@ -485,8 +485,9 @@ export type BlockHints = {
 
 type Log = { address: Address; topics: Hex[]; data: Hex; blockNumber: Hex };
 
-const LOG_CHUNK = 10_000n;
-const LOG_CHUNKS_MAX = 80n;
+/** Sizes of the pieces, largest first. Networks differ in the range they accept. */
+const LOG_CHUNKS = [50_000n, 10_000n];
+const LOG_CHUNKS_MAX = 400n;
 
 /**
  * Every log of one contract from a block to now. Many wallet networks refuse a wide range, so
@@ -499,18 +500,27 @@ async function logsOf(rpc: Rpc, address: Address, from: bigint | null): Promise<
   } catch (error) {
     if (from === null) throw error;
     const latest = toBigInt(await rpc("eth_blockNumber", []));
-    if (latest < from || (latest - from) / LOG_CHUNK >= LOG_CHUNKS_MAX) throw error;
-    const ranges: [bigint, bigint][] = [];
-    for (let start = from; start <= latest; start += LOG_CHUNK) ranges.push([start, start + LOG_CHUNK - 1n > latest ? latest : start + LOG_CHUNK - 1n]);
-    const all: Log[] = [];
-    // A few at a time: fast enough, and not so many that the network refuses them.
-    for (let i = 0; i < ranges.length; i += 4) {
-      const parts = await Promise.all(
-        ranges.slice(i, i + 4).map(([a, b]) => rpc("eth_getLogs", [{ address, fromBlock: toQuantity(a), toBlock: toQuantity(b) }]) as Promise<Log[]>),
-      );
-      for (const part of parts) all.push(...part);
+    if (latest < from) throw error;
+    let last: unknown = error;
+    for (const chunk of LOG_CHUNKS) {
+      if ((latest - from) / chunk >= LOG_CHUNKS_MAX) continue;
+      const ranges: [bigint, bigint][] = [];
+      for (let start = from; start <= latest; start += chunk) ranges.push([start, start + chunk - 1n > latest ? latest : start + chunk - 1n]);
+      try {
+        const all: Log[] = [];
+        // A few at a time: fast enough, and not so many that the network refuses them.
+        for (let i = 0; i < ranges.length; i += 4) {
+          const parts = await Promise.all(
+            ranges.slice(i, i + 4).map(([a, b]) => rpc("eth_getLogs", [{ address, fromBlock: toQuantity(a), toBlock: toQuantity(b) }]) as Promise<Log[]>),
+          );
+          for (const part of parts) all.push(...part);
+        }
+        return all;
+      } catch (smaller) {
+        last = smaller;
+      }
     }
-    return all;
+    throw last;
   }
 }
 
@@ -601,6 +611,9 @@ async function safeSlot(rpc: Rpc, safe: Address, slot: Hex | bigint): Promise<He
   return bytes as Hex;
 }
 
+/** History checks that passed, per wallet connection (so per network). See where it is used. */
+const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
+
 export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Promise<Inspection> {
   const result: Inspection = {
     safe,
@@ -687,7 +700,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   result.roles = roles;
 
   const one = (target: Address, signature: string, type: string) => read(rpc, target, signature, [], [type]).then((r) => r[0]);
-  const [owner, avatar, target, controllers, cooldown, expiration, txNonce, queueNonce] = await Promise.all([
+  const [owner, avatar, target, controllers, cooldown, expiration, txNonce, queueNonce, delayGuard] = await Promise.all([
     one(delay, "owner()", "address") as Promise<Address>,
     one(delay, "avatar()", "address") as Promise<Address>,
     one(delay, "target()", "address") as Promise<Address>,
@@ -696,6 +709,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     one(delay, "txExpiration()", "uint256") as Promise<bigint>,
     one(delay, "txNonce()", "uint256") as Promise<bigint>,
     one(delay, "queueNonce()", "uint256") as Promise<bigint>,
+    one(delay, "getGuard()", "address") as Promise<Address>,
   ]);
   Object.assign(result, { cooldown, expiration, txNonce, queueNonce });
 
@@ -705,6 +719,8 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     "Only the Chronobox itself can change the time lock",
     "Owner, avatar and target of the Delay are the Safe",
   );
+  // The Delay asks its guard before it executes anything. A guard could refuse every withdrawal for ever.
+  const guardOk = add("delay-guard", sameAddress(delayGuard, ZERO), "Nothing can block a withdrawal", `Guard of the Delay: ${sameAddress(delayGuard, ZERO) ? "none" : delayGuard}`);
   const controllerOk = add(
     "controller",
     controllers !== null && controllers.length === 1,
@@ -737,7 +753,15 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     );
     cancelOk = wiredOk && memberOk;
     if (cancelOk) {
-      const history = await verifyCancelPermission(rpc, roles, delay, result.controller, hints);
+      // The permission can change only through the Delay, and that moves txNonce. So a history that
+      // passed is good until txNonce moves. Only a pass is kept, and only in memory.
+      const key = `${safe}:${roles}:${delay}:${result.controller}:${txNonce}`.toLowerCase();
+      const kept = passed.get(rpc)?.get(key);
+      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, result.controller, hints));
+      if (history?.ok && !kept) {
+        if (!passed.has(rpc)) passed.set(rpc, new Map());
+        passed.get(rpc)!.set(key, history);
+      }
       if (history === null) {
         cancelUnknown = true;
         result.checks.push({
@@ -753,7 +777,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     }
   }
 
-  if (singletonOk && cleanOk && ownerOk && wiringOk && controllerOk && cooldownOk && cancelOk) {
+  if (singletonOk && cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk && cancelOk) {
     result.state = cancelUnknown ? "unverified" : "locked";
   }
   return result;
@@ -766,7 +790,7 @@ export async function isHalfMade(rpc: Rpc, safe: Address, wallet: Address): Prom
 }
 
 /** Finds the vaults of a wallet on the connected chain. Stops at the first unused index. */
-export async function discover(rpc: Rpc, wallet: Address, limit = 10): Promise<{ index: number; safe: Address }[]> {
+export async function discover(rpc: Rpc, wallet: Address, limit = 100): Promise<{ index: number; safe: Address }[]> {
   const found: { index: number; safe: Address }[] = [];
   for (let index = 0; index < limit; index++) {
     const safe = predictSafe(wallet, index);
@@ -887,11 +911,12 @@ export async function readQueue(rpc: Rpc, inspection: Inspection, cache?: TxCach
       try {
         tx = await findQueuedTx(rpc, delay, nonce, createdAt, hash);
         if (tx) cache?.set(nonce, hash, tx);
+        // Only "it is not there" is remembered. A network that failed is asked again on the next refresh.
+        if (tx) notFound.delete(key);
+        else notFound.set(key, Date.now());
       } catch {
         tx = null;
       }
-      if (tx) notFound.delete(key);
-      else notFound.set(key, Date.now());
     }
     return { nonce, createdAt, hash, tx };
   };
@@ -953,7 +978,7 @@ const SETTINGS: Record<string, string> = Object.fromEntries(
 export function classify(tx: DelayTx, vault: { safe: Address; delay: Address; controller: Address; roles?: Address | null }): Action {
   // The two changes that this app builds. Anything else that touches the vault is a warning.
   const next = firstNewWallet(tx);
-  const swap = changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null);
+  const swap = changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe);
   if (next && swap && sameTx(swap, tx)) return { kind: "change-wallet", to: next };
   if (tx.operation !== 0) return { kind: "unknown" };
   if (sameAddress(tx.to, vault.delay) && tx.value === 0n && size(tx.data) === 36 && tx.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN) {

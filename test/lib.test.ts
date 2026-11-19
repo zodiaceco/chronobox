@@ -111,6 +111,9 @@ test("the two settings changes are recognised, and only in their exact form", ()
   assert.deepEqual(classify(swap, vault), { kind: "change-wallet", to: other });
   assert.equal(changeWalletTx(delay, WALLET, WALLET), null);
   assert.equal(changeWalletTx(delay, WALLET, null), null);
+  // A hand-over to the vault itself would lock it for ever. It is never shown as a clean hand-over.
+  assert.equal(changeWalletTx(delay, WALLET, SAFE, null, SAFE), null);
+  assert.equal(classify(changeWalletTx(delay, WALLET, SAFE)!, vault).kind, "unknown");
   // The same batch for another vault's Delay, or with extra bytes, is not a clean hand-over.
   assert.equal(classify(changeWalletTx(SAFE, WALLET, other)!, vault).kind, "unknown");
   assert.equal(classify({ ...swap, data: `${swap.data}00` }, vault).kind, "unknown");

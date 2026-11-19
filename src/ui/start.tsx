@@ -189,7 +189,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         </li>
         <li>
           <Tick />
-          <strong>Full privacy</strong>
+          <strong>No tracking</strong>
         </li>
         <li>
           <Tick />
@@ -197,7 +197,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         </li>
         <li>
           <Tick />
-          <strong>Fully audited</strong>
+          <strong>Audited contracts</strong>
         </li>
       </ul>
 

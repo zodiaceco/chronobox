@@ -38,6 +38,8 @@ import {
   type Receipt,
   type DelayTx,
   receiptTime,
+  MAX_COOLDOWN,
+  MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, Button, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
@@ -151,16 +153,19 @@ function useChainClock(data: VaultData | null): bigint {
   return data.now + BigInt(Math.floor((Date.now() - data.fetchedAt) / 1000));
 }
 
-/** A calendar file with "ready" and "collect it soon" for one waiting item. */
-function saveReminders(chain: Chain, safe: Address, nonce: bigint, title: string, status: ItemStatus, now: bigint) {
-  const base = `chronobox-${chain.short}-${safe.toLowerCase()}-${nonce}`;
+/**
+ * A calendar file with "ready" and "collect it soon" for one waiting item.
+ * Many calendars copy their entries to a cloud. So the file says only that something waits:
+ * no amount, no address and no link.
+ */
+function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
+  const base = `chronobox-${status.readyAt}-${nonce}`;
   const reminders = [
     {
       uid: `${base}-ready@chronobox`,
       at: Number(status.readyAt),
-      title: `Chronobox: ${title} is ready`,
-      description: `The wait has ended. Open your Chronobox to finish it.\n${location.href}`,
-      url: location.href,
+      title: "Chronobox: a withdrawal is ready",
+      description: "The wait has ended. Open your Chronobox to finish it.",
     },
   ];
   if (status.expiresAt !== null) {
@@ -168,12 +173,11 @@ function saveReminders(chain: Chain, safe: Address, nonce: bigint, title: string
     reminders.push({
       uid: `${base}-expires@chronobox`,
       at: Number(status.expiresAt - before),
-      title: `Chronobox: ${title} expires soon`,
-      description: `It expires on ${formatDate(status.expiresAt)}. After that you must ask again and wait again.\n${location.href}`,
-      url: location.href,
+      title: "Chronobox: a withdrawal expires soon",
+      description: `It expires on ${formatDate(status.expiresAt)}. After that you must ask again and wait again.`,
     });
   }
-  download(`${base}.ics`, calendarFile(reminders, Number(now)));
+  download("chronobox-reminder.ics", calendarFile(reminders, Number(now)));
 }
 
 export function VaultPage(props: { session: Session; chain: Chain; safe: Address }) {
@@ -590,9 +594,13 @@ function QueueCard(props: {
   useEffect(() => {
     if (!token || known) return;
     let stale = false;
-    readToken(props.rpc, token).then((meta) => {
-      if (meta && !stale) setTokens((t) => ({ ...t, [token.toLowerCase()]: { token, ...meta } }));
-    });
+    readToken(props.rpc, token).then(
+      (meta) => {
+        if (meta && !stale) setTokens((t) => ({ ...t, [token.toLowerCase()]: { token, ...meta } }));
+      },
+      // The network did not answer. The item stays shown with the token's address.
+      () => undefined,
+    );
     return () => {
       stale = true;
     };
@@ -635,7 +643,7 @@ function QueueCard(props: {
           </Button>
         ) : null}
         {status.phase === "waiting" ? (
-          <button type="button" class="link-button" onClick={() => saveReminders(props.chain, props.safe, item.nonce, title, status, now)}>
+          <button type="button" class="link-button" onClick={() => saveReminders(item.nonce, status, now)}>
             Add to calendar
           </button>
         ) : null}
@@ -767,7 +775,7 @@ function WithdrawSheet(props: {
           <Button kind="primary" onClick={props.onClose}>
             Done
           </Button>
-          <Button kind="quiet" onClick={() => saveReminders(props.chain, vault.safe, queued.nonce, `Withdraw ${amountLine}`, status, queued.at)}>
+          <Button kind="quiet" onClick={() => saveReminders(queued.nonce, status, queued.at)}>
             Add to calendar
           </Button>
         </div>
@@ -843,11 +851,27 @@ const DELAY_CHOICES: { label: string; seconds: bigint }[] = [
 
 function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultRef; inspection: Inspection; canCancel: boolean; onClose: () => void }) {
   const { session, vault, inspection } = props;
-  const [choice, setChoice] = useState<bigint | null>(null);
+  const [picked, setPicked] = useState<bigint | "custom" | null>(null);
+  const [customValue, setCustomValue] = useState("3");
+  const [customUnit, setCustomUnit] = useState<"hours" | "days">("days");
   const [done, setDone] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const action = useAction();
   const now = formatDuration(inspection.cooldown);
+  const custom = /^\d{1,4}$/.test(customValue) ? BigInt(customValue) * (customUnit === "days" ? 86_400n : 3_600n) : null;
+  const problem =
+    picked !== "custom"
+      ? null
+      : custom === null
+        ? "Enter a whole number."
+        : custom < MIN_COOLDOWN
+          ? `The shortest delay is ${formatDuration(MIN_COOLDOWN)}.`
+          : custom > MAX_COOLDOWN
+            ? `The longest delay is ${formatDuration(MAX_COOLDOWN)}.`
+            : custom === inspection.cooldown
+              ? "That is the delay now."
+              : null;
+  const choice = picked === "custom" ? (problem ? null : custom) : picked;
   const submit = () =>
     action.run("queue", async (waiting) => {
       const receipt = await queueItem(session, props.chain, vault, changeDelayTx(vault.delay, choice!), waiting);
@@ -875,9 +899,33 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
     >
       <div class="wiz-list" role="radiogroup" aria-label="New delay">
         {DELAY_CHOICES.filter((c) => c.seconds !== inspection.cooldown).map((c) => (
-          <Choice key={c.label} role="radio" on={choice === c.seconds} title={c.label} disabled={!!action.busy} onClick={() => setChoice(c.seconds)} />
+          <Choice key={c.label} role="radio" on={picked === c.seconds} title={c.label} disabled={!!action.busy} onClick={() => setPicked(c.seconds)} />
         ))}
+        <Choice role="radio" on={picked === "custom"} title="Another length" text="From 1 hour to 90 days" disabled={!!action.busy} onClick={() => setPicked("custom")} />
       </div>
+      {picked === "custom" ? (
+        <div class="custom-delay">
+          <input
+            class="input"
+            inputMode="numeric"
+            aria-label="Delay length"
+            disabled={!!action.busy}
+            value={customValue}
+            onInput={(event) => setCustomValue((event.target as HTMLInputElement).value.trim())}
+          />
+          <select
+            class="input select"
+            aria-label="Unit"
+            disabled={!!action.busy}
+            value={customUnit}
+            onChange={(event) => setCustomUnit((event.target as HTMLSelectElement).value as "hours" | "days")}
+          >
+            <option value="hours">hours</option>
+            <option value="days">days</option>
+          </select>
+        </div>
+      ) : null}
+      {problem ? <p class="field-error">{problem}</p> : null}
       {choice !== null && choice < inspection.cooldown ? <p class="hint">A shorter delay gives you less time to notice a withdrawal that you did not ask for.</p> : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}

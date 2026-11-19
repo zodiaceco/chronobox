@@ -114,24 +114,6 @@ export function Notice(props: { kind: "risk" | "bad" | "info" | "good"; title?: 
   );
 }
 
-export function Copy(props: { text: string; label?: string }) {
-  const [done, setDone] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(props.text);
-      setDone(true);
-      setTimeout(() => setDone(false), 1500);
-    } catch {
-      // Clipboard is blocked. The text is visible and can be selected by hand.
-    }
-  };
-  return (
-    <button type="button" class="link-button" onClick={copy}>
-      {done ? "Copied" : (props.label ?? "Copy")}
-    </button>
-  );
-}
-
 export function AddressText(props: { address: Address; chain?: Chain; full?: boolean }) {
   const text = props.full ? props.address : shortAddress(props.address);
   return props.chain ? (
@@ -236,7 +218,8 @@ export function TokenSelect(props: {
       document.removeEventListener("keydown", close);
     };
   }, [open]);
-  const current = props.assets[props.value];
+  // The list can get shorter under a remembered choice (another network). Then the first asset stands in.
+  const current = props.assets[props.value] ?? props.assets[0];
   return (
     <div class="token-select">
       <button type="button" class="token-button" aria-haspopup="listbox" aria-expanded={open} disabled={props.disabled} onClick={() => setOpen(!open)}>

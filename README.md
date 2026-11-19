@@ -98,7 +98,7 @@ Read these. They are the honest edge of what a delay can do.
 
 ## Get told: calendar
 
-Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires.
+Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires. Many calendars copy their entries to a cloud, so the file holds no amount, no address and no link.
 
 Alerts to a phone when something is queued are not part of this version yet.
 
@@ -107,7 +107,7 @@ Alerts to a phone when something is queued are not part of this version yet.
 Needs Node 22.18 or later.
 
 ```bash
-npm install --ignore-scripts
+npm ci --ignore-scripts
 npm run dev          # http://localhost:3130, with a test wallet for a local fork
 npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :8545
 ```
@@ -130,7 +130,7 @@ npm run build        # production build in out/, prints the build hash
 - a change of the delay and a change of the wallet, each after its own wait; the old wallet can then neither queue nor cancel, and the new one can
 - a contribution sent with the lock transaction arrives, and the vault stays empty
 - a Safe as the wallet: create, lock and two deposits in one transaction; a batch that cannot pay its deposit creates nothing
-- nine tampered setups (for example a second module, a second wallet that can queue, a hidden second role, a second address that can cancel, a delay of zero) are all rejected by the checks
+- ten tampered setups (for example a second module, a second wallet that can queue, a hidden second role, a second address that can cancel, a delay of zero, a guard on the Delay) are all rejected by the checks
 - a vault is "unverified", not "locked", when the RPC cannot serve the event history
 
 ## Updates

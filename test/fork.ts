@@ -390,6 +390,11 @@ try {
     { to: evilRoles, data: call("transferOwnership(address)", [STRANGER]) },
   ]);
   await tampered(5, "a delay of zero", (_evil, evilDelay) => [{ to: evilDelay, data: call("setTxCooldown(uint256)", [0n]) }]);
+  // A guard on the Delay is asked before every execution, so it can refuse every withdrawal for ever.
+  // This one answers "yes" to any question, which is all the Delay asks before it accepts a guard.
+  const GUARD: Address = "0x0000000000000000000000000000000000009a4d";
+  await rpc("anvil_setCode", [GUARD, "0x600160005260206000f3"]);
+  await tampered(10, "a guard on the Delay", (_evil, evilDelay) => [{ to: evilDelay, data: call("setGuard(address)", [GUARD]) }]);
 
   step("10b. A contribution rides in the lock transaction");
   const RECEIVER: Address = "0x000000000000000000000000000000000000c0de";

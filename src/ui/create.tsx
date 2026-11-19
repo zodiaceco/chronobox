@@ -80,6 +80,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [keepSafe, setKeepSafe] = useState(false);
   const [gladToWait, setGladToWait] = useState(false);
   const [deposits, setDeposits] = useState<{ asset: number; amount: string }[]>([{ asset: 0, amount: "" }]);
+  // Another network has other assets. A choice made for the old one does not carry over.
+  useEffect(() => setDeposits([{ asset: 0, amount: "" }]), [chain?.id]);
   // The contribution: a suggested amount in dollars, lower choices behind "Donate less", or any amount including 0.
   const [giveUsd, setGiveUsd] = useState<number>(CONTRIBUTION_USD.suggested);
   const [giveOwn, setGiveOwn] = useState("");

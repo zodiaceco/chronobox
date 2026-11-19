@@ -43,13 +43,6 @@ export function rememberVault(vault: SavedVault): void {
   save("chronobox:vaults", [...all, vault]);
 }
 
-export function forgetVault(vault: SavedVault): void {
-  save(
-    "chronobox:vaults",
-    savedVaults().filter((v) => !(v.chainId === vault.chainId && sameAddress(v.safe, vault.safe))),
-  );
-}
-
 export function customTokens(chainId: number): Token[] {
   return list<Token>(
     `chronobox:tokens:${chainId}`,
