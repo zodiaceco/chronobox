@@ -9,7 +9,7 @@ import { type Chain, CONTRACTS } from "../lib/chains.ts";
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { calendarFile, download } from "../lib/ics.ts";
-import { addCustomToken, blockHints, customTokens, rememberVault, txCache } from "../lib/store.ts";
+import { addCustomToken, blockHints, rememberVault, txCache } from "../lib/store.ts";
 import {
   type Action,
   type Inspection,
@@ -24,14 +24,13 @@ import {
   executeTx,
   inspect,
   itemStatus,
-  nativeBalance,
   queueTx,
   queuedInReceipt,
   readQueue,
+  readBalances,
   readToken,
   sendAndWait,
   skipExpiredTx,
-  tokenBalance,
   withdrawalTx,
   Replaced,
   StoppedWaiting,
@@ -42,7 +41,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, Button, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
 type VaultData = {
@@ -50,6 +49,8 @@ type VaultData = {
   queue: QueueItem[];
   /** Null where the balance could not be read. That is "not known", never "nothing". */
   balances: (bigint | null)[];
+  /** False when the long list of tokens could not be read, and only the main ones were. */
+  allRead: boolean;
   assets: Asset[];
   now: bigint;
   fetchedAt: number;
@@ -57,15 +58,6 @@ type VaultData = {
 
 type VaultRef = { safe: Address; delay: Address; controller: Address; roles?: Address | null };
 type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "checks" | null;
-
-function assetsOf(chain: Chain): Asset[] {
-  const tokens: Asset[] = [];
-  // A token that was added by hand and is also in the list shows once, or it would look like twice the money.
-  for (const t of [...chain.tokens, ...customTokens(chain.id)]) {
-    if (!tokens.some((known) => sameAddress(known.token, t.address))) tokens.push({ token: t.address, symbol: t.symbol, decimals: t.decimals });
-  }
-  return [{ token: null, symbol: chain.native.symbol, decimals: 18 }, ...tokens];
-}
 
 function useVault(session: Session, chain: Chain, safe: Address) {
   const [data, setData] = useState<VaultData | null>(null);
@@ -93,13 +85,10 @@ function useVault(session: Session, chain: Chain, safe: Address) {
         if (last.current?.inspection.state === "locked" && inspection.state !== "locked") {
           inspection = await inspect(rpc, safe, blockHints(chain.id)).catch(() => inspection);
         }
-        const balances: (bigint | null)[] =
-          inspection.state === "missing"
-            ? assets.map(() => 0n)
-            : await Promise.all(assets.map((a) => (a.token ? tokenBalance(rpc, a.token, safe) : nativeBalance(rpc, safe)).catch(() => null)));
+        const { balances, complete } = inspection.state === "missing" ? { balances: assets.map((): bigint | null => 0n), complete: true } : await readBalances(rpc, safe, assets);
         const queue = inspection.state === "locked" || inspection.state === "unverified" ? await readQueue(rpc, inspection, txCache(chain.id, inspection.delay!)) : [];
         if (stale) return;
-        const next = { inspection, queue, balances, assets, now, fetchedAt: Date.now() };
+        const next = { inspection, queue, balances, allRead: complete, assets, now, fetchedAt: Date.now() };
         last.current = next;
         setData(next);
         setError(null);
@@ -276,7 +265,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   // What is inside: every asset with a balance. The first one is shown large.
   const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown = held.length > 0 ? held : [{ asset: assets[0], amount: balances[0] ?? 0n }];
-  const unread = assets.filter((_, i) => balances[i] === null).map((a) => a.symbol);
+  const unread = assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol);
   // The item in the line that the cancel dialog is about may be gone by now.
   const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
   const passed = inspection.checks.filter((c) => c.ok).length;
@@ -306,6 +295,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             ))}
           </ul>
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
+          {unread.length === 0 && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {locked ? (
             <p class="vault-lock">
               <span class="dot" aria-hidden="true" />
@@ -1051,7 +1041,7 @@ function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void
       const address = parseAddress(text);
       if (!address) throw new Error("This is not a token address.");
       if (sameAddress(address, CONTRACTS.burn)) throw new Error("This is not a token.");
-      if (props.chain.tokens.some((t) => sameAddress(t.address, address))) throw new Error("This token is in your Chronobox's list already.");
+      if (assetsOf(props.chain).some((a) => sameAddress(a.token, address))) throw new Error("Chronobox knows this token already. It shows as soon as your Chronobox holds some.");
       const meta = await readToken(props.session.rpc, address);
       if (!meta) throw new Error(`There is no token at this address on ${props.chain.name}.`);
       if (!addCustomToken(props.chain.id, { address, ...meta })) {

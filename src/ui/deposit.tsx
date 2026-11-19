@@ -88,7 +88,8 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
         const arrived = asset.token ? arrivedInReceipt(receipt, asset.token, safe) : amount!;
         if (arrived === 0n) throw new Error(`The transaction went through, but this token did not move the money. Nothing arrived in your Chronobox.`);
         setSent(
-          arrived === amount!
+          // A token that counts in shares can round by a unit or two. That is not a fee.
+          arrived + 2n >= amount!
             ? `${formatAmount(arrived, asset.decimals)} ${symbol} is in your Chronobox.`
             : `${formatAmount(arrived, asset.decimals)} ${symbol} arrived in your Chronobox. The token kept the rest of the ${formatAmount(amount!, asset.decimals)} ${symbol}.`,
         );

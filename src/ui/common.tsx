@@ -1,9 +1,11 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState, useRef } from "preact/hooks";
-import type { Chain } from "../lib/chains.ts";
+import type { Chain, Token } from "../lib/chains.ts";
 import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { type Rpc, nativeBalance, tokenBalance } from "../lib/chronobox.ts";
+import { type Rpc, readBalances } from "../lib/chronobox.ts";
+import { customTokens } from "../lib/store.ts";
+import { moreTokens } from "../lib/token-list.ts";
 import { type WalletOption, errorText } from "../lib/wallet.ts";
 
 export type Session = {
@@ -13,7 +15,30 @@ export type Session = {
   rpc: Rpc;
 };
 
-export type Asset = { token: Address | null; symbol: string; decimals: number };
+/** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
+export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean };
+
+/**
+ * Every asset the app knows on a network: the coin, the main tokens, tokens
+ * added by hand, then the long list. An address is in it once, or it would
+ * look like twice the money.
+ */
+export function assetsOf(chain: Chain): Asset[] {
+  const seen = new Set<string>();
+  const assets: Asset[] = [{ token: null, symbol: chain.native.symbol, decimals: 18, main: true }];
+  const add = (tokens: Token[], main: boolean) => {
+    for (const t of tokens) {
+      const key = t.address.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main });
+    }
+  };
+  add(chain.tokens, true);
+  add(customTokens(chain.id), true);
+  add(moreTokens(chain.id), false);
+  return assets;
+}
 
 export function Button(props: {
   children: ComponentChildren;
@@ -187,9 +212,7 @@ export function useBalances(rpc: Rpc, holder: Address | null, assets: Asset[], r
   useEffect(() => {
     if (!holder) return setBalances([]);
     let stale = false;
-    Promise.all(
-      assets.map((a) => (a.token ? tokenBalance(rpc, a.token, holder) : nativeBalance(rpc, holder)).catch(() => null)),
-    ).then((list) => !stale && setBalances(list));
+    readBalances(rpc, holder, assets).then((read) => !stale && setBalances(read.balances));
     return () => {
       stale = true;
     };
@@ -220,6 +243,8 @@ export function TokenSelect(props: {
   }, [open]);
   // The list can get shorter under a remembered choice (another network). Then the first asset stands in.
   const current = props.assets[props.value] ?? props.assets[0];
+  // The list of known tokens is long. The picker shows the main ones, and every other one that the address holds.
+  const shown = (asset: Asset, index: number) => asset.main || index === props.value || (props.balances?.[index] ?? 0n) > 0n;
   return (
     <div class="token-select">
       <button type="button" class="token-button" aria-haspopup="listbox" aria-expanded={open} disabled={props.disabled} onClick={() => setOpen(!open)}>
@@ -234,6 +259,7 @@ export function TokenSelect(props: {
       {open ? (
         <ul class="token-list" role="listbox" aria-label="Asset">
           {props.assets.map((asset, index) => {
+            if (!shown(asset, index)) return null;
             const balance = props.balances?.[index];
             return (
               <li key={asset.token ?? "native"} role="option" aria-selected={index === props.value}>

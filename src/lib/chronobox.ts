@@ -1133,6 +1133,99 @@ export async function tokenBalance(rpc: Rpc, token: Address, holder: Address): P
   return balance as bigint;
 }
 
+const AGGREGATE3 = selector("aggregate3((address,bool,bytes)[])");
+
+/**
+ * Many read calls in one request, through Multicall3. The answer has one
+ * entry for each call: the returned data, or null where that call failed.
+ * Throws when the request as a whole fails.
+ */
+export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: Hex }[]): Promise<(Hex | null)[]> {
+  if (calls.length === 0) return [];
+  // One entry is (target, allowFailure = true, bytes callData).
+  const entries = calls.map((c) => {
+    const data = strip(c.data);
+    return word(strip(c.to)) + uintWord(1n) + uintWord(96n) + uintWord(data.length / 2) + data.padEnd(Math.ceil(data.length / 64) * 64, "0");
+  });
+  let offset = calls.length * 32;
+  const offsets = entries.map((entry) => {
+    const at = uintWord(offset);
+    offset += entry.length / 2;
+    return at;
+  });
+  const out = strip(await ethCall(rpc, CONTRACTS.multicall3, (AGGREGATE3 + uintWord(32n) + uintWord(calls.length) + offsets.join("") + entries.join("")) as Hex));
+  const numberAt = (byte: number): number => {
+    const w = out.slice(byte * 2, byte * 2 + 64);
+    if (w.length !== 64) throw new Error("The answer to a combined read is too short");
+    const n = toBigInt(w);
+    if (n > BigInt(out.length)) throw new Error("The answer to a combined read is not valid");
+    return Number(n);
+  };
+  const start = numberAt(0);
+  if (numberAt(start) !== calls.length) throw new Error("The answer to a combined read has the wrong length");
+  const base = start + 32;
+  return calls.map((_, i) => {
+    const at = base + numberAt(base + i * 32);
+    const ok = numberAt(at) !== 0;
+    const bytesAt = at + numberAt(at + 32);
+    const length = numberAt(bytesAt);
+    const data = out.slice((bytesAt + 32) * 2, (bytesAt + 32 + length) * 2);
+    if (data.length !== length * 2) throw new Error("The answer to a combined read is too short");
+    return ok ? (("0x" + data) as Hex) : null;
+  });
+}
+
+/** How many balances go into one request. Small enough for the read limits of the networks that wallets use. */
+const BALANCES_PER_READ = 100;
+
+export type Balances = {
+  /** One entry for each asset. Null where the balance is not known. That is never "nothing". */
+  balances: (bigint | null)[];
+  /** False when a combined read failed and only the main assets were read one by one. */
+  complete: boolean;
+};
+
+/**
+ * The balances of one address for a long list of assets, in a few requests.
+ * When a combined read fails, the main assets are read one by one, and the
+ * others stay "not known".
+ */
+export async function readBalances(rpc: Rpc, holder: Address, assets: readonly { token: Address | null; main?: boolean }[]): Promise<Balances> {
+  const balances: (bigint | null)[] = assets.map(() => null);
+  let complete = true;
+  const groups: number[][] = [];
+  for (let i = 0; i < assets.length; i += BALANCES_PER_READ) groups.push(assets.slice(i, i + BALANCES_PER_READ).map((_, k) => i + k));
+  await Promise.all(
+    groups.map(async (group) => {
+      try {
+        const answers = await readMany(
+          rpc,
+          group.map((i) => {
+            const token = assets[i].token;
+            return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+          }),
+        );
+        group.forEach((i, k) => {
+          const answer = answers[k];
+          // An address with no token behind it answers with nothing. That is not a balance of zero.
+          balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
+        });
+      } catch {
+        complete = false;
+        await Promise.all(
+          group
+            .filter((i) => assets[i].main)
+            .map(async (i) => {
+              const token = assets[i].token;
+              balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
+            }),
+        );
+      }
+    }),
+  );
+  return { balances, complete };
+}
+
 /** Reads symbol and decimals of a token. Returns null when the address is not an ERC-20 token. */
 export async function readToken(rpc: Rpc, token: Address): Promise<{ symbol: string; decimals: number } | null> {
   try {

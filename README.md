@@ -160,6 +160,18 @@ A possible later step: publish each release on IPFS under an ENS name whose cont
 
 `netlify.toml` builds the app and `netlify/edge-functions/gate.ts` puts a password page in front of every file. Set `CHRONOBOX_PASSWORD` in the site's environment variables. Without it the site serves nothing. To change the password, change the variable; that signs everyone out. The gate protects the preview only. The app still has no account and no server.
 
+## Tokens
+
+A Chronobox can hold any ERC-20 token. The app shows the ones it knows:
+
+- The main tokens of each network, in `src/lib/chains.ts`. The pickers always show these.
+- A long list for each network, in `src/lib/token-list.ts`. A token from it shows only when your Chronobox or your wallet holds some.
+- Tokens that you add by their address. Your browser remembers them.
+
+The app reads all balances in a few requests through your wallet, with the Multicall3 contract. It does not ask a token service, so nobody learns which address you look at. A token that is in none of the lists is not shown until you add it. It is still in your Chronobox.
+
+`npm run tokens:list -- <tokens.json>` writes the long list again from a ranked list of tokens and checks each one against the real chain. `npm run test:tokens` checks the main tokens.
+
 ## Dependencies
 
 Runtime: `preact` (UI), `@noble/hashes` (keccak-256) and `qrcode-generator` (the QR code of the deposit address). None has dependencies of its own, and all are pinned to exact versions.
@@ -173,7 +185,8 @@ The ABI encoder, the wallet connection and the dev server are small files in thi
 ```
 src/lib/chronobox.ts   setup transactions, checks, queue, withdrawals
 src/lib/abi.ts       minimal ABI encoder and decoder
-src/lib/chains.ts    contract addresses, networks, token lists
+src/lib/chains.ts    contract addresses, networks, main tokens
+src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/ui/              screens
 build.mjs            build, dev server, build hash

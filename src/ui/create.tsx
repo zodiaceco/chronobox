@@ -4,11 +4,11 @@
  * with the address to send money to. Every answer stays when you go back.
  */
 import type { ComponentChildren } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDuration, parseUnits } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { blockHints, customTokens, rememberVault } from "../lib/store.ts";
+import { blockHints, rememberVault } from "../lib/store.ts";
 import {
   EXPIRATION_SECONDS,
   coinPriceUsd,
@@ -29,7 +29,7 @@ import {
   tokenBalance,
 } from "../lib/chronobox.ts";
 import { assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
-import { type Asset, AssetAmount, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
+import { type Asset, AssetAmount, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { Mark } from "./logo.tsx";
 
@@ -140,12 +140,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     return () => clearTimeout(timer);
   }, [progress]);
 
-  const assets: Asset[] = chain
-    ? [
-        { token: null, symbol: chain.native.symbol, decimals: 18 },
-        ...[...chain.tokens, ...customTokens(chain.id)].map((t) => ({ token: t.address, symbol: t.symbol, decimals: t.decimals })),
-      ]
-    : [];
+  const assets: Asset[] = useMemo(() => (chain ? assetsOf(chain) : []), [chain]);
   const walletBalances = useBalances(session.rpc, batch ? session.account : null, assets);
 
   const cooldown: bigint | null =

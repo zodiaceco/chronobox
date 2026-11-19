@@ -12,7 +12,8 @@
     "test": "node --test test/*.test.ts",
     "fork": "anvil --fork-url https://mainnet.gateway.tenderly.co --chain-id 1 --port 8545 --silent",
     "test:fork": "node test/fork.ts",
-    "test:tokens": "node test/tokens-live.ts"
+    "test:tokens": "node test/tokens-live.ts",
+    "tokens:list": "node tools/token-list.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",

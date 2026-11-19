@@ -4,7 +4,7 @@ import { call, decode, encode, selector } from "../src/lib/abi.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { CANCEL_ROLE, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
+import { CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -167,4 +167,30 @@ test("calendar file is well formed", () => {
   assert.ok(text.includes("SUMMARY:Ready" + String.fromCharCode(92) + "; now"), "semicolons are escaped");
   assert.ok(text.includes("DESCRIPTION:Line 1" + String.fromCharCode(92) + "nLine 2"), "line breaks are escaped");
   assert.ok(text.endsWith("END:VCALENDAR\r\n"));
+});
+
+test("many balances come from one read, and a failed read is not a balance of zero", async () => {
+  const w = (n: number | bigint) => BigInt(n).toString(16).padStart(64, "0");
+  // What Multicall3 answers for three calls: 5, a failed call, and an address with no token behind it.
+  const entries = [w(1) + w(64) + w(32) + w(5), w(0) + w(64) + w(0), w(1) + w(64) + w(0)];
+  const offsets = [96, 96 + 128, 96 + 128 + 96];
+  const answer = "0x" + w(32) + w(3) + offsets.map(w).join("") + entries.join("");
+  let requests = 0;
+  const TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+  const assets = [{ token: null, main: true }, { token: TOKEN, main: true }, { token: SAFE }] as const;
+  const good = await readBalances(async () => (requests++, answer), WALLET, assets);
+  assert.deepEqual(good, { balances: [5n, null, null], complete: true });
+  assert.equal(requests, 1);
+
+  // The network has no Multicall3: the main assets are read one by one, the others stay unknown.
+  const without = await readBalances(
+    async (method, params: any[] = []) => {
+      if (method === "eth_getBalance") return "0x7";
+      if (params[0].to === TOKEN) return "0x" + w(9);
+      return "0x";
+    },
+    WALLET,
+    assets,
+  );
+  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
 });
