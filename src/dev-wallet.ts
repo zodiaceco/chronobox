@@ -127,7 +127,12 @@ function createProvider(account: string, owner: string) {
         }
         case "wallet_sendCalls": {
           if (!SAFE_MODE) throw new ProviderRpcError(-32601, "Method not found");
-          const request = list[0] as { calls: RawCall[] };
+          const request = list[0] as { calls: RawCall[]; atomicRequired?: unknown };
+          // As strict as MetaMask, so that a request it would refuse fails here too.
+          if (typeof request.atomicRequired !== "boolean") throw new ProviderRpcError(-32602, "Invalid params: atomicRequired must be a boolean");
+          request.calls.forEach((c, i) => {
+            if (c.data !== undefined && !/^0x[0-9a-f]+$/.test(c.data)) throw new ProviderRpcError(-32602, `Invalid params: calls > ${i} > data must be hex with at least one byte`);
+          });
           return { id: await sendAsSafe(owner, account, request.calls) };
         }
         case "wallet_getCallsStatus": {

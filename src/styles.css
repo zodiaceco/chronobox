@@ -634,17 +634,33 @@ a:focus-visible {
   }
 }
 
+/* The sections of the welcome page are set apart by room and by large headings, with no frames. */
 .start > .section {
-  margin-top: 88px;
-  gap: 24px;
+  margin-top: 136px;
+  gap: 36px;
 }
 
 .start > .section > h2 {
   text-align: center;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
 }
 
 .start > .section-center {
-  margin-top: 40px;
+  margin-top: 64px;
+}
+
+@media (max-width: 560px) {
+  .start > .section {
+    margin-top: 104px;
+    gap: 28px;
+  }
+  .start > .section > h2 {
+    font-size: 1.7rem;
+  }
+  .start > .section-center {
+    margin-top: 56px;
+  }
 }
 
 .film-section {
@@ -1017,7 +1033,7 @@ a:focus-visible {
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 .wiz-choice:hover {
@@ -1060,7 +1076,6 @@ a:focus-visible {
   border: 1.5px solid var(--line-strong);
   border-radius: 50%;
   color: transparent;
-  transition: background 0.18s ease, border-color 0.18s ease;
 }
 
 .wiz-tick-on {

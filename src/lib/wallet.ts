@@ -89,10 +89,9 @@ export async function switchChain(provider: Provider, chain: Chain): Promise<voi
 }
 
 /**
- * Can this wallet send several calls as one atomic transaction (EIP-5792)?
- * True for smart contract wallets such as a Safe, and for accounts that have
- * or can get EIP-7702 code. A wallet that does not know the method is a
- * plain wallet.
+ * Can this wallet send several calls as one atomic transaction (EIP-5792) today?
+ * True for smart contract wallets such as a Safe, and for accounts that already
+ * have EIP-7702 code. A wallet that does not know the method is a plain wallet.
  */
 export async function canBatch(provider: Provider, account: Address, chainId: number): Promise<boolean> {
   try {
@@ -100,8 +99,10 @@ export async function canBatch(provider: Provider, account: Address, chainId: nu
     const all = (await provider.request({ method: "wallet_getCapabilities", params: [account, [id]] })) as Record<string, any> | null;
     const entry = all?.[id] ?? all?.[id.toLowerCase()] ?? all?.[String(chainId)];
     const status = entry?.atomic?.status;
-    // "ready" means the wallet will upgrade the account when the first batch is sent.
-    return status === "supported" || status === "ready" || entry?.atomicBatch?.supported === true;
+    // "ready" means a plain account that the wallet would upgrade to a smart account when the
+    // first batch is sent. Chronobox does not start that: the wallet is the only key, and what
+    // kind of account it is stays the owner's choice. Such an account takes the plain path.
+    return status === "supported" || entry?.atomicBatch?.supported === true;
   } catch {
     return false;
   }
@@ -119,7 +120,8 @@ export async function sendBatch(
   calls: TxRequest[],
   onWaiting?: () => void,
 ): Promise<{ blockNumber: bigint | null }> {
-  const list = calls.map((c) => ({ to: c.to, data: c.data, value: toQuantity(c.value ?? 0n) }));
+  // A call that only sends ETH has no data. Wallets reject "0x" there, so the field is left out.
+  const list = calls.map((c) => ({ to: c.to, ...(c.data === "0x" ? {} : { data: c.data }), value: toQuantity(c.value ?? 0n) }));
   const base = { from: account, chainId: toQuantity(chainId), calls: list };
   let result: unknown;
   try {
@@ -127,8 +129,13 @@ export async function sendBatch(
   } catch (error) {
     const code = (error as { code?: number }).code;
     if (code === 4001 || code === 5740 || code === 5750) throw error;
-    // Wallets that implement the first draft of the standard.
-    result = await provider.request({ method: "wallet_sendCalls", params: [{ version: "1.0", ...base }] });
+    // Wallets that implement the first draft of the standard. If that fails too, the first answer is the one to show.
+    try {
+      result = await provider.request({ method: "wallet_sendCalls", params: [{ version: "1.0", ...base }] });
+    } catch (second) {
+      const again = (second as { code?: number }).code;
+      throw again === 4001 ? second : error;
+    }
   }
   const id = typeof result === "string" ? result : (result as { id?: string })?.id;
   if (!id) throw new Error("The wallet did not return a batch id.");

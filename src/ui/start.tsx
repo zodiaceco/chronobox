@@ -2,7 +2,7 @@
  * The first screen. Before a wallet is connected it says what Chronobox is and
  * offers one thing to do. After that it is the list of your Chronoboxes.
  */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
@@ -11,6 +11,12 @@ import { discover, inspect } from "../lib/chronobox.ts";
 import { Button, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
+
+// The film and its poster get a tag in their address. A new film has a new address, so no browser shows an old copy.
+// In the dev build the tag is new on every page load.
+const FILM_TAG = __DEV__ ? String(Date.now()) : __FILM__;
+const FILM = `./chronobox-film.mp4?v=${FILM_TAG}`;
+const POSTER = `./chronobox-film-poster.jpg?v=${FILM_TAG}`;
 
 type Row = { chain: Chain; safe: Address; title: string; note: string };
 
@@ -28,6 +34,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   const [opening, setOpening] = useState(false);
   const [openText, setOpenText] = useState("");
   const [film, setFilm] = useState(false);
+  // "Get started" was pressed here: when the wallet is connected and has no Chronobox, go straight on to the setup.
+  const wantsSetup = useRef(false);
   const [openChain, setOpenChain] = useState(chain?.id ?? CHAINS[0].id);
 
   useEffect(() => {
@@ -73,6 +81,12 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       stale = true;
     };
   }, [session?.rpc, session?.account, chain]);
+
+  useEffect(() => {
+    if (!wantsSetup.current || !session || rows === null) return;
+    wantsSetup.current = false;
+    if (rows.length === 0) location.hash = "#/new";
+  }, [session, rows]);
 
   const openAddress = parseAddress(openText);
   const openTarget = chainById(openChain);
@@ -123,7 +137,13 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         <p class="lead">Every withdrawal has to wait. No password, no threat and no stolen key can make it faster. Not even you can.</p>
         <div class="hero-actions">
           {!session ? (
-            <Button kind="primary" onClick={props.onConnect}>
+            <Button
+              kind="primary"
+              onClick={() => {
+                wantsSetup.current = true;
+                props.onConnect();
+              }}
+            >
               Get started
             </Button>
           ) : rows === null ? (
@@ -166,12 +186,12 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       </section>
 
       <section class="section film-section">
-        <h2>See it in 30 seconds</h2>
+        <h2>See it in 35 seconds</h2>
         {film ? (
-          <video class="film" src="./chronobox-film.mp4" poster="./chronobox-film-poster.jpg" controls autoplay playsinline />
+          <video class="film" src={FILM} poster={POSTER} controls autoplay playsinline />
         ) : (
           <button type="button" class="film film-poster" aria-label="Play the film" onClick={() => setFilm(true)}>
-            <img src="./chronobox-film-poster.jpg" alt="" width="1280" height="720" loading="lazy" />
+            <img src={POSTER} alt="" width="1280" height="720" loading="lazy" />
             <span class="film-play">
               <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
                 <path d="M8 5v14l11-7z" fill="currentColor" />

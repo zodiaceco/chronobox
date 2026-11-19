@@ -18,7 +18,7 @@
 
 import * as esbuild from "esbuild";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import { watch as fsWatch } from "node:fs";
 import http from "node:http";
@@ -30,6 +30,12 @@ const SRC = path.join(ROOT, "src");
 const STATIC = path.join(ROOT, "static");
 const args = new Set(process.argv.slice(2));
 const DEV = args.has("--dev");
+/** A short tag of the film's content. It goes into the film's address, so that a new film is never taken from a cache. */
+function filmTag() {
+  const file = path.join(STATIC, "chronobox-film.mp4");
+  return existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 10) : "none";
+}
+
 // The dev server writes to its own folder, so a production build never mixes with it.
 const OUT = path.join(ROOT, DEV ? "out-dev" : "out");
 const SOURCEMAP = DEV || args.has("--sourcemap");
@@ -57,6 +63,7 @@ function appOptions() {
     define: {
       __DEV__: JSON.stringify(DEV),
       __VERSION__: JSON.stringify(pkg.version),
+      __FILM__: JSON.stringify(filmTag()),
     },
     loader: {
       ".svg": "file",

@@ -70,6 +70,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     setStepRaw(next);
   };
   const [preset, setPreset] = useState<number | "custom">(1);
+  // The network the user tapped, until the wallet has followed.
+  const [pickedChain, setPickedChain] = useState<number | null>(null);
+  useEffect(() => setPickedChain(null), [session.chainId]);
   const [customValue, setCustomValue] = useState("3");
   const [customUnit, setCustomUnit] = useState<"hours" | "days">("days");
   const [keepSafe, setKeepSafe] = useState(false);
@@ -314,10 +317,14 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             <Choice
               key={c.id}
               role="radio"
-              on={c.id === session.chainId}
+              on={c.id === (pickedChain ?? session.chainId)}
               title={c.name}
               text={c.testnet ? "Test network. No real money." : undefined}
-              onClick={() => switchChain(session.wallet.provider, c).catch(() => undefined)}
+              onClick={() => {
+                // Show the choice at once. The wallet needs a moment, and sometimes a confirmation, to follow.
+                setPickedChain(c.id);
+                switchChain(session.wallet.provider, c).catch(() => setPickedChain(null));
+              }}
             />
           ))}
         </div>

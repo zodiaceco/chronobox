@@ -67,7 +67,7 @@ The Delay lets the setup wallet queue any transaction. The app builds three, and
 
 ### One transaction for wallets that can batch
 
-Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the create screen sends create, lock and any number of deposits as one atomic batch (`wallet_sendCalls`). If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets keep the two-transaction setup.
+Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the create screen sends create, lock and any number of deposits as one atomic batch (`wallet_sendCalls`). If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets keep the two-transaction setup. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.
 
 This is detected, not configured. It was tested on the fork with a Safe as the wallet and in the browser with a test wallet that acts as a Safe. It was not tested with Rabby, Zodiac Pilot, Safe{Wallet} or a MetaMask smart account. With a Safe as the wallet, withdrawals go back to the Safe, and a cancel is only as fast as the Safe's signers.
 
@@ -176,6 +176,10 @@ The build hash is the sha256 over the sorted lines `<path> <sha256>` of every fi
 - `Content-Security-Policy: frame-ancestors 'none'` stops other sites from showing Chronobox in a frame. This one cannot be set from inside the page.
 
 A possible later step: publish each release on IPFS under an ENS name whose content can be changed only through a Zodiac Delay. Then every update is public and waits before it goes live.
+
+### A private preview on Netlify
+
+`netlify.toml` builds the app and `netlify/edge-functions/gate.ts` puts a password page in front of every file. Set `CHRONOBOX_PASSWORD` in the site's environment variables. Without it the site serves nothing. To change the password, change the variable; that signs everyone out. The gate protects the preview only. The app still has no account and no server.
 
 ## Dependencies
 

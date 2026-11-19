@@ -1,0 +1,8 @@
+# Private preview on Netlify. Every request passes the password gate in netlify/edge-functions/gate.ts.
+# Set CHRONOBOX_PASSWORD in the site's environment variables. Without it the site serves nothing.
+[build]
+  command = "npm run build"
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "22"
