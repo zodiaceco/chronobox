@@ -42,6 +42,7 @@ import {
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
+import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
 type VaultData = {
@@ -767,10 +768,15 @@ function WithdrawSheet(props: {
     const status = itemStatus({ createdAt: queued.at }, inspection.cooldown, inspection.expiration, queued.at);
     return (
       <Modal title="The wait has started." onClose={props.onClose}>
+        <div class="sun-pass">
+          <SunPassArt size={96} />
+        </div>
         <p class="big-line">{amountLine}</p>
         <p>
-          Come back on <b>{formatDate(status.readyAt)}</b> to collect it.
-          {status.expiresAt !== null ? ` You then have ${formatDuration(inspection.expiration)}.` : ""}
+          Come back on <b>{formatDate(status.readyAt)}</b>.
+          {status.expiresAt !== null
+            ? ` You then have ${formatDuration(inspection.expiration)} to collect it. After that time, this withdrawal is no longer valid and the money stays in your Chronobox.`
+            : " Then you can collect it."}
         </p>
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>

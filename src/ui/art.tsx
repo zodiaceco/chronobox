@@ -108,6 +108,52 @@ export function SunArt(props: ArtProps & { deg?: number }) {
   );
 }
 
+/** How long one pass of the sun takes, in seconds. */
+const PASS_SECONDS = 5;
+
+/**
+ * The mark in motion: the sun rises behind the horizon, goes along its whole
+ * path once and sets. The path turns solid behind it. Then the picture settles
+ * into the mark. With reduced motion it is the mark from the start.
+ */
+export function SunPassArt(props: ArtProps) {
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (still) return <SunArt size={props.size} class={props.class} />;
+  const ease = { calcMode: "spline", keyTimes: "0;1", keySplines: "0.45 0 0.55 1" };
+  const [sunX, sunY] = at(0);
+  return (
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          {/* The pass: it is drawn behind the planet, so the sun rises and sets. */}
+          <g>
+            <path d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" opacity="0.45" />
+            <path d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">
+              <animate attributeName="stroke-dashoffset" from="100" to="0" dur={`${PASS_SECONDS}s`} fill="freeze" {...ease} />
+            </path>
+            <circle cx={sunX} cy={sunY} r="6" fill={WHITE} transform={`rotate(${-PATH_START} ${CX} ${CY})`}>
+              <animateTransform attributeName="transform" type="rotate" from={`${-PATH_START} ${CX} ${CY}`} to={`${-PATH_END} ${CX} ${CY}`} dur={`${PASS_SECONDS}s`} fill="freeze" {...ease} />
+            </circle>
+            <animate attributeName="opacity" from="1" to="0" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
+          </g>
+          {/* The mark, which comes in when the pass is over. */}
+          <g opacity="0">
+            <Path solidTo={MARK_DEG} />
+            <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
+          </g>
+        </>
+      }
+    >
+      <g opacity="0">
+        <Sun deg={MARK_DEG} />
+        <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
+      </g>
+    </Tile>
+  );
+}
+
 /** A wallet in the open sky. It is the key, and it is outside the box. */
 export function WalletArt(props: ArtProps) {
   return (

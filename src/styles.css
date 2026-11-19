@@ -1838,6 +1838,12 @@ a:focus-visible {
   letter-spacing: -0.02em;
 }
 
+.sun-pass {
+  display: grid;
+  justify-items: center;
+  margin-bottom: 4px;
+}
+
 /* The message that must not be missed. */
 .delay-callout {
   display: grid;
