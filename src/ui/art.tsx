@@ -240,15 +240,25 @@ export function NightArt(props: ArtProps) {
   );
 }
 
-/** The guardian: a second light on the same path. It keeps watch, and it is not the sun. */
+/**
+ * The guardian: a moon in the sky, off the path. The sun keeps its place on the
+ * path, as in the mark. The moon does not walk the path: it only watches.
+ * The mask has its own id, because the night picture is on the same page.
+ */
 export function GuardianArt(props: ArtProps) {
-  const deg = 42;
-  const [x, y] = at(deg);
+  const x = 47.5;
+  const y = 14.5;
+  const r = 5.2;
   return (
-    <Tile size={props.size} class={props.class} behind={<Path solidTo={MARK_DEG} gap={{ deg, half: 26 }} />}>
+    <Tile size={props.size} class={props.class} behind={<Path solidTo={MARK_DEG} />}>
       <Sun deg={MARK_DEG} />
-      <circle class="art-ping" cx={x} cy={y} r="5" fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
-      <circle cx={x} cy={y} r="5" fill="none" stroke={WHITE} stroke-width="2.6" />
+      <mask id="cb-guardian-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+        <circle cx={x} cy={y} r={r} fill="#fff" />
+        <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
+      </mask>
+      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-guardian-moon)" />
+      {/* It keeps watch. The signal shows only while the picture is in motion. */}
+      <circle class="art-ping" cx={x} cy={y} r={r + 1} fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
     </Tile>
   );
 }
