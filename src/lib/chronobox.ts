@@ -1205,10 +1205,13 @@ export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: He
 /**
  * How many balances go into one request, largest first. The reads go through the wallet's own
  * network, and free networks differ in what they accept: in the gas of one call, in the size of a
- * request and of an answer. Fifty balances are about 1.5 million gas and 11 kB, which the usual
- * free networks take. Where that fails, the same balances are asked for in pieces of twelve.
+ * request and of an answer, in how many requests they take at once. Fifty balances are about
+ * 1.5 million gas and 11 kB, which the usual free networks take. Where that fails, the same
+ * balances are asked for in smaller and smaller pieces, down to three.
  */
-const BALANCES_PER_READ = [50, 12] as const;
+const BALANCES_PER_READ = [50, 20, 8, 3] as const;
+/** How many requests of one read are on their way at the same time. A weak network refuses a crowd. */
+const READS_AT_ONCE = 4;
 
 /** The size that worked last on a connection, so that a network with tight limits is not asked the large size every time. */
 const readSize = new WeakMap<Rpc, number>();
@@ -1218,7 +1221,18 @@ export type Balances = {
   balances: (bigint | null)[];
   /** False when combined reads failed at every size and only the main assets were read one by one. */
   complete: boolean;
+  /** True when the network refused the usual size and smaller pieces had to be used. Everything was read, but slowly. */
+  reduced: boolean;
 };
+
+/** Runs the jobs a few at a time, in order. */
+async function inTurns(jobs: (() => Promise<void>)[]): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) await jobs[next++]();
+  };
+  await Promise.all(Array.from({ length: Math.min(READS_AT_ONCE, jobs.length) }, worker));
+}
 
 /**
  * The balances of one address for a long list of assets, in a few requests.
@@ -1245,10 +1259,10 @@ export async function readBalances(rpc: Rpc, holder: Address, assets: readonly {
   };
   const oneByOne = async (group: number[]) => {
     complete = false;
-    await Promise.all(
+    await inTurns(
       group
         .filter((i) => assets[i].main)
-        .map(async (i) => {
+        .map((i) => async () => {
           const token = assets[i].token;
           balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
         }),
@@ -1260,8 +1274,8 @@ export async function readBalances(rpc: Rpc, holder: Address, assets: readonly {
     const per = BALANCES_PER_READ[step];
     const pieces: number[][] = [];
     for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
-    await Promise.all(
-      pieces.map(async (piece) => {
+    await inTurns(
+      pieces.map((piece) => async () => {
         try {
           await combined(piece);
           // Only a read that was really cut to this size says something about the network.
@@ -1274,7 +1288,7 @@ export async function readBalances(rpc: Rpc, holder: Address, assets: readonly {
   };
   const start = BALANCES_PER_READ.findIndex((per) => per === readSize.get(rpc));
   await read(assets.map((_, i) => i), start < 0 ? 0 : start);
-  return { balances, complete };
+  return { balances, complete, reduced: complete && readSize.has(rpc) };
 }
 
 /** Reads symbol and decimals of a token. Returns null when the address is not an ERC-20 token. */

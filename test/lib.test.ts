@@ -185,7 +185,7 @@ test("many balances come from one read, and a failed read is not a balance of ze
   const TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const assets = [{ token: null, main: true }, { token: TOKEN, main: true }, { token: SAFE }] as const;
   const good = await readBalances(async () => (requests++, answer), WALLET, assets);
-  assert.deepEqual(good, { balances: [5n, null, null], complete: true });
+  assert.deepEqual(good, { balances: [5n, null, null], complete: true, reduced: false });
   assert.equal(requests, 1);
 
   // The network has no Multicall3: the main assets are read one by one, the others stay unknown.
@@ -198,7 +198,7 @@ test("many balances come from one read, and a failed read is not a balance of ze
     WALLET,
     assets,
   );
-  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false, reduced: false });
 
   // A network that takes only small requests: the long list is read in smaller pieces, and all of it is read.
   const many = Array.from({ length: 120 }, (_, i) => ({ token: ("0x" + (i + 1).toString(16).padStart(40, "0")) as `0x${string}` }));
@@ -212,10 +212,12 @@ test("many balances come from one read, and a failed read is not a balance of ze
   };
   const pieces = await readBalances(tight, WALLET, many);
   assert.equal(pieces.complete, true);
+  assert.equal(pieces.reduced, true, "the page can say that the network is slow");
   assert.ok(pieces.balances.every((b) => b === 3n));
-  assert.ok(sizes.includes(50) && sizes.includes(12), "the large size is tried first, then the small one");
+  assert.ok(sizes.includes(50) && sizes.includes(20), "the large size is tried first, then the next smaller one");
+  assert.ok(!sizes.includes(8), "it does not go smaller than it has to");
   // The next read on this connection starts at the size that worked.
   sizes.length = 0;
   await readBalances(tight, WALLET, many);
-  assert.ok(sizes.every((n) => n <= 12));
+  assert.ok(sizes.every((n) => n <= 20));
 });

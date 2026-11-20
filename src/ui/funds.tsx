@@ -83,6 +83,8 @@ type Funds = {
   prices: Record<string, number>;
   /** False when the wallet's network refused the combined reads, so that only the main assets could be read. */
   allRead: boolean;
+  /** True when the wallet's network took the balances only in small pieces. Everything was read, slowly. */
+  slowReads: boolean;
   now: bigint;
   fetchedAt: number;
 };
@@ -139,10 +141,12 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           return assets[i].main || (known?.[0] ?? 0n) > 0n || (known?.[1] ?? 0n) > 0n;
         });
         let allRead = true;
+        let slowReads = false;
         const readSome = async (indexes: number[]) => {
           const part = indexes.map((i) => assets[i]);
           const [mine, boxed] = await Promise.all([readBalances(reader, session.account, part), readBalances(reader, safe, part)]);
           if (!mine.complete || !boxed.complete) allRead = false;
+          if (mine.reduced || boxed.reduced) slowReads = true;
           return { mine: mine.balances, boxed: boxed.balances };
         };
 
@@ -158,7 +162,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           box[i] = first.boxed[k];
         });
         const publish = () => {
-          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], prices: { ...prices.current }, allRead, now, fetchedAt };
+          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], prices: { ...prices.current }, allRead, slowReads, now, fetchedAt };
           last.current = next;
           setData(next);
           setError(null);
@@ -485,11 +489,15 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       </div>
       {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
       {unread.length === 0 && !data.allRead ? (
-        <p class="hint">
-          The network connection of your wallet refused to read many balances at once, so only the main tokens are shown. Other tokens are not
-          gone. Choose another network connection (RPC) for {chain.name} in your wallet, add a token by its address, or switch on third-party
-          services below.
-        </p>
+        <Notice kind="risk" title="Your wallet's network connection refused to read the list of tokens.">
+          Only the main tokens are shown. Other tokens are not gone. Choose a more capable network connection (RPC) for {chain.name} in the
+          network settings of your wallet. Until then you can add a token by its address.
+        </Notice>
+      ) : data.slowReads ? (
+        <Notice kind="info" title="Your wallet's network connection is slow for this page.">
+          It takes balances only in small pieces, so this list loads slowly. Everything was read. For a faster page, choose a more capable
+          network connection (RPC) for {chain.name} in the network settings of your wallet.
+        </Notice>
       ) : null}
       {other.length > 0 ? (
         <button type="button" class="link-button funds-more" onClick={() => setShowOther(!showOther)}>
@@ -571,11 +579,12 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "lookup" ? (
         <Modal title="Third-party services" onClose={() => setSheet(null)}>
           <p>
-            <b>Off:</b> everything is read through your wallet, and no other party learns which addresses you look at. The list shows the
-            tokens that Chronobox knows and those you add yourself.
+            <b>Off, the default:</b> everything is read through your wallet, and no other party learns which addresses you look at. The list
+            shows the tokens that Chronobox knows and those you add yourself.
           </p>
           <p>
-            <b>On:</b> this page asks these services directly, so the list is complete{chain.indexer ? ", fast and ordered by value" : " sooner"}:
+            <b>On, for convenience:</b> {chain.indexer ? "you see every token you hold, what each is worth in dollars, and the page loads faster." : "the page loads faster."} This page then
+            asks these services directly:
           </p>
           <ul class="plain-list">
             {lookupServices(chain).map((service) => (
@@ -585,15 +594,18 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             ))}
           </ul>
           <p>
-            Each of them sees your IP address, the address of your wallet and the address of your Chronobox. Nothing else is sent, and no other
-            service is asked. To keep your IP address to yourself and still have this, use a VPN.
+            Each of them sees your IP address together with the address of your wallet and of your Chronobox. Nothing else is sent, and no other
+            service is asked.
           </p>
+          <Notice kind="info" title="Switch it on only behind a VPN.">
+            A VPN hides your IP address from these services, so they cannot tie your addresses to where you are. Without a VPN, leave this off.
+          </Notice>
           <p class="hint">
             {chain.indexer ? "" : `On ${chain.name} there is no explorer to ask, so this finds no new tokens and no prices. `}
-            This is for display only. The safety checks and every transaction still go through your wallet.
+            This is for display only. The safety checks and every transaction always go through your wallet.
           </p>
           <p class="hint">
-            Without it, you can add the tokens you want to see by their address. They are kept in this browser.{" "}
+            With it off, you can add the tokens you want to see by their address. They are kept in this browser.{" "}
             <button type="button" class="link-button" onClick={() => setSheet("token")}>
               Add a token
             </button>
@@ -611,7 +623,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             ) : (
               <>
                 <Button kind="primary" onClick={() => chooseLookup(true)}>
-                  Switch it on
+                  I use a VPN. Switch it on
                 </Button>
                 <Button kind="quiet" onClick={() => setSheet(null)}>
                   Keep it off
