@@ -167,7 +167,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
   useEffect(() => {
     setPrice(null);
-    if (!RECEIVER || !chain) return;
+    // A test network has no real money: the setup does not ask for a contribution there. With no price, nothing is asked.
+    if (!RECEIVER || !chain || chain.testnet) return;
     let stale = false;
     coinPriceUsd(session.rpc, chain.usdFeed).then((p) => !stale && setPrice(p));
     return () => {

@@ -41,7 +41,7 @@ Setup takes two transactions from your wallet:
 
 The hosted app can ask for a one-time contribution when a Chronobox is created. It is voluntary: the suggested amount is selected, "Donate less" shows lower amounts and a free field, and 0 is allowed. Chronobox is free software, and anybody can run it without this.
 
-- The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask.
+- The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask. On a test network it does not ask either.
 - The coin rides in the lock transaction: the wallet sends it along, and the same batch that locks the vault passes it on. Either the vault is locked and the contribution arrives, or neither happens. A plain wallet gets no third prompt.
 - The receiver is `CONTRIBUTION_RECEIVER` in `src/lib/chains.ts`, an address of Zodiac. If you host the app yourself, set it to `null` and the app asks for nothing, or set your own address. The amounts are in `CONTRIBUTION_USD`. The suggested amount is $10.
 - All contributions go to one address, so that address is a public list of vaults that contributed.
