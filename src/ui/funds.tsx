@@ -14,10 +14,10 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
-import { formatAmount, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
+import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
-import { findTokens, lookupHosts, publicRpc, withFallback } from "../lib/lookup.ts";
+import { findCoinPrice, findTokens, lookupServices, publicRpc, withFallback } from "../lib/lookup.ts";
 import { call } from "../lib/abi.ts";
 import {
   EXPIRATION_SECONDS,
@@ -29,6 +29,11 @@ import {
   StoppedWaiting,
   arrivedInReceipt,
   chainTime,
+  classify,
+  delayTxHash,
+  itemStatus,
+  queueTx,
+  withdrawalTx,
   coinPriceUsd,
   createTx,
   depositTx,
@@ -48,10 +53,10 @@ import {
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { Dial } from "./logo.tsx";
-import { type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, Tick } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Tick, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { OpenByAddress, vaultHref } from "./start.tsx";
-import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, type VaultRef, WithdrawSheet, useChainClock } from "./vault.tsx";
+import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
 
 /**
  * Where the voluntary contribution goes. A build without a receiver does not
@@ -74,6 +79,10 @@ type Funds = {
   wallet: (bigint | null)[];
   /** At the address of the Chronobox. */
   box: (bigint | null)[];
+  /** Dollars for one whole unit of an asset, by `keyOf`. From the index, so only with third-party services on. For the order of the list and a label, nothing else. */
+  prices: Record<string, number>;
+  /** False when the wallet's network refused the combined reads, so that only the main assets could be read. */
+  allRead: boolean;
   now: bigint;
   fetchedAt: number;
 };
@@ -99,6 +108,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
   const last = useRef<Funds | null>(null);
   // Tokens that the balance lookup found and the app's own lists do not have.
   const found = useRef<Asset[]>([]);
+  const prices = useRef<Record<string, number>>({});
   const refresh = useCallback((all = true) => {
     if (all) deep.current = true;
     if (reading.current) wanted.current = true;
@@ -114,7 +124,10 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
         const hints = blockHints(chain.id);
         const all = deep.current;
         deep.current = false;
-        if (!lookup) found.current = [];
+        if (!lookup) {
+          found.current = [];
+          prices.current = {};
+        }
         // Balances are for display. With the lookup on they come from a public node, and from the wallet when that fails.
         const reader = lookup ? withFallback(publicRpc(chain), rpc) : rpc;
         const listed = assetsOf(chain);
@@ -125,9 +138,11 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           const known = before.get(keyOf(assets[i]));
           return assets[i].main || (known?.[0] ?? 0n) > 0n || (known?.[1] ?? 0n) > 0n;
         });
+        let allRead = true;
         const readSome = async (indexes: number[]) => {
           const part = indexes.map((i) => assets[i]);
           const [mine, boxed] = await Promise.all([readBalances(reader, session.account, part), readBalances(reader, safe, part)]);
+          if (!mine.complete || !boxed.complete) allRead = false;
           return { mine: mine.balances, boxed: boxed.balances };
         };
 
@@ -143,7 +158,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           box[i] = first.boxed[k];
         });
         const publish = () => {
-          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], now, fetchedAt };
+          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], prices: { ...prices.current }, allRead, now, fetchedAt };
           last.current = next;
           setData(next);
           setError(null);
@@ -173,10 +188,27 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           );
         }
         if (lookup && all) {
+          // The price of the coin is one small answer. It does not wait for the list of tokens, which can be long.
+          later.push(
+            findCoinPrice(chain).then(
+              (coin) => {
+                if (coin === null || stale) return;
+                prices.current = { ...prices.current, native: coin };
+                publish();
+              },
+              () => undefined,
+            ),
+          );
           // Which other tokens do the two addresses hold? The index names them. Decimals and balances are read from the chain.
           later.push(
             (async () => {
-              const lists = await Promise.all([findTokens(chain, session.account), findTokens(chain, safe)]);
+              // The index does not know an address that has never been used. That is an empty list, not a failure.
+              const none = (): Awaited<ReturnType<typeof findTokens>> => [];
+              const lists = await Promise.all([findTokens(chain, session.account).catch(none), findTokens(chain, safe).catch(none)]);
+              const priced: Record<string, number> = {};
+              for (const t of lists.flat()) if (t.usd !== null) priced[t.address.toLowerCase()] = t.usd;
+              prices.current = { ...prices.current, ...priced };
+              if (!stale) publish();
               const fresh = lists.flat().filter((t, i, list) => list.findIndex((o) => sameAddress(o.address, t.address)) === i && !listed.some((a) => sameAddress(a.token, t.address)));
               if (fresh.length === 0 || stale) return;
               const decimals = await readMany(reader, fresh.map((t) => ({ to: t.address, data: call("decimals()") })));
@@ -337,7 +369,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   }
   if (!data) return <section class="page page-center muted">Reading your funds…</section>;
 
-  const { inspection, queue, assets, wallet, box } = data;
+  const { inspection, queue, assets, wallet, box, prices } = data;
   const mine = (inspection.state === "locked" || inspection.state === "unverified") && sameAddress(inspection.controller, session.account);
   // The lock is not on yet. It goes on with the first money that is locked.
   const fresh = inspection.state === "missing" || (inspection.state === "open" && sameAddress(inspection.owners[0], session.account));
@@ -352,9 +384,20 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const held = assets
     .map((asset, i) => ({ asset, index: i, unlocked: wallet[i], locked: mine ? box[i] : 0n, loose: mine ? 0n : (box[i] ?? 0n) }))
     .filter((r) => r.index === 0 || (r.unlocked ?? 0n) > 0n || (r.locked ?? 0n) > 0n);
-  // Tokens that only the lookup knows can be anything, also something that was sent to the wallet unasked. They are shown on request.
-  const other = held.filter((r) => r.asset.found && !((r.locked ?? 0n) > 0n));
-  const rows = held.filter((r) => showOther || !other.includes(r));
+  // What a row is worth in dollars, where the index has a price. Null where it has none.
+  const worth = (r: (typeof held)[number]): number | null => {
+    const price = prices[keyOf(r.asset)];
+    return price === undefined ? null : (Number((r.unlocked ?? 0n) + (r.locked ?? 0n)) / 10 ** r.asset.decimals) * price;
+  };
+  // A token that only the index knows and that has no price can be anything, also something that was sent to the wallet unasked. Those are shown on request.
+  const other = held.filter((r) => r.asset.found && worth(r) === null && !((r.locked ?? 0n) > 0n));
+  // With prices: the most valuable first. What has no price keeps its place after that. Without prices the order is the app's own.
+  const rows = held
+    .filter((r) => showOther || !other.includes(r))
+    .map((r, i) => ({ r, i, usd: worth(r) }))
+    .sort((a, b) => (a.usd === null && b.usd === null ? a.i - b.i : a.usd === null ? 1 : b.usd === null ? -1 : b.usd - a.usd || a.i - b.i))
+    .map(({ r, usd }) => ({ ...r, usd }));
+  const dollars = (usd: number) => (usd >= 1 ? `about $${Math.round(usd).toLocaleString("en-US")}` : usd >= 0.01 ? `about $${usd.toFixed(2)}` : "under $0.01");
   // Money at the address of the Chronobox while the time lock is off. It is not protected.
   // A token that only the lookup knows does not count: anybody can send such a token to any address.
   const loose = assets.map((asset, i) => ({ asset, amount: mine || asset.found ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
@@ -366,7 +409,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
     setPreset(null);
     refresh();
   };
-  const amount = (value: bigint | null, asset: Asset) => (value === null ? "–" : formatAmount(value, asset.decimals, 6));
+  // A large amount needs no long tail of decimals, and with one it does not fit its column.
+  const amount = (value: bigint | null, asset: Asset) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 10_000n * 10n ** BigInt(asset.decimals) ? 2 : 6));
 
   return (
     <section class="page vault funds">
@@ -420,7 +464,13 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
               </span>
               <span class="funds-symbol">
                 {r.asset.symbol}
-                {r.asset.found && r.asset.token ? <small>{shortAddress(r.asset.token)} · unlisted</small> : null}
+                {r.usd !== null || (r.asset.found && r.asset.token) ? (
+                  <small>
+                    {r.usd !== null ? dollars(r.usd) : ""}
+                    {r.usd !== null && r.asset.found ? " · " : ""}
+                    {r.asset.found && r.asset.token ? shortAddress(r.asset.token) : ""}
+                  </small>
+                ) : null}
               </span>
             </span>
             <span class="funds-num" role="cell">
@@ -434,13 +484,20 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         ))}
       </div>
       {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
+      {unread.length === 0 && !data.allRead ? (
+        <p class="hint">
+          The network connection of your wallet refused to read many balances at once, so only the main tokens are shown. Other tokens are not
+          gone. Choose another network connection (RPC) for {chain.name} in your wallet, add a token by its address, or switch on third-party
+          services below.
+        </p>
+      ) : null}
       {other.length > 0 ? (
         <button type="button" class="link-button funds-more" onClick={() => setShowOther(!showOther)}>
           {showOther ? "Hide the other tokens" : `Show ${other.length} other ${other.length === 1 ? "token" : "tokens"}`}
         </button>
       ) : !lookup ? (
         <button type="button" class="link-button funds-more" onClick={() => setSheet("lookup")}>
-          A token is missing? Find all my tokens
+          A token is missing? Find all my tokens and their value
         </button>
       ) : null}
 
@@ -474,7 +531,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         ) : null}
       </p>
 
-      {vault ? <QueueSection session={session} chain={chain} vault={vault} inspection={inspection} queue={queue} assets={assets} now={now} canCancel={canCancel} refresh={() => refresh()} /> : null}
+      {vault ? <QueueSection session={session} chain={chain} vault={vault} inspection={inspection} queue={queue} assets={assets} now={now} canCancel={canCancel} batch={batch} refresh={() => refresh()} /> : null}
 
       <ul class="rows">
         {mine ? <Row label="Lock from elsewhere" value={shortAddress(safe)} onClick={verified ? () => setSheet("receive") : undefined} /> : null}
@@ -488,7 +545,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
           />
         ) : null}
         <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
-        <Row label="Balance lookup" value={lookup ? "On" : "Through your wallet"} onClick={() => setSheet("lookup")} />
+        <Row label="Third-party services" value={lookup ? "On" : "Off"} onClick={() => setSheet("lookup")} />
       </ul>
 
       <OpenOther chain={chain} />
@@ -496,7 +553,10 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "lock" ? (
         <LockSheet session={session} chain={chain} safe={safe} inspection={inspection} assets={assets} wallet={wallet} loose={loose.length > 0} batch={batch} preset={preset ?? 0} onChanged={() => refresh()} onClose={close} />
       ) : null}
-      {sheet === "unlock" && vault ? (
+      {sheet === "unlock" && vault && batch ? (
+        <UnlockManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+      ) : null}
+      {sheet === "unlock" && vault && !batch ? (
         <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "receive" ? (
@@ -509,17 +569,34 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? <ChecksSheet inspection={inspection} onClose={() => setSheet(null)} /> : null}
       {sheet === "lookup" ? (
-        <Modal title="Balance lookup" onClose={() => setSheet(null)}>
+        <Modal title="Third-party services" onClose={() => setSheet(null)}>
           <p>
-            Chronobox reads everything through your wallet. That is private, but it can be slow, and it shows only the tokens that Chronobox knows.
+            <b>Off:</b> everything is read through your wallet, and no other party learns which addresses you look at. The list shows the
+            tokens that Chronobox knows and those you add yourself.
           </p>
           <p>
-            With the lookup on, this page asks public services directly for your balances{chain.indexer ? " and for the list of tokens you hold" : ""}:{" "}
-            <b>{lookupHosts(chain).join(", ")}</b>. They see your IP address, your wallet address and the address of your Chronobox.
+            <b>On:</b> this page asks these services directly, so the list is complete{chain.indexer ? ", fast and ordered by value" : " sooner"}:
+          </p>
+          <ul class="plain-list">
+            {lookupServices(chain).map((service) => (
+              <li key={service.host}>
+                <b>{service.host}</b>, {service.what}
+              </li>
+            ))}
+          </ul>
+          <p>
+            Each of them sees your IP address, the address of your wallet and the address of your Chronobox. Nothing else is sent, and no other
+            service is asked. To keep your IP address to yourself and still have this, use a VPN.
           </p>
           <p class="hint">
-            {chain.indexer ? "" : `On ${chain.name} there is no token list to ask, so this makes balances faster and finds no new tokens. `}
-            The lookup is for display only. The safety checks and every transaction still go through your wallet.
+            {chain.indexer ? "" : `On ${chain.name} there is no explorer to ask, so this finds no new tokens and no prices. `}
+            This is for display only. The safety checks and every transaction still go through your wallet.
+          </p>
+          <p class="hint">
+            Without it, you can add the tokens you want to see by their address. They are kept in this browser.{" "}
+            <button type="button" class="link-button" onClick={() => setSheet("token")}>
+              Add a token
+            </button>
           </p>
           <div class="modal-actions">
             {lookup ? (
@@ -537,7 +614,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
                   Switch it on
                 </Button>
                 <Button kind="quiet" onClick={() => setSheet(null)}>
-                  Keep everything in my wallet
+                  Keep it off
                 </Button>
               </>
             )}
@@ -550,6 +627,193 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
 
 type Line = { asset: Asset; index: number; amount: bigint };
 type Step = { id: string; text: string };
+
+type Entry = { asset: number; amount: string };
+
+/**
+ * Several assets at once, for a wallet that can send them as one: tick the ones you want, and
+ * change the amount if it should not be all of it.
+ */
+function Picker(props: { assets: Asset[]; available: (bigint | null)[]; entries: Entry[]; most: (index: number) => bigint; onChange: (entries: Entry[]) => void; disabled?: boolean }) {
+  const { assets, available, entries } = props;
+  const shown = assets.map((asset, index) => ({ asset, index })).filter((a) => (available[a.index] ?? 0n) > 0n || entries.some((e) => e.asset === a.index));
+  if (shown.length === 0) return <p class="hint">There is nothing here to choose from.</p>;
+  return (
+    <ul class="picker">
+      {shown.map(({ asset, index }) => {
+        const entry = entries.find((e) => e.asset === index);
+        const toggle = () => {
+          if (entry) return props.onChange(entries.filter((e) => e.asset !== index));
+          const most = props.most(index);
+          props.onChange([...entries, { asset: index, amount: most > 0n ? formatUnits(most, asset.decimals) : "" }]);
+        };
+        return (
+          <li key={keyOf(asset)} class={entry ? "picker-row picker-on" : "picker-row"}>
+            <button type="button" class="picker-toggle" role="checkbox" aria-checked={!!entry} disabled={props.disabled} onClick={toggle}>
+              <Tick on={!!entry} />
+              <span class="picker-name">
+                <strong>{asset.symbol}</strong>
+                <small>{available[index] === null ? "" : `${formatAmount(available[index]!, asset.decimals, 6)} available`}</small>
+              </span>
+            </button>
+            {entry ? (
+              <input
+                class="input picker-amount"
+                inputMode="decimal"
+                autocomplete="off"
+                aria-label={`Amount of ${asset.symbol}`}
+                value={entry.amount}
+                disabled={props.disabled}
+                onInput={(event) => props.onChange(entries.map((e) => (e.asset === index ? { ...e, amount: (event.target as HTMLInputElement).value } : e)))}
+              />
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * Unlocks several assets with one confirmation, for a wallet that can send several calls as one.
+ * Each asset becomes its own item in the line of the time lock. They start their wait together,
+ * and the page shows them as one group that is collected with one confirmation.
+ */
+function UnlockManySheet(props: {
+  session: Session;
+  chain: Chain;
+  vault: VaultRef;
+  inspection: Inspection;
+  assets: Asset[];
+  balances: (bigint | null)[];
+  queue: QueueItem[];
+  now: bigint;
+  canCancel: boolean;
+  onClose: () => void;
+}) {
+  const { session, chain, vault, inspection, assets } = props;
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
+  const [agreed, setAgreed] = useState(false);
+  const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
+  const action = useAction();
+
+  // What is in the line already will take its part out first.
+  const available = useMemo(() => {
+    const reserved = new Map<string, bigint>();
+    for (const item of props.queue) {
+      if (!item.tx) continue;
+      if (itemStatus(item, inspection.cooldown, inspection.expiration, props.now).phase === "expired") continue;
+      const a = classify(item.tx, vault);
+      if (a.kind === "withdraw" || a.kind === "transfer-elsewhere") {
+        const key = a.token?.toLowerCase() ?? "native";
+        reserved.set(key, (reserved.get(key) ?? 0n) + a.amount);
+      }
+    }
+    return assets.map((asset, i) => {
+      const inside = props.balances[i];
+      const taken = reserved.get(keyOf(asset)) ?? 0n;
+      return inside === null ? null : inside > taken ? inside - taken : 0n;
+    });
+  }, [props.queue, props.balances, assets, vault, inspection.cooldown, inspection.expiration, props.now]);
+
+  const parsed = entries.map((e) => ({ index: e.asset, asset: assets[e.asset], amount: parseUnits(e.amount, assets[e.asset].decimals) }));
+  const lines = parsed.filter((p): p is Line => !!p.amount).sort((a, b) => a.index - b.index);
+  const over = lines.find((l) => l.amount > (available[l.index] ?? 0n));
+  const problem = parsed.some((p) => p.amount === null || p.amount === 0n)
+    ? "Enter each amount as a plain number above zero, for example 1000 or 1.5."
+    : over
+      ? `You can unlock up to ${formatAmount(available[over.index] ?? 0n, over.asset.decimals, 6)} ${over.asset.symbol}.`
+      : null;
+  const delayText = formatDuration(inspection.cooldown);
+  const listText = lines.map((l) => `${formatAmount(l.amount, l.asset.decimals, 6)} ${l.asset.symbol}`).join(", ");
+
+  const submit = () =>
+    action.run("queue", async (waiting) => {
+      if (!sameAddress(vault.controller, session.account)) throw new Error(`Your wallet is on another account now. Only the wallet ${shortAddress(vault.controller)} can do this.`);
+      const txs = lines.map((l) => withdrawalTx(vault.controller, l.asset.token, l.amount));
+      // The items get the next numbers in the line. Their content is kept here, so that the page can show them without
+      // reading old records. What is kept is used only when it gives the hash that is on chain.
+      const seen = await inspect(session.rpc, vault.safe, blockHints(chain.id), { historyLater: true });
+      const cache = txCache(chain.id, vault.delay);
+      txs.forEach((tx, i) => cache.set(seen.queueNonce + BigInt(i), delayTxHash(tx), tx));
+      await assertWallet(session.rpc, session.account, chain.id, chain.name);
+      try {
+        await sendBatch(session.wallet.provider, session.account, chain.id, txs.map((tx) => queueTx(vault.delay, tx)), undefined, waiting.shouldStop);
+      } catch (e) {
+        if (e instanceof BatchUnknown) return setStage("unknown");
+        throw e;
+      }
+      setQueued({ nonce: seen.queueNonce, at: await chainTime(session.rpc) });
+      setStage("done");
+    });
+
+  if (stage === "unknown") return <UnknownSheet onClose={props.onClose} />;
+  if (stage === "done" && queued) {
+    const status = itemStatus({ createdAt: queued.at }, inspection.cooldown, inspection.expiration, queued.at);
+    return (
+      <Modal title="The wait has started." onClose={props.onClose}>
+        <div class="sun-pass">
+          <Dial size={96} play="drain" />
+        </div>
+        <p class="big-line">{listText}</p>
+        <p>
+          Come back on <b>{formatDate(status.readyAt)}</b>.
+          {status.expiresAt !== null
+            ? ` You then have ${formatDuration(inspection.expiration)} to collect it, all with one confirmation. After that time, this request is no longer valid and the money stays locked.`
+            : " Then you can collect it, all with one confirmation."}
+        </p>
+        <div class="modal-actions">
+          <Button kind="primary" onClick={props.onClose}>
+            Done
+          </Button>
+          <Button kind="quiet" onClick={() => saveReminders(queued.nonce, status, queued.at)}>
+            Add to calendar
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+  if (stage === "confirm") {
+    return (
+      <Modal title={`Unlock ${listText}`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+        <div class="delay-callout">
+          <span class="delay-callout-label">This takes</span>
+          <span class="delay-callout-value">{delayText}</span>
+        </div>
+        <ul class="plain-list">
+          <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
+          {props.canCancel ? <li>You can cancel it while it waits.</li> : null}
+          <li>
+            After the wait, you come back here and collect it. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
+          </li>
+        </ul>
+        <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
+        <SlowNote action={action} />
+        {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+        <div class="modal-actions">
+          <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
+            {action.busy ? "Confirm in your wallet" : "Start the wait"}
+          </Button>
+          <Button kind="quiet" onClick={() => setStage("form")} disabled={!!action.busy}>
+            Back
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+  return (
+    <Modal title="Unlock" lead="What do you need? Tick one or several." onClose={props.onClose}>
+      <Picker assets={assets} available={available} entries={entries} most={(index) => available[index] ?? 0n} onChange={setEntries} />
+      {problem ? <p class="field-error">{problem}</p> : <p class="hint">After {delayText}, you collect all of it here with one confirmation.</p>}
+      <div class="modal-actions">
+        <Button kind="primary" disabled={lines.length === 0 || !!problem} onClick={() => setStage("confirm")}>
+          Continue
+        </Button>
+      </div>
+    </Modal>
+  );
+}
 
 /**
  * Locks money: moves it from the wallet into the Chronobox. The first time, the same press also
@@ -576,12 +840,14 @@ function LockSheet(props: {
   const { session, chain, safe, assets, batch } = props;
   // What the page knew when the sheet opened. Every press reads the chain again.
   const [first] = useState(props.inspection.state === "missing" || props.inspection.state === "open");
-  const [entries, setEntries] = useState<{ asset: number; amount: string }[]>([{ asset: props.preset, amount: "" }]);
+  // A wallet that batches ticks assets in a list. A plain wallet starts with one line.
+  const [entries, setEntries] = useState<Entry[]>(batch ? [] : [{ asset: props.preset, amount: "" }]);
   const [delay, setDelay] = useState<number | "custom">(1);
   const [customValue, setCustomValue] = useState("3");
   const [customUnit, setCustomUnit] = useState<"hours" | "days">("days");
   const [agreed, setAgreed] = useState(false);
-  const [giveUsd, setGiveUsd] = useState<number>(CONTRIBUTION_USD.suggested);
+  const [giveUsd, setGiveUsd] = useState<number>(first ? CONTRIBUTION_USD.suggested : 0);
+  const [giveOpen, setGiveOpen] = useState(false);
   const [giveOwn, setGiveOwn] = useState("");
   const [giveLess, setGiveLess] = useState(false);
   const [price, setPrice] = useState<bigint | null>(null);
@@ -600,9 +866,11 @@ function LockSheet(props: {
   // Lines whose money has moved. A second press does not send them again.
   const sent = useRef(new Set<number>());
   const notes = useRef<string[]>([]);
+  // The contribution has been sent. A second press does not send it again.
+  const gave = useRef(false);
 
   useEffect(() => {
-    if (!first || !RECEIVER) return;
+    if (!RECEIVER) return;
     let stale = false;
     coinPriceUsd(session.rpc, chain.usdFeed).then((p) => !stale && setPrice(p));
     return () => {
@@ -646,7 +914,7 @@ function LockSheet(props: {
   const ownCents = /^[0-9]{1,5}([.][0-9]{1,2})?$/.test(ownText) ? Math.round(Number(ownText) * 100) : null;
   const giveProblem = ownText !== "" && ownCents === null ? "Enter an amount in dollars, for example 5. Enter 0 to give nothing." : null;
   const giveCents = ownText !== "" ? (ownCents ?? 0) : giveUsd * 100;
-  const asks = first && !!RECEIVER && price !== null;
+  const asks = !!RECEIVER && price !== null;
   const contribution = asks && giveCents > 0 && !giveProblem ? { to: RECEIVER!, amount: usdToCoin(BigInt(giveCents), price!) } : null;
   const giveText = `$${giveCents % 100 === 0 ? giveCents / 100 : (giveCents / 100).toFixed(2)}`;
 
@@ -676,12 +944,17 @@ function LockSheet(props: {
   const ready = !amountProblem && !cooldownProblem && !giveProblem && (first ? agreed && (!nothing || props.loose) : !nothing);
   const listText = (list: Line[]) => list.map((l) => `${formatAmount(l.amount, l.asset.decimals, 6)} ${l.asset.symbol}`).join(", ");
 
+  /** The most of an asset that can be locked: all of it, less what the wallet needs for the fee and the contribution. */
+  const most = (index: number): bigint => {
+    const held = props.wallet[index] ?? 0n;
+    const left = index === 0 ? held - (contribution?.amount ?? 0n) - feeRoom : held;
+    return left > 0n ? left : 0n;
+  };
   const max = (row: number) => {
     const index = entries[row].asset;
-    const held = props.wallet[index];
-    if (!held) return;
-    const most = index === 0 ? held - (contribution?.amount ?? 0n) - feeRoom : held;
-    setEntries((all) => all.map((e, k) => (k === row ? { ...e, amount: most > 0n ? formatUnits(most, assets[index].decimals) : "0" } : e)));
+    if (!props.wallet[index]) return;
+    const top = most(index);
+    setEntries((all) => all.map((e, k) => (k === row ? { ...e, amount: top > 0n ? formatUnits(top, assets[index].decimals) : "0" } : e)));
   };
 
   /** Is the Chronobox finished, with the time that was chosen? "Not there yet" is asked again before it counts. */
@@ -732,7 +1005,7 @@ function LockSheet(props: {
         chosen = seen.cooldown;
       }
       const todo = lines.filter((l) => !sent.current.has(l.index));
-      const give = setup ? contribution : null;
+      const give = gave.current ? null : contribution;
 
       // Does the wallet hold what is asked for? Read now, not when the sheet opened.
       const involved = [...new Set([0, ...todo.map((l) => l.index)])];
@@ -769,9 +1042,10 @@ function LockSheet(props: {
         plan.push({ id: "check", text: "Run the safety checks" });
         for (const line of tokens) plan.push({ id: `line-${line.index}`, text: `Lock ${listText([line])}` });
       } else if (batch) {
-        plan.push({ id: "all", text: `Lock ${listText(todo)}` });
+        plan.push({ id: "all", text: `Lock ${listText(todo)}` + giveLine });
       } else {
         for (const line of todo) plan.push({ id: `line-${line.index}`, text: `Lock ${listText([line])}` });
+        if (give) plan.push({ id: "give", text: `Send your contribution of ${giveText}` });
       }
       setSteps(plan);
       setFinished([]);
@@ -788,6 +1062,7 @@ function LockSheet(props: {
           if (landed.blockNumber !== null) hints.set(predictRoles(safe), landed.blockNumber);
           setWaiting(false);
           done("all");
+          gave.current = true;
           rest = [];
         } else {
           if (seen.state === "missing") {
@@ -803,6 +1078,7 @@ function LockSheet(props: {
           const receipt = await sendAndWait(rpc, session.account, lockTx(session.account, safe, chosen, EXPIRATION_SECONDS, give, coin), send);
           hints.set(predictRoles(safe), BigInt(receipt.blockNumber));
           done("switch");
+          gave.current = true;
           rest = tokens;
         }
         setAt("check");
@@ -830,13 +1106,14 @@ function LockSheet(props: {
           session.wallet.provider,
           session.account,
           chain.id,
-          rest.map((l) => depositTx(safe, l.asset.token, l.amount)),
+          [...rest.map((l) => depositTx(safe, l.asset.token, l.amount)), ...(give && !gave.current ? [{ to: give.to, data: "0x" as const, value: give.amount }] : [])],
           () => setWaiting(true),
           () => stop.current,
         );
         moving = false;
         setWaiting(false);
         for (const line of rest) sent.current.add(line.index);
+        if (give) gave.current = true;
         done("all");
       } else {
         for (const line of rest) {
@@ -854,6 +1131,13 @@ function LockSheet(props: {
           }
         }
       }
+      if (give && !gave.current) {
+        // A plain wallet sends the contribution of a later lock as a step of its own, after the money is locked.
+        setAt("give");
+        await sendAndWait(rpc, session.account, { to: give.to, data: "0x", value: give.amount }, send);
+        gave.current = true;
+        done("give");
+      }
       setResult({ lines: lines.filter((l) => sent.current.has(l.index)), cooldown: chosen, unverified, notes: notes.current });
       setStage("done");
     } catch (e) {
@@ -865,6 +1149,7 @@ function LockSheet(props: {
         if (state === "locked" || state === "unverified") {
           // The lock is on. What rode along with it has moved.
           for (const line of lines) if (batch || line.index === 0) sent.current.add(line.index);
+          gave.current = true;
           const left = lines.filter((l) => !sent.current.has(l.index));
           if (left.length === 0) {
             setResult({ lines, cooldown: chosen, unverified: state === "unverified", notes: notes.current });
@@ -988,10 +1273,85 @@ function LockSheet(props: {
     );
   }
 
-  const count = batch ? 1 : (first ? (props.inspection.state === "missing" ? 2 : 1) : 0) + lines.filter((l) => !(first && l.index === 0)).length;
+  const count = batch ? 1 : (first ? (props.inspection.state === "missing" ? 2 : 1) : 0) + lines.filter((l) => !(first && l.index === 0)).length + (contribution && !first ? 1 : 0);
+  const givePills = (none: boolean) => (
+    <div class="wiz-give-less">
+      <div class="pills" role="radiogroup" aria-label="Contribution">
+        {[CONTRIBUTION_USD.suggested, ...CONTRIBUTION_USD.less, ...(none ? [0] : [])].map((usd) => (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={ownText === "" && giveUsd === usd}
+            class={ownText === "" && giveUsd === usd ? "pill pill-on" : "pill"}
+            key={usd}
+            onClick={() => {
+              setGiveUsd(usd);
+              setGiveOwn("");
+            }}
+          >
+            {usd === 0 ? "None" : `$${usd}`}
+          </button>
+        ))}
+        <label class="wiz-give-own">
+          <span aria-hidden="true">$</span>
+          <input class="input" inputMode="decimal" aria-label="Another amount in dollars" placeholder={String(CONTRIBUTION_USD.hint)} value={giveOwn} onInput={(event) => setGiveOwn((event.target as HTMLInputElement).value)} />
+        </label>
+      </div>
+      {giveProblem ? <p class="field-error">{giveProblem}</p> : null}
+    </div>
+  );
+  const giveCoin = contribution ? (
+    <span class="wiz-give-coin">
+      about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}, with this lock.
+    </span>
+  ) : null;
+  // The first lock asks plainly, with an amount selected. Every later lock offers it in one quiet line.
+  const giveBox = !asks ? null : first ? (
+    <div class="wiz-give">
+      <strong>{giveCents > 0 ? `Contribute ${giveText}` : "No contribution"}</strong>
+      {giveCoin}
+      <p>
+        Your contribution keeps Chronobox secure. It funds more audits of the contracts underneath and pays for this app, so that Chronobox
+        needs no other business model, such as selling your data.
+      </p>
+      {giveLess ? (
+        givePills(false)
+      ) : (
+        <button type="button" class="link-button" onClick={() => setGiveLess(true)}>
+          Donate less
+        </button>
+      )}
+    </div>
+  ) : giveOpen ? (
+    <div class="wiz-give wiz-give-quiet">
+      <strong>{giveCents > 0 ? `Contribute ${giveText}` : "Add a contribution"}</strong>
+      {giveCoin}
+      {givePills(true)}
+      <p>It funds more audits and pays for this app, so that Chronobox never has to sell your data.</p>
+    </div>
+  ) : (
+    <p class="hint give-ask">
+      Chronobox lives on contributions, not on your data.{" "}
+      <button
+        type="button"
+        class="link-button"
+        onClick={() => {
+          setGiveOpen(true);
+          setGiveUsd(CONTRIBUTION_USD.less[0] ?? CONTRIBUTION_USD.suggested);
+        }}
+      >
+        Add one to this lock
+      </button>
+    </p>
+  );
+
   return (
     <Modal title={first && nothing && props.loose ? "Switch on the time lock" : "Lock"} lead="Locked money cannot leave in a hurry. To get it back, you unlock it and wait." onClose={props.onClose}>
       <div class="wiz-fund">
+        {batch ? (
+          <Picker assets={assets} available={props.wallet} entries={entries} most={most} onChange={setEntries} />
+        ) : (
+          <>
         {entries.map((entry, row) => (
           <div class="deposit-row" key={row}>
             <AssetAmount
@@ -1015,6 +1375,8 @@ function LockSheet(props: {
         <button type="button" class="link-button" onClick={() => setEntries((all) => [...all, { asset: 0, amount: "" }])}>
           Add another asset
         </button>
+          </>
+        )}
         {amountProblem ? <p class="field-error">{amountProblem}</p> : null}
       </div>
 
@@ -1055,50 +1417,13 @@ function LockSheet(props: {
             text={`No new key is created. My wallet ${shortAddress(session.account)} is the only way to unlock. If I lose access to it, the locked money is gone.`}
             onClick={() => setAgreed(!agreed)}
           />
-          {asks ? (
-            <div class="wiz-give">
-              <strong>{giveCents > 0 ? `Contribute ${giveText}` : "No contribution"}</strong>
-              {contribution ? (
-                <span class="wiz-give-coin">
-                  about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}, once, with your first lock.
-                </span>
-              ) : null}
-              <p>Chronobox is free software. This pays for the work that keeps it safe and maintained.</p>
-              {giveLess ? (
-                <div class="wiz-give-less">
-                  <div class="pills" role="radiogroup" aria-label="Contribution">
-                    {[CONTRIBUTION_USD.suggested, ...CONTRIBUTION_USD.less].map((usd) => (
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={ownText === "" && giveUsd === usd}
-                        class={ownText === "" && giveUsd === usd ? "pill pill-on" : "pill"}
-                        key={usd}
-                        onClick={() => {
-                          setGiveUsd(usd);
-                          setGiveOwn("");
-                        }}
-                      >
-                        ${usd}
-                      </button>
-                    ))}
-                    <label class="wiz-give-own">
-                      <span aria-hidden="true">$</span>
-                      <input class="input" inputMode="decimal" aria-label="Another amount in dollars" placeholder={String(CONTRIBUTION_USD.hint)} value={giveOwn} onInput={(event) => setGiveOwn((event.target as HTMLInputElement).value)} />
-                    </label>
-                  </div>
-                  {giveProblem ? <p class="field-error">{giveProblem}</p> : null}
-                </div>
-              ) : (
-                <button type="button" class="link-button" onClick={() => setGiveLess(true)}>
-                  Donate less
-                </button>
-              )}
-            </div>
-          ) : null}
+          {giveBox}
         </>
       ) : (
-        <p class="hint">Unlocking takes {delayText}.</p>
+        <>
+          <p class="hint">Unlocking takes {delayText}.</p>
+          {giveBox}
+        </>
       )}
 
       <div class="modal-actions">

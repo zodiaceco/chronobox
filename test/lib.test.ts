@@ -199,4 +199,23 @@ test("many balances come from one read, and a failed read is not a balance of ze
     assets,
   );
   assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+
+  // A network that takes only small requests: the long list is read in smaller pieces, and all of it is read.
+  const many = Array.from({ length: 120 }, (_, i) => ({ token: ("0x" + (i + 1).toString(16).padStart(40, "0")) as `0x${string}` }));
+  const sizes: number[] = [];
+  const tight = async (_method: string, params: any[] = []) => {
+    const calls = parseInt(params[0].data.slice(10 + 64, 10 + 128), 16);
+    sizes.push(calls);
+    if (calls > 20) throw new Error("request too large");
+    const each = Array.from({ length: calls }, () => w(1) + w(64) + w(32) + w(3));
+    return "0x" + w(32) + w(calls) + each.map((_, k) => w(calls * 32 + k * 128)).join("") + each.join("");
+  };
+  const pieces = await readBalances(tight, WALLET, many);
+  assert.equal(pieces.complete, true);
+  assert.ok(pieces.balances.every((b) => b === 3n));
+  assert.ok(sizes.includes(50) && sizes.includes(12), "the large size is tried first, then the small one");
+  // The next read on this connection starts at the size that worked.
+  sizes.length = 0;
+  await readBalances(tight, WALLET, many);
+  assert.ok(sizes.every((n) => n <= 12));
 });

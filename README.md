@@ -46,10 +46,11 @@ Later locks are plain transfers to the Chronobox.
 
 ### The contribution
 
-The hosted app can ask for a one-time contribution when a Chronobox is created. It is voluntary: the suggested amount is selected, "Donate less" shows lower amounts and a free field, and 0 is allowed. Chronobox is free software, and anybody can run it without this.
+The hosted app asks for a contribution when money is locked. On the first lock it is a box with the suggested amount selected; "Donate less" shows lower amounts and a free field, and 0 is allowed. On every later lock it is one quiet line that can be opened. It is voluntary. Chronobox is free software, and anybody can run it without this.
 
 - The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask.
-- The coin rides in the lock transaction: the wallet sends it along, and the same batch that locks the vault passes it on. Either the vault is locked and the contribution arrives, or neither happens. A plain wallet gets no third prompt.
+- On the first lock the coin rides in the transaction that switches on the time lock: the wallet sends it along, and the same batch passes it on. Either the vault is locked and the contribution arrives, or neither happens. A plain wallet gets no extra prompt for it.
+- On a later lock a wallet that can batch sends it in the same confirmation. A plain wallet sends it as one more transaction after the money is locked.
 - The receiver is `CONTRIBUTION_RECEIVER` in `src/lib/chains.ts`, an address of Zodiac. If you host the app yourself, set it to `null` and the app asks for nothing, or set your own address. The amounts are in `CONTRIBUTION_USD`. The suggested amount is $10.
 - All contributions go to one address, so that address is a public list of vaults that contributed.
 
@@ -74,7 +75,7 @@ The Delay lets the setup wallet queue any transaction. The app builds three, and
 
 ### One transaction for wallets that can batch
 
-Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the first lock sends create, the time lock and any number of deposits as one atomic batch (`wallet_sendCalls`), and a later lock of several assets is one batch too. If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets confirm step by step. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.
+Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the first lock sends create, the time lock and any number of deposits as one atomic batch (`wallet_sendCalls`), and a later lock of several assets is one batch too. Such a wallet ticks several assets in one list, for locking and for unlocking. Assets that are unlocked together are separate items in the line of the Delay; the app shows them as one group with one wait and collects them with one confirmation. If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets confirm step by step. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.
 
 This is detected, not configured. It was tested on the fork with a Safe as the wallet and in the browser with a test wallet that acts as a Safe. It was not tested with Rabby, Zodiac Pilot, Safe{Wallet} or a MetaMask smart account. With a Safe as the wallet, withdrawals go back to the Safe, and a cancel is only as fast as the Safe's signers.
 
@@ -102,7 +103,7 @@ Read these. They are the honest edge of what a delay can do.
 
 - No server, no account, no analytics.
 - By default the page makes no network requests of its own. All chain data comes through your wallet, so no extra party learns which addresses you look at.
-- One exception, off until you switch it on ("Balance lookup"): the page then reads balances from a public node of the network, and on Ethereum and Sepolia it asks a Blockscout index which tokens your wallet and your Chronobox hold. Those services see your IP address and the two addresses. The lookup is for display only: the index only names tokens, their decimals and balances are read from the chain, and the safety checks and every transaction still go through the wallet. The Content Security Policy lists exactly these hosts in `connect-src` (`src/index.html`), and a unit test compares the list with `src/lib/chains.ts`.
+- One exception, off until you switch it on ("Third-party services", one switch, remembered in this browser): the page then reads balances from a public node of the network, and on Ethereum and Sepolia it asks a Blockscout index which tokens your wallet and your Chronobox hold and what they are worth in dollars. With prices, the list is ordered by value. The sheet that asks names each host and recommends a VPN to keep the IP address private. Without the switch, tokens can be added by address; they are kept in the browser. Those services see your IP address and the two addresses. The lookup is for display only: the index only names tokens, their decimals and balances are read from the chain, and the safety checks and every transaction still go through the wallet. The Content Security Policy lists exactly these hosts in `connect-src` (`src/index.html`), and a unit test compares the list with `src/lib/chains.ts`.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
 

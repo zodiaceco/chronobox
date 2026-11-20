@@ -64,8 +64,12 @@ export function Dial(props: {
   );
 }
 
+/** How much of the ring the logo shows. The gap of 80 degrees opens to the right, so the ring reads as a C. */
+export const LOGO_RING = 280 / 360;
+
+/** The logo: the dial with its ring open, a C for Chronobox. */
 export function Mark(props: { size?: number }) {
-  return <Dial size={props.size ?? 28} />;
+  return <Dial size={props.size ?? 28} left={LOGO_RING} />;
 }
 
 export function Lockup() {

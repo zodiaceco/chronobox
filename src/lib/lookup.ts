@@ -9,7 +9,7 @@
  * With the lookup on, the page asks two public services directly:
  *   - a public node of the network, for balances,
  *   - an explorer's index (where the network has one that answers a browser),
- *     for the list of tokens an address holds.
+ *     for the list of tokens an address holds and their prices in dollars.
  * Both see the IP address of the browser and the addresses that are asked for.
  *
  * What comes back is used for display only. The index says which tokens to
@@ -60,7 +60,14 @@ export function withFallback(first: Rpc, second: Rpc): Rpc {
   };
 }
 
-export type FoundToken = { address: Address; symbol: string; decimals: number };
+/** `usd` is the price of one whole token in US dollars, as the index has it. Null when it has none. */
+export type FoundToken = { address: Address; symbol: string; decimals: number; usd: number | null };
+
+/** A price is somebody else's number. Only a plain positive one is used, and only to order and label the list. */
+export function plainPrice(value: unknown): number | null {
+  const price = typeof value === "string" || typeof value === "number" ? Number(value) : NaN;
+  return Number.isFinite(price) && price > 0 && price < 1e9 ? price : null;
+}
 
 /** A name from an index is somebody else's text. Only plain characters, and not many of them. */
 export function plainSymbol(value: unknown): string {
@@ -68,10 +75,14 @@ export function plainSymbol(value: unknown): string {
   return text || "?";
 }
 
-/** Turns the answer of the index into a list of tokens. Anything that is not clearly an ERC-20 token with a balance is left out. */
+/**
+ * Turns the answer of the index into a list of tokens. Anything that is not clearly an ERC-20 token
+ * with a balance is left out. An address can hold thousands of tokens that were sent to it unasked,
+ * so the list is cut: tokens with a price come first, the most valuable first.
+ */
 export function parseTokenList(answer: unknown, limit = 150): FoundToken[] {
   if (!Array.isArray(answer)) return [];
-  const found: FoundToken[] = [];
+  const found: (FoundToken & { worth: number })[] = [];
   const seen = new Set<string>();
   for (const entry of answer) {
     const token = (entry as { token?: Record<string, unknown> } | null)?.token;
@@ -90,21 +101,36 @@ export function parseTokenList(answer: unknown, limit = 150): FoundToken[] {
     if (!address || value <= 0n || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) continue;
     if (seen.has(address.toLowerCase())) continue;
     seen.add(address.toLowerCase());
-    found.push({ address, symbol: plainSymbol(token.symbol), decimals });
-    if (found.length >= limit) break;
+    const usd = plainPrice(token.exchange_rate);
+    found.push({ address, symbol: plainSymbol(token.symbol), decimals, usd, worth: usd === null ? -1 : (Number(value) / 10 ** decimals) * usd });
   }
-  return found;
+  return found
+    .sort((a, b) => b.worth - a.worth)
+    .slice(0, limit)
+    .map(({ worth: _, ...token }) => token);
 }
 
 /** The tokens that an address holds, as the network's index knows them. Empty when the network has no index. */
 export async function findTokens(chain: Chain, holder: Address): Promise<FoundToken[]> {
   if (!chain.indexer) return [];
-  const res = await limited(`${chain.indexer}/api/v2/addresses/${holder}/token-balances`, { headers: { Accept: "application/json" } }, 12_000);
+  // An address that many tokens were sent to has a long list. It gets the time it needs.
+  const res = await limited(`${chain.indexer}/api/v2/addresses/${holder}/token-balances`, { headers: { Accept: "application/json" } }, 40_000);
   if (!res.ok) throw new Error(`The index answered ${res.status}`);
   return parseTokenList(await res.json());
 }
 
-/** The hosts that the lookup talks to on a network, for the question that asks for consent. */
-export function lookupHosts(chain: Chain): string[] {
-  return [chain.publicRpc, ...(chain.indexer ? [chain.indexer] : [])].map((url) => new URL(url).host);
+/** The price of the network's coin in US dollars, as the index has it. Null when the network has no index or it has no price. */
+export async function findCoinPrice(chain: Chain): Promise<number | null> {
+  if (!chain.indexer) return null;
+  const res = await limited(`${chain.indexer}/api/v2/stats`, { headers: { Accept: "application/json" } }, 12_000);
+  if (!res.ok) return null;
+  return plainPrice(((await res.json()) as { coin_price?: unknown } | null)?.coin_price);
+}
+
+/** The services that the lookup talks to on a network and what each is asked, for the question that asks for consent. */
+export function lookupServices(chain: Chain): { host: string; what: string }[] {
+  return [
+    { host: new URL(chain.publicRpc).host, what: "a public node of the network. It is asked for your balances." },
+    ...(chain.indexer ? [{ host: new URL(chain.indexer).host, what: "the Blockscout explorer. It is asked which tokens you hold and what they are worth in dollars." }] : []),
+  ];
 }

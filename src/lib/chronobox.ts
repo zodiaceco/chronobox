@@ -1202,54 +1202,78 @@ export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: He
   });
 }
 
-/** How many balances go into one request. Small enough for the read limits of the networks that wallets use. */
-const BALANCES_PER_READ = 100;
+/**
+ * How many balances go into one request, largest first. The reads go through the wallet's own
+ * network, and free networks differ in what they accept: in the gas of one call, in the size of a
+ * request and of an answer. Fifty balances are about 1.5 million gas and 11 kB, which the usual
+ * free networks take. Where that fails, the same balances are asked for in pieces of twelve.
+ */
+const BALANCES_PER_READ = [50, 12] as const;
+
+/** The size that worked last on a connection, so that a network with tight limits is not asked the large size every time. */
+const readSize = new WeakMap<Rpc, number>();
 
 export type Balances = {
   /** One entry for each asset. Null where the balance is not known. That is never "nothing". */
   balances: (bigint | null)[];
-  /** False when a combined read failed and only the main assets were read one by one. */
+  /** False when combined reads failed at every size and only the main assets were read one by one. */
   complete: boolean;
 };
 
 /**
  * The balances of one address for a long list of assets, in a few requests.
- * When a combined read fails, the main assets are read one by one, and the
+ * A combined read that fails is tried again in smaller pieces. Where the
+ * smallest piece fails too, the main assets are read one by one, and the
  * others stay "not known".
  */
 export async function readBalances(rpc: Rpc, holder: Address, assets: readonly { token: Address | null; main?: boolean }[]): Promise<Balances> {
   const balances: (bigint | null)[] = assets.map(() => null);
   let complete = true;
-  const groups: number[][] = [];
-  for (let i = 0; i < assets.length; i += BALANCES_PER_READ) groups.push(assets.slice(i, i + BALANCES_PER_READ).map((_, k) => i + k));
-  await Promise.all(
-    groups.map(async (group) => {
-      try {
-        const answers = await readMany(
-          rpc,
-          group.map((i) => {
-            const token = assets[i].token;
-            return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
-          }),
-        );
-        group.forEach((i, k) => {
-          const answer = answers[k];
-          // An address with no token behind it answers with nothing. That is not a balance of zero.
-          balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
-        });
-      } catch {
-        complete = false;
-        await Promise.all(
-          group
-            .filter((i) => assets[i].main)
-            .map(async (i) => {
-              const token = assets[i].token;
-              balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
-            }),
-        );
-      }
-    }),
-  );
+  const combined = async (group: number[]) => {
+    const answers = await readMany(
+      rpc,
+      group.map((i) => {
+        const token = assets[i].token;
+        return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+      }),
+    );
+    group.forEach((i, k) => {
+      const answer = answers[k];
+      // An address with no token behind it answers with nothing. That is not a balance of zero.
+      balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
+    });
+  };
+  const oneByOne = async (group: number[]) => {
+    complete = false;
+    await Promise.all(
+      group
+        .filter((i) => assets[i].main)
+        .map(async (i) => {
+          const token = assets[i].token;
+          balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
+        }),
+    );
+  };
+  /** Reads a group at one size. What fails goes on to the next smaller size, and after the smallest to single reads. */
+  const read = async (group: number[], step: number): Promise<void> => {
+    if (step >= BALANCES_PER_READ.length) return oneByOne(group);
+    const per = BALANCES_PER_READ[step];
+    const pieces: number[][] = [];
+    for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
+    await Promise.all(
+      pieces.map(async (piece) => {
+        try {
+          await combined(piece);
+          // Only a read that was really cut to this size says something about the network.
+          if (group.length > per && step > 0) readSize.set(rpc, per);
+        } catch {
+          await read(piece, step + 1);
+        }
+      }),
+    );
+  };
+  const start = BALANCES_PER_READ.findIndex((per) => per === readSize.get(rpc));
+  await read(assets.map((_, i) => i), start < 0 ? 0 : start);
   return { balances, complete };
 }
 

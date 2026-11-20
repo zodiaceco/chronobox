@@ -40,7 +40,7 @@ import {
   MAX_COOLDOWN,
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
-import { errorText } from "../lib/wallet.ts";
+import { assertWallet, errorText, sendBatch } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
 import { Dial } from "./logo.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -360,6 +360,8 @@ export function QueueSection(props: {
   assets: Asset[];
   now: bigint;
   canCancel: boolean;
+  /** The wallet can send several calls as one. Unlocks that were asked for together are then shown, and collected, as one. */
+  batch?: boolean;
   refresh: () => void;
 }) {
   const { session, chain, vault, inspection, queue, assets, now, canCancel, refresh } = props;
@@ -403,6 +405,31 @@ export function QueueSection(props: {
         refresh();
       }
     });
+  // All items of a group in one confirmation, in their order in the line. All of them or none.
+  const finishGroup = (items: QueueItem[]) =>
+    action.run(`finish-${items[0].nonce}`, async (waiting) => {
+      try {
+        await assertWallet(session.rpc, session.account, chain.id, chain.name);
+        await sendBatch(
+          session.wallet.provider,
+          session.account,
+          chain.id,
+          items.map((item) => executeTx(vault.delay, item.tx!)),
+          undefined,
+          waiting.shouldStop,
+        );
+      } finally {
+        refresh();
+      }
+    });
+  // Items that follow each other, started in the same moment, and each is an unlock to the wallet: asked for together.
+  const groups: QueueItem[][] = [];
+  const plain = (item: QueueItem) => !!item.tx && classify(item.tx, vault).kind === "withdraw";
+  for (const item of queue) {
+    const last = groups[groups.length - 1];
+    if (props.batch && last && plain(item) && plain(last[0]) && last[0].createdAt === item.createdAt) last.push(item);
+    else groups.push([item]);
+  }
   const askCancel = (item: QueueItem) => {
     cancelAction.clearError();
     setConfirming(null);
@@ -418,26 +445,49 @@ export function QueueSection(props: {
         <div class="section">
           <h2>Waiting</h2>
           <ol class="queue">
-            {queue.map((item, index) => (
-              <QueueCard
-                key={String(item.nonce)}
-                item={item}
-                first={index === 0}
-                status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
-                now={now}
-                cooldown={inspection.cooldown}
-                action={item.tx ? classify(item.tx, vault) : null}
-                assets={assets}
-                chain={chain}
-                safe={vault.safe}
-                rpc={session.rpc}
-                busy={action.busy}
-                onFinish={() => finish(item)}
-                onFinishFlagged={() => setConfirming(item)}
-                onRemove={remove}
-                onCancel={canCancel ? () => askCancel(item) : null}
-              />
-            ))}
+            {groups.map((group) => {
+              const item = group[0];
+              const index = queue.indexOf(item);
+              if (group.length > 1) {
+                return (
+                  <GroupCard
+                    key={`group-${item.nonce}`}
+                    items={group}
+                    first={index === 0}
+                    status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
+                    now={now}
+                    cooldown={inspection.cooldown}
+                    vault={vault}
+                    assets={assets}
+                    busy={action.busy}
+                    onFinish={() => finishGroup(group)}
+                    onRemove={remove}
+                    // A cancel takes an item and every item before it, so the last one of the group takes the group.
+                    onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
+                  />
+                );
+              }
+              return (
+                <QueueCard
+                  key={String(item.nonce)}
+                  item={item}
+                  first={index === 0}
+                  status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
+                  now={now}
+                  cooldown={inspection.cooldown}
+                  action={item.tx ? classify(item.tx, vault) : null}
+                  assets={assets}
+                  chain={chain}
+                  safe={vault.safe}
+                  rpc={session.rpc}
+                  busy={action.busy}
+                  onFinish={() => finish(item)}
+                  onFinishFlagged={() => setConfirming(item)}
+                  onRemove={remove}
+                  onCancel={canCancel ? () => askCancel(item) : null}
+                />
+              );
+            })}
           </ol>
           <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -686,6 +736,77 @@ export function QueueCard(props: {
         {status.phase !== "expired" && props.onCancel ? (
           <button type="button" class="link-button" onClick={props.onCancel}>
             Cancel
+          </button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+/** Several unlocks that were asked for together: one card, one wait, one confirmation to collect them. */
+function GroupCard(props: {
+  items: QueueItem[];
+  first: boolean;
+  status: ItemStatus;
+  now: bigint;
+  cooldown: bigint;
+  vault: VaultRef;
+  assets: Asset[];
+  busy: string | null;
+  onFinish: () => void;
+  onRemove: () => void;
+  onCancel: (() => void) | null;
+}) {
+  const { items, status, now } = props;
+  const progress = Math.max(0, Math.min(1, Number(now - items[0].createdAt) / Number(props.cooldown || 1n)));
+  return (
+    <li class={`queue-item queue-${status.phase}`}>
+      <div class="queue-main">
+        <span class="queue-head">
+          <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />
+          <strong class="queue-title">Unlock {items.length} assets</strong>
+        </span>
+        <ul class="queue-lines">
+          {items.map((item) => (
+            <li key={String(item.nonce)}>{describe(classify(item.tx!, props.vault), props.assets, {}).title.replace(/^Unlock /, "")}</li>
+          ))}
+        </ul>
+        {status.phase === "waiting" ? (
+          <>
+            <span class="queue-when">
+              Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
+            </span>
+            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
+          </>
+        ) : status.phase === "ready" ? (
+          <span class="queue-when">
+            <b>Ready.</b>
+            {status.expiresAt !== null ? ` Collect it before ${formatDate(status.expiresAt)}.` : ""}
+            {props.first ? "" : " The item before it comes first."}
+          </span>
+        ) : (
+          <span class="queue-when">Expired on {formatDate(status.expiresAt!)}. Nothing moved.</span>
+        )}
+      </div>
+      <div class="queue-actions">
+        {status.phase === "ready" && props.first ? (
+          <Button kind="primary" small busy={props.busy === `finish-${items[0].nonce}`} disabled={!!props.busy} onClick={props.onFinish}>
+            Collect all
+          </Button>
+        ) : null}
+        {status.phase === "expired" && props.first ? (
+          <Button small busy={props.busy === "remove"} disabled={!!props.busy} onClick={props.onRemove}>
+            Clear
+          </Button>
+        ) : null}
+        {status.phase === "waiting" ? (
+          <button type="button" class="link-button" onClick={() => saveReminders(items[0].nonce, status, now)}>
+            Add to calendar
+          </button>
+        ) : null}
+        {status.phase !== "expired" && props.onCancel ? (
+          <button type="button" class="link-button" onClick={props.onCancel}>
+            Cancel all
           </button>
         ) : null}
       </div>

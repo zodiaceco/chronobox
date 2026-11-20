@@ -140,7 +140,7 @@ Repo: new folder `zodiac-timebox/`, own git repo, local until you ask for a push
 1. **Guardian**: a second address (other device, other place, other person) that can cancel queued transfers at once but can never move funds. Needs either Roles in front of the Delay or one small custom module. The same step can enforce the destination on-chain and add a recovery address for a lost wallet. This is the design to get reviewed and audited.
 2. Hosted push (N2), then Nostr and multi-operator (N3).
 3. One-transaction setup through wallet batching (EIP-5792) where the wallet supports it.
-4. Auto-execute relayer (possible because `executeNextTx` is public).
+4. Auto-execute relayer (possible because `executeNextTx` is public). Idea (2026-11-20, not built): offer it when an unlock is confirmed, as "collect it for me": a service carries out the ready item, so the money arrives in the wallet without a second signature. It is paid for by a contribution of at least a set amount, which buys a number of relayed unlocks; when they are used up, the app asks again. Needs a backend.
 5. WalletConnect, IPFS hosting, app disguise (rename + icon).
 
 ## 8. Decisions for Jo
