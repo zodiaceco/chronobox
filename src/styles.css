@@ -3231,3 +3231,9 @@ img.token-icon {
 .queue-actions .queue-cancel {
   margin-left: auto;
 }
+
+/* The mark is always in the colour of the text. In blue, the open ring reads as another brand. */
+
+.queue-head .mark {
+  color: var(--fg);
+}
