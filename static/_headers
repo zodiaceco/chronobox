@@ -1,4 +1,4 @@
-# Response headers for hosts that read this file (Netlify, Cloudflare Pages).
+# Response headers for hosts that read this file (Netlify, Cloudflare Pages). vercel.json has the same headers for Vercel.
 # On another host, set the same headers in its own configuration.
 #
 # index.html must not be cached, so that an update reaches people on the next

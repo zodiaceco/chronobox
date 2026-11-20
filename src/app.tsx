@@ -8,11 +8,20 @@ import { AddressText, Button, Experimental, Modal, Notice, type Session } from "
 import { CreatePage } from "./ui/create.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
+import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
 /** `swapTo`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner asks for. */
-type Route = { page: "start" } | { page: "new" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address; swapTo: Address | null } | { page: "unknown" };
+type Route =
+  | { page: "start" }
+  | { page: "new" }
+  | { page: "technical" }
+  | { page: "privacy" }
+  | { page: "terms" }
+  | { page: "imprint" }
+  | { page: "vault"; chain: Chain; safe: Address; swapTo: Address | null }
+  | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
 const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "unknown").slice(0, 8);
@@ -23,6 +32,9 @@ function parseRoute(hash: string): Route {
   if (path === "" || path === "/" || !path.startsWith("/")) return { page: "start" };
   if (path === "/new") return { page: "new" };
   if (path === "/technical") return { page: "technical" };
+  if (path === "/privacy") return { page: "privacy" };
+  if (path === "/terms") return { page: "terms" };
+  if (path === "/imprint") return { page: "imprint" };
   const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40}))?$/.exec(path);
   if (match) {
     const chain = chainByShort(match[1]);
@@ -146,6 +158,12 @@ export function App() {
     body = <StartPage session={session} chain={chain} onConnect={() => setConnectOpen(true)} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
+  } else if (route.page === "privacy") {
+    body = <PrivacyPage />;
+  } else if (route.page === "terms") {
+    body = <TermsPage />;
+  } else if (route.page === "imprint") {
+    body = <ImprintPage />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
@@ -245,7 +263,7 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it is built</a>
+          <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
           <span title="Version and build of the code that runs now. Compare the build with the published release.">
             {" "}
             · v{__VERSION__} · {BUILD}

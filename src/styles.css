@@ -1650,6 +1650,12 @@ a:focus-visible {
 
 .wiz-foot {
   display: grid;
+  gap: 12px;
+}
+
+.wiz-foot .wiz-note a {
+  color: var(--blue-text);
+  text-underline-offset: 3px;
 }
 
 .wiz-foot .button {
