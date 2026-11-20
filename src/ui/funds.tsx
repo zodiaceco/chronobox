@@ -714,10 +714,6 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
 /** What is on its way out of the lock for one asset: still waiting, and ready to be collected. */
 type Pending = { waiting: bigint; ready: bigint };
 
-/** Where the handle catches when snapping is on: nothing, a quarter, half, three quarters, everything. In thousandths. */
-const SNAPS = [0, 250, 500, 750, 1000];
-const SNAP_WITHIN = 22;
-
 /** A number in a cell that can be typed over. While it has the focus it shows what was typed, not what was understood. */
 function EditCell(props: { label: string; value: bigint; decimals: number; locked?: boolean; onValue: (value: bigint) => void }) {
   const [text, setText] = useState<string | null>(null);
@@ -780,9 +776,13 @@ function FundRow(props: {
   const waiting = props.waiting > L ? L : props.waiting;
   const all = U + L;
   const [target, setTarget] = useState<bigint>(L);
-  const [snap, setSnap] = useState(true);
+  // The handle was moved into what is unlocking: keep that locked after all.
+  const [relock, setRelock] = useState(false);
   // The balances are the starting point. When they change, or the row closes, the choice is gone.
-  useEffect(() => setTarget(L), [props.open, U, L]);
+  useEffect(() => {
+    setTarget(L);
+    setRelock(false);
+  }, [props.open, U, L]);
 
   const lo = props.canUnlock ? waiting : L;
   const hi = props.canLock ? L + (props.most < W ? props.most : W) : L;
@@ -827,11 +827,15 @@ function FundRow(props: {
   // The bar, from the left: what is unlocked, then what is unlocking, then what stays locked. In thousandths.
   const pU = part(U);
   const pW = part(waiting);
-  // The handle is the border of the unlocked part. Past the unlocking part it is the border of the locked part:
-  // then more is being unlocked, and the handle has jumped over what is unlocking already.
-  const pos = delta >= 0n ? part(all - choice) : part(all - (choice - waiting));
+  const canRelock = waiting > 0n && props.onRelock !== null;
+  const keeping = relock && canRelock && delta === 0n;
+  // The handle is the border of the locked part, so at rest it sits to the right of what is unlocking.
+  // Further right, more is unlocked. Moved left into what is unlocking, it jumps to the far side of it: that part
+  // stays locked after all. Further left still, more of the wallet's money is locked.
+  const pos = delta > 0n ? part(all - choice) : delta < 0n ? part(all - (choice - waiting)) : keeping ? pU : pU + pW;
   const unlockedAfter = U - delta;
-  const firmAfter = L + delta - waiting;
+  const firmAfter = L + delta - (keeping ? 0n : waiting);
+  const stillWaiting = keeping ? 0n : waiting;
   return (
     <div class="funds-item-open">
       <div class="funds-row">
@@ -851,7 +855,7 @@ function FundRow(props: {
             {ready > 0n ? <rect class="mover-ready" x="0" y="0" width={part(ready)} height="14" /> : null}
             <rect class="mover-locked" x={pU + pW} y="0" width={1000 - pU - pW} height="14" />
             {delta > 0n ? <rect class="mover-adding" x={pos} y="0" width={pU - pos} height="14" /> : null}
-            <Stripes x={pU} width={pW} height={14} />
+            {keeping ? <rect class="mover-adding" x={pU} y="0" width={pW} height="14" /> : <Stripes x={pU} width={pW} height={14} />}
             {delta < 0n ? <rect class="mover-leaving" x={pU + pW} y="0" width={pos - pU - pW} height="14" /> : null}
           </svg>
           <input
@@ -863,39 +867,41 @@ function FundRow(props: {
             aria-label={`Where unlocked ${asset.symbol} ends and locked ${asset.symbol} begins`}
             value={pos}
             onInput={(event) => {
-              let at = Number((event.target as HTMLInputElement).value);
-              if (snap) for (const point of SNAPS) if (Math.abs(at - point) <= SNAP_WITHIN) at = point;
+              const at = Number((event.target as HTMLInputElement).value);
               // Everything to the left of the handle is unlocked. The ends are exact: all means all, not all but a rounding rest.
               const left = at >= 1000 ? all : at <= 0 ? 0n : (all * BigInt(at)) / 1000n;
-              if (at === pU || at === pU + pW || (at > pU && at < pU + pW)) setTarget(L);
-              // Left of what is unlocking: more is locked. Right of it: more is unlocked, on top of what is unlocking.
-              else if (at < pU) setTarget(clamp(all - left));
-              else setTarget(clamp(all - left + waiting));
+              if (at >= pU && at <= pU + pW) {
+                // On or inside what is unlocking. Its right edge is where things stand. Anywhere further in means "keep it locked".
+                setTarget(L);
+                setRelock(canRelock && at < pU + pW);
+              } else if (at < pU) {
+                setRelock(false);
+                setTarget(clamp(all - left));
+              } else {
+                setRelock(false);
+                setTarget(clamp(all - left + waiting));
+              }
             }}
           />
         </div>
         <div class="mover-scale" aria-hidden="true">
           <span class="mover-part" style={{ flexGrow: Math.max(delta > 0n ? pos : pU, 1) }}>
-            {unlockedAfter > 0n ? (firmAfter === 0n && waiting === 0n ? "All unlocked" : "Unlocked") : ""}
+            {unlockedAfter > 0n ? (firmAfter === 0n && stillWaiting === 0n ? "All unlocked" : "Unlocked") : ""}
           </span>
           {delta > 0n ? <span class="mover-part" style={{ flexGrow: Math.max(pU - pos, 1) }} /> : null}
-          {waiting > 0n || delta < 0n ? (
+          {stillWaiting > 0n || delta < 0n ? (
             <span class="mover-part mover-part-mid" style={{ flexGrow: Math.max(pW + (delta < 0n ? pos - pU - pW : 0), 1) }}>
               Unlocking
             </span>
           ) : null}
-          <span class="mover-part mover-part-end" style={{ flexGrow: Math.max(1000 - (delta < 0n ? pos : pU + pW), 1) }}>
-            {firmAfter > 0n ? (unlockedAfter === 0n && waiting === 0n ? "All locked" : "Locked") : ""}
+          <span class="mover-part mover-part-end" style={{ flexGrow: Math.max(1000 - (delta < 0n ? pos : keeping ? pU : pU + pW), 1) }}>
+            {firmAfter > 0n ? (unlockedAfter === 0n && stillWaiting === 0n ? "All locked" : "Locked") : ""}
           </span>
         </div>
         {waiting > 0n ? (
           <p class="mover-note">
-            {shortAmount(waiting, asset.decimals)} {asset.symbol} of this is unlocking: the striped part.{" "}
-            {props.onRelock ? (
-              <button type="button" class="link-button" onClick={props.onRelock}>
-                Keep it locked instead
-              </button>
-            ) : null}
+            {shortAmount(waiting, asset.decimals)} {asset.symbol} of this is unlocking: the striped part.
+            {canRelock ? " Move the handle left over it to keep it locked." : ""}
           </p>
         ) : null}
         {ready > 0n ? (
@@ -912,13 +918,13 @@ function FundRow(props: {
             <Button onClick={() => props.onUnlock(-delta)}>
               Unlock {moved} · takes {props.delayText}
             </Button>
+          ) : keeping ? (
+            <Button kind="primary" onClick={props.onRelock!}>
+              Keep {shortAmount(waiting, asset.decimals)} {asset.symbol} locked
+            </Button>
           ) : (
             <Button disabled>Drag left to lock, right to unlock</Button>
           )}
-          <label class="mover-snap">
-            <input type="checkbox" checked={snap} onChange={(event) => setSnap((event.target as HTMLInputElement).checked)} />
-            Catch at quarters
-          </label>
         </div>
         {!props.canLock && W > 0n ? <p class="mover-note">Locking is not possible right now. See the notice above.</p> : null}
       </div>
