@@ -186,7 +186,7 @@ The app reads all balances in a few requests through your wallet, with the Multi
 
 Runtime: `preact` (UI), `@noble/hashes` (keccak-256) and `qrcode-generator` (the QR code of the deposit address). None has dependencies of its own, and all are pinned to exact versions.
 
-Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`.
+Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`, and three `@fontsource-variable` packages (Inter, Schibsted Grotesk, JetBrains Mono). The build copies one font file from each into `out/assets`, so the page serves its own fonts and asks no font service.
 
 The ABI encoder, the wallet connection and the dev server are small files in this repository, written for exactly what Chronobox needs.
 

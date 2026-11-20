@@ -2578,8 +2578,7 @@ button.row-strong:hover .row-hint {
 /*
  * Brand. Midnight and white, a sky blue for the lock and for time, sunrise red for a cancel
  * and for what went wrong. Schibsted Grotesk for headlines, Inter for text, JetBrains Mono for
- * labels and addresses. The font files are not part of the page yet: until they are, a device
- * that has the fonts shows them and every other device shows its own system font.
+ * labels and addresses. The page serves the font files itself (fonts.css).
  */
 :root {
   --bg: #ffffff;
