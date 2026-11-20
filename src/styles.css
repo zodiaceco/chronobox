@@ -3330,3 +3330,8 @@ img.token-icon {
     opacity: 0.7;
   }
 }
+
+.mover-above {
+  min-height: 1.1em;
+  margin-bottom: -6px;
+}

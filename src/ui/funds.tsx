@@ -869,6 +869,13 @@ function FundRow(props: {
         </span>
       </div>
       <div class="mover">
+        {/* The name of the part in the middle stands above the bar, about over its part: the space on either side of it is
+            shared out by where that part is. The row is always there, so that nothing jumps when the name comes and goes. */}
+        <div class="mover-scale mover-above" aria-hidden="true">
+          <span class="mover-gap" style={{ flexGrow: Math.max(midAt, 1) }} />
+          <span class="mover-part mover-part-mid">{stillWaiting > 0n || delta < 0n ? "Unlocking" : ""}</span>
+          <span class="mover-gap" style={{ flexGrow: Math.max(1000 - midAt, 1) }} />
+        </div>
         <div class="mover-bar">
           <svg class="mover-svg" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true">
             <rect class="mover-track" x="0" y="0" width="1000" height="14" />
@@ -905,18 +912,8 @@ function FundRow(props: {
           />
         </div>
         <div class="mover-scale" aria-hidden="true">
-          {/* Each name keeps its own width, so two never run into each other, and the outer two stay at the ends of the bar.
-              The one in the middle sits about under its part: the space on either side of it is shared out by where that part is. */}
           <span class="mover-part">{unlockedAfter > 0n ? (firmAfter === 0n && stillWaiting === 0n ? "All unlocked" : "Unlocked") : ""}</span>
-          {stillWaiting > 0n || delta < 0n ? (
-            <>
-              <span class="mover-gap" style={{ flexGrow: Math.max(midAt, 1) }} />
-              <span class="mover-part mover-part-mid">Unlocking</span>
-              <span class="mover-gap" style={{ flexGrow: Math.max(1000 - midAt, 1) }} />
-            </>
-          ) : (
-            <span class="mover-gap" style={{ flexGrow: 1 }} />
-          )}
+          <span class="mover-gap" />
           <span class="mover-part">{firmAfter > 0n ? (unlockedAfter === 0n && stillWaiting === 0n ? "All locked" : "Locked") : ""}</span>
         </div>
         {waiting > 0n ? (
