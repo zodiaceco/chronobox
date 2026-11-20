@@ -1,5 +1,5 @@
 /**
- * "How it is built": the four parts of a Chronobox, who audited them, what the
+ * "How does it protect me and my funds?": the four parts of a Chronobox, who audited them, what the
  * app checks, and what it cannot do for you. Then, folded away, the mechanism
  * in depth for people who want all of it. Static. Every fact here must
  * match README.md and src/lib/chronobox.ts.

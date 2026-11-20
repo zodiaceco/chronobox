@@ -258,7 +258,7 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it is built</a>
+          <a href="#/technical">How does it protect me and my funds?</a>
           <span title="Version and build of the code that runs now. Compare the build with the published release.">
             {" "}
             · v{__VERSION__} · {BUILD}

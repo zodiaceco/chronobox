@@ -342,7 +342,7 @@ export function ChecksSheet(props: { inspection: Inspection; onClose: () => void
         ))}
       </ul>
       <p class="hint">
-        Anybody can open a Chronobox by its address and run the same checks. <a href="#/technical">How it is built</a>
+        Anybody can open a Chronobox by its address and run the same checks. <a href="#/technical">How does it protect me and my funds?</a>
       </p>
     </Modal>
   );
