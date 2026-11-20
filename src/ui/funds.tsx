@@ -816,6 +816,8 @@ function FundRow(props: {
   const unlockedAfter = U - delta;
   const firmAfter = L + delta - (keeping ? 0n : waiting);
   const stillWaiting = keeping ? 0n : waiting;
+  // The middle of what is unlocking, or about to: from the end of the unlocked part to the handle or the end of the stripes.
+  const midAt = pU + ((delta < 0n ? pos : pU + pW) - pU) / 2;
   return (
     <div class="funds-item-open">
       <div class="funds-row">
@@ -865,18 +867,19 @@ function FundRow(props: {
           />
         </div>
         <div class="mover-scale" aria-hidden="true">
-          <span class="mover-part" style={{ flexGrow: Math.max(delta > 0n ? pos : pU, 1) }}>
-            {unlockedAfter > 0n ? (firmAfter === 0n && stillWaiting === 0n ? "All unlocked" : "Unlocked") : ""}
-          </span>
-          {delta > 0n ? <span class="mover-part" style={{ flexGrow: Math.max(pU - pos, 1) }} /> : null}
+          {/* Each name keeps its own width, so two never run into each other, and the outer two stay at the ends of the bar.
+              The one in the middle sits about under its part: the space on either side of it is shared out by where that part is. */}
+          <span class="mover-part">{unlockedAfter > 0n ? (firmAfter === 0n && stillWaiting === 0n ? "All unlocked" : "Unlocked") : ""}</span>
           {stillWaiting > 0n || delta < 0n ? (
-            <span class="mover-part mover-part-mid" style={{ flexGrow: Math.max(pW + (delta < 0n ? pos - pU - pW : 0), 1) }}>
-              Unlocking
-            </span>
-          ) : null}
-          <span class="mover-part mover-part-end" style={{ flexGrow: Math.max(1000 - (delta < 0n ? pos : keeping ? pU : pU + pW), 1) }}>
-            {firmAfter > 0n ? (unlockedAfter === 0n && stillWaiting === 0n ? "All locked" : "Locked") : ""}
-          </span>
+            <>
+              <span class="mover-gap" style={{ flexGrow: Math.max(midAt, 1) }} />
+              <span class="mover-part mover-part-mid">Unlocking</span>
+              <span class="mover-gap" style={{ flexGrow: Math.max(1000 - midAt, 1) }} />
+            </>
+          ) : (
+            <span class="mover-gap" style={{ flexGrow: 1 }} />
+          )}
+          <span class="mover-part">{firmAfter > 0n ? (unlockedAfter === 0n && stillWaiting === 0n ? "All locked" : "Locked") : ""}</span>
         </div>
         {waiting > 0n ? (
           <p class="mover-note">

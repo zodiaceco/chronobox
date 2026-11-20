@@ -3250,3 +3250,38 @@ img.token-icon {
   align-items: center;
   gap: 10px;
 }
+
+/* The names of the parts: each as wide as its text, the gaps between them take the rest */
+
+.mover-scale {
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mover-part,
+.mover-part-mid,
+.mover-part-end {
+  flex: 0 0 auto;
+  text-align: left;
+}
+
+.mover-gap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* The handle shows the focus, not a box around the whole bar. */
+
+.mover-range:focus {
+  outline: none;
+}
+
+.mover-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--blue-light), 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px var(--blue-light), 0 2px 8px rgb(11 26 61 / 0.25);
+}
