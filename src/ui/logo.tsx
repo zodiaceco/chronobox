@@ -94,10 +94,10 @@ export function Lockup() {
 /** The parent brand, shown as an endorsement. */
 export function ByZodiac() {
   return (
-    <span class="by-zodiac">
+    <a class="by-zodiac" href="https://zodiac.eco" target="_blank" rel="noreferrer noopener" aria-label="by Zodiac, opens zodiac.eco in a new tab">
       by
       <img class="only-light" src="./zodiac-light.svg" alt="Zodiac" height="12" />
       <img class="only-dark" src="./zodiac-dark.svg" alt="Zodiac" height="12" />
-    </span>
+    </a>
   );
 }

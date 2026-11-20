@@ -3361,3 +3361,11 @@ img.token-icon {
   border-radius: 12px;
   background: var(--panel);
 }
+
+.by-zodiac {
+  text-decoration: none;
+}
+
+.by-zodiac:hover {
+  color: var(--fg);
+}
