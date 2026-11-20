@@ -738,6 +738,10 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             </div>
           ) : (
             <>
+              {/* The way that asks nobody comes first: name the token yourself. */}
+              <Button kind="plain" onClick={() => setSheet("token")}>
+                Add a token by its address instead
+              </Button>
               <div class="wiz-list">
                 <Choice role="checkbox" on={vpn} title="I use a VPN." text="It hides my IP address from Blockscout." onClick={() => setVpn(!vpn)} />
                 <Choice role="checkbox" on={trusts} title="I trust Blockscout." text="I hope they won't leak my IP address." onClick={() => setTrusts(!trusts)} />
@@ -745,10 +749,6 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
               <div class="modal-actions">
                 <Button kind="primary" disabled={!vpn && !trusts} onClick={() => chooseLookup(true)}>
                   Switch it on
-                </Button>
-                {/* The way that asks nobody: name the token yourself. */}
-                <Button kind="plain" onClick={() => setSheet("token")}>
-                  Add a token by its address instead
                 </Button>
                 <Button kind="quiet" onClick={() => setSheet(null)}>
                   Keep it off
