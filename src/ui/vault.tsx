@@ -3,7 +3,7 @@
  * short list of things you can look at or change. Every action opens a sheet
  * with one decision and one main button.
  */
-import { ChevronRight, Clock, X } from "lucide-preact";
+import { ChevronRight, Clock, Hourglass, Undo2, Wallet, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CONTRACTS } from "../lib/chains.ts";
@@ -940,6 +940,55 @@ export function UnknownSheet(props: { onClose: () => void }) {
   );
 }
 
+/**
+ * What an unlock means, before it is started: how long it takes, about when it is ready, and the three things
+ * that happen, in their order.
+ */
+export function WaitPlan(props: { delay: bigint; now: bigint; canCancel: boolean; wallet: Address }) {
+  return (
+    <>
+      <div class="delay-callout">
+        <span class="delay-callout-label">This takes</span>
+        <span class="delay-callout-value">{formatDuration(props.delay)}</span>
+        <span class="delay-callout-when">Ready around {formatDate(props.now + props.delay)}</span>
+      </div>
+      <ol class="wait-plan">
+        <li>
+          <span class="wait-plan-icon" aria-hidden="true">
+            <Hourglass size={16} strokeWidth={2.2} />
+          </span>
+          <span>
+            <strong>The wait starts now.</strong>
+            <small>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</small>
+          </span>
+        </li>
+        {props.canCancel ? (
+          <li>
+            <span class="wait-plan-icon" aria-hidden="true">
+              <Undo2 size={16} strokeWidth={2.2} />
+            </span>
+            <span>
+              <strong>You can cancel while it waits.</strong>
+              <small>Then it stays locked.</small>
+            </span>
+          </li>
+        ) : null}
+        <li>
+          <span class="wait-plan-icon" aria-hidden="true">
+            <Wallet size={16} strokeWidth={2.2} />
+          </span>
+          <span>
+            <strong>After the wait, you collect it here.</strong>
+            <small>
+              Then it is unlocked in your wallet <AddressText address={props.wallet} />.
+            </small>
+          </span>
+        </li>
+      </ol>
+    </>
+  );
+}
+
 export function WithdrawSheet(props: {
   session: Session;
   chain: Chain;
@@ -1037,17 +1086,7 @@ export function WithdrawSheet(props: {
   if (stage === "confirm") {
     return (
       <Modal title={`Unlock ${amountLine}`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
-        <div class="delay-callout">
-          <span class="delay-callout-label">This takes</span>
-          <span class="delay-callout-value">{delayText}</span>
-        </div>
-        <ul class="plain-list">
-          <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
-          {props.canCancel ? <li>You can cancel it while it waits.</li> : null}
-          <li>
-            After the wait, you come back here and collect it. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
-          </li>
-        </ul>
+        <WaitPlan delay={inspection.cooldown} now={props.now} canCancel={props.canCancel} wallet={vault.controller} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">

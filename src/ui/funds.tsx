@@ -54,10 +54,10 @@ import {
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { Dial } from "./logo.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, WaitBar, useAction } from "./common.tsx";
+import { type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, WaitBar, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { vaultHref } from "./start.tsx";
-import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
+import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WaitPlan, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
 
 /**
  * Where the voluntary contribution goes. A build without a receiver does not
@@ -1182,17 +1182,7 @@ function UnlockManySheet(props: {
   if (stage === "confirm") {
     return (
       <Modal title={`Unlock ${listText}`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
-        <div class="delay-callout">
-          <span class="delay-callout-label">This takes</span>
-          <span class="delay-callout-value">{delayText}</span>
-        </div>
-        <ul class="plain-list">
-          <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
-          {props.canCancel ? <li>You can cancel it while it waits.</li> : null}
-          <li>
-            After the wait, you come back here and collect it. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
-          </li>
-        </ul>
+        <WaitPlan delay={inspection.cooldown} now={props.now} canCancel={props.canCancel} wallet={vault.controller} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">

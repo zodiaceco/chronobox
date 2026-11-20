@@ -3504,3 +3504,84 @@ img.token-icon {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Before an unlock starts: how long it takes, on a night sky with first light at the horizon, and what happens in which order */
+
+.delay-callout {
+  position: relative;
+  gap: 4px;
+  padding: 26px 20px 24px;
+  border-radius: 20px;
+  background:
+    radial-gradient(130% 95% at 50% 135%, rgba(70, 125, 255, 0.85) 0%, rgba(70, 125, 255, 0) 62%),
+    #0b1a3d;
+  color: #fff;
+  overflow: hidden;
+}
+
+.delay-callout-label {
+  opacity: 0.7;
+}
+
+.delay-callout-when {
+  margin-top: 6px;
+  font-size: 0.86rem;
+  opacity: 0.85;
+}
+
+.wait-plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.wait-plan li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.wait-plan li:last-child {
+  padding-bottom: 0;
+}
+
+/* The line that joins one step to the next */
+
+.wait-plan li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+.wait-plan-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--blue-wash);
+  color: var(--blue-text);
+}
+
+.wait-plan li > span:last-child {
+  display: grid;
+  gap: 2px;
+  padding-top: 5px;
+}
+
+.wait-plan strong {
+  font-weight: 600;
+}
+
+.wait-plan small {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
