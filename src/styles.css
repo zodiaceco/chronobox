@@ -3183,3 +3183,26 @@ img.token-icon {
 .devbar-account select {
   max-width: 190px;
 }
+
+/* The names of the parts of the bar, each under its part */
+
+.mover-scale {
+  padding: 0 14px;
+  gap: 0;
+}
+
+.mover-part {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.mover-part-mid {
+  text-align: center;
+  color: var(--blue-text);
+}
+
+.mover-part-end {
+  text-align: right;
+}

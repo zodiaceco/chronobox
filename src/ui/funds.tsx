@@ -842,8 +842,14 @@ function FundRow(props: {
     );
   }
 
-  const lockedNow = part(L);
-  const chosen = part(choice);
+  // The bar, from the left: what is unlocked, then what is unlocking, then what stays locked. In thousandths.
+  const pU = part(U);
+  const pW = part(waiting);
+  // The handle is the border of the unlocked part. Past the unlocking part it is the border of the locked part:
+  // then more is being unlocked, and the handle has jumped over what is unlocking already.
+  const pos = delta >= 0n ? part(all - choice) : part(all - (choice - waiting));
+  const unlockedAfter = U - delta;
+  const firmAfter = L + delta - waiting;
   return (
     <div class="funds-item-open">
       <div class="funds-row">
@@ -860,11 +866,11 @@ function FundRow(props: {
         <div class="mover-bar">
           <svg class="mover-svg" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true">
             <rect class="mover-track" x="0" y="0" width="1000" height="14" />
-            <rect class="mover-locked" x={1000 - lockedNow} y="0" width={lockedNow} height="14" />
-            {delta > 0n ? <rect class="mover-adding" x={1000 - chosen} y="0" width={chosen - lockedNow} height="14" /> : null}
-            {delta < 0n ? <rect class="mover-leaving" x={1000 - lockedNow} y="0" width={lockedNow - chosen} height="14" /> : null}
-            <Stripes x={1000 - part(waiting)} width={part(waiting)} height={14} />
             {ready > 0n ? <rect class="mover-ready" x="0" y="0" width={part(ready)} height="14" /> : null}
+            <rect class="mover-locked" x={pU + pW} y="0" width={1000 - pU - pW} height="14" />
+            {delta > 0n ? <rect class="mover-adding" x={pos} y="0" width={pU - pos} height="14" /> : null}
+            <Stripes x={pU} width={pW} height={14} />
+            {delta < 0n ? <rect class="mover-leaving" x={pU + pW} y="0" width={pos - pU - pW} height="14" /> : null}
           </svg>
           <input
             class="mover-range"
@@ -873,19 +879,32 @@ function FundRow(props: {
             max="1000"
             step="1"
             aria-label={`Where unlocked ${asset.symbol} ends and locked ${asset.symbol} begins`}
-            value={1000 - chosen}
+            value={pos}
             onInput={(event) => {
-              // The handle is the border: unlocked to its left, locked to its right.
-              let at = 1000 - Number((event.target as HTMLInputElement).value);
+              let at = Number((event.target as HTMLInputElement).value);
               if (snap) for (const point of SNAPS) if (Math.abs(at - point) <= SNAP_WITHIN) at = point;
-              // The ends are exact: everything means everything, not everything but a rounding rest.
-              setTarget(clamp(at >= 1000 ? all : at <= 0 ? 0n : (all * BigInt(at)) / 1000n));
+              // Everything to the left of the handle is unlocked. The ends are exact: all means all, not all but a rounding rest.
+              const left = at >= 1000 ? all : at <= 0 ? 0n : (all * BigInt(at)) / 1000n;
+              if (at === pU || at === pU + pW || (at > pU && at < pU + pW)) setTarget(L);
+              // Left of what is unlocking: more is locked. Right of it: more is unlocked, on top of what is unlocking.
+              else if (at < pU) setTarget(clamp(all - left));
+              else setTarget(clamp(all - left + waiting));
             }}
           />
         </div>
         <div class="mover-scale" aria-hidden="true">
-          <span>Unlocked</span>
-          <span>Locked</span>
+          <span class="mover-part" style={{ flexGrow: Math.max(delta > 0n ? pos : pU, 1) }}>
+            {unlockedAfter > 0n ? (firmAfter === 0n && waiting === 0n ? "All unlocked" : "Unlocked") : ""}
+          </span>
+          {delta > 0n ? <span class="mover-part" style={{ flexGrow: Math.max(pU - pos, 1) }} /> : null}
+          {waiting > 0n || delta < 0n ? (
+            <span class="mover-part mover-part-mid" style={{ flexGrow: Math.max(pW + (delta < 0n ? pos - pU - pW : 0), 1) }}>
+              Unlocking
+            </span>
+          ) : null}
+          <span class="mover-part mover-part-end" style={{ flexGrow: Math.max(1000 - (delta < 0n ? pos : pU + pW), 1) }}>
+            {firmAfter > 0n ? (unlockedAfter === 0n && waiting === 0n ? "All locked" : "Locked") : ""}
+          </span>
         </div>
         {waiting > 0n ? (
           <p class="mover-note">
