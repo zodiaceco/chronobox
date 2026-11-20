@@ -1090,7 +1090,6 @@ function UnlockManySheet(props: {
   const { session, chain, vault, inspection, assets } = props;
   const [entries, setEntries] = useState<Entry[]>(props.preset ? [props.preset] : []);
   const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">(props.preset ? "confirm" : "form");
-  const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();
 
@@ -1184,11 +1183,10 @@ function UnlockManySheet(props: {
             After the wait, you come back here and collect it. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
-        <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
-          <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
+          <Button kind="primary" busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
           <Button kind="quiet" onClick={() => setStage("form")} disabled={!!action.busy}>
