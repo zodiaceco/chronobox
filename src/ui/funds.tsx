@@ -1554,9 +1554,15 @@ function LockSheet(props: {
       if (give && !gave.current) {
         // A plain wallet sends the contribution of a later lock as a step of its own, after the money is locked.
         setAt("give");
-        await sendAndWait(rpc, session.account, { to: give.to, data: "0x", value: give.amount }, send);
+        try {
+          await sendAndWait(rpc, session.account, { to: give.to, data: "0x", value: give.amount }, send);
+          done("give");
+        } catch (e) {
+          // The wallet sent it, and this page did not see it arrive. It may have arrived, so it is not sent a second time.
+          if (!(e instanceof Replaced || e instanceof StoppedWaiting)) throw e;
+          notes.current.push("Your contribution was sent, but this page did not see it arrive. Look in your wallet before you send one again.");
+        }
         gave.current = true;
-        done("give");
       }
       setResult({ lines: lines.filter((l) => sent.current.has(l.index)), cooldown: chosen, unverified, notes: notes.current });
       setStage("done");
