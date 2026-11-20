@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
 import { CONTRACTS } from "../src/lib/chains.ts";
-import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, sendBatch } from "../src/lib/wallet.ts";
+import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, canBatch, sendBatch } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const B = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -195,6 +195,24 @@ test("a batch is not sent twice, and an unknown outcome is not called a failure"
   await sendBatch(strict, A as any, 1, calls);
   assert.equal("data" in sent.calls[0], false);
   assert.equal(sent.atomicRequired, true);
+});
+
+test("only a wallet that can batch today gets the setup in one confirmation", async () => {
+  const answers = (answer: unknown) => provider({ wallet_getCapabilities: () => answer });
+  // EIP-5792 as it is now, and the first draft of it.
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "supported" } } }), A as any, 1), true);
+  assert.equal(await canBatch(answers({ "0x1": { atomicBatch: { supported: true } } }), A as any, 1), true);
+  // The answer is for this network only.
+  assert.equal(await canBatch(answers({ "0x2105": { atomic: { status: "supported" } } }), A as any, 1), false);
+  // A plain account that the wallet would first turn into a smart account takes two confirmations.
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "ready" } } }), A as any, 1), false);
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "unsupported" } } }), A as any, 1), false);
+  assert.equal(await canBatch(answers(null), A as any, 1), false);
+  // A wallet that does not know the method, and the question as it is asked.
+  assert.equal(await canBatch(provider({}), A as any, 1), false);
+  let asked: any[] = [];
+  await canBatch(provider({ wallet_getCapabilities: (params) => ((asked = params), {}) }), A as any, 8453);
+  assert.deepEqual(asked, [A, ["0x2105"]]);
 });
 
 test("errors reach the person in plain words", () => {
