@@ -2437,3 +2437,125 @@ button.row-strong:hover .row-hint {
   height: 1px;
   opacity: 0;
 }
+
+/* The funds of a wallet: one list, unlocked and locked */
+
+.funds {
+  padding-top: 3vh;
+}
+
+.funds-network {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.funds-network .select {
+  min-height: 36px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.funds-table {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.funds-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 0 18px;
+}
+
+.funds-row + .funds-row {
+  border-top: 1px solid var(--line);
+}
+
+.funds-header {
+  min-height: 40px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.funds-row > :nth-child(n + 2) {
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.funds-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.funds-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.funds-locked {
+  color: var(--blue-text);
+  font-weight: 600;
+}
+
+.funds-none {
+  color: var(--muted);
+}
+
+.funds-lock-icon {
+  flex: none;
+}
+
+.funds-note {
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.funds-note b {
+  color: var(--fg);
+}
+
+.funds-other {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.lock-time {
+  display: grid;
+  gap: 10px;
+}
+
+.modal {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lock-time-label {
+  font-weight: 600;
+}
+
+.lock-work {
+  justify-self: stretch;
+  font-size: 1rem;
+}
+
+.lock-count {
+  text-align: center;
+}

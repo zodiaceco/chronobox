@@ -2,7 +2,9 @@
 
 A vault that nobody can empty quickly.
 
-You connect a wallet, pick a delay (12 hours, 1 day, 1 week or your own), and Chronobox creates a Safe that has no owner. The only way out is a time lock that your wallet controls. Every withdrawal waits the full delay on chain. Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
+You connect a wallet and see its funds as one list: unlocked (in the wallet) and locked (in the wallet's Chronobox). You lock what should not leave in a hurry. Unlocking waits the full delay on chain (12 hours, 1 day, 1 week or your own). Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
+
+Behind this, a Chronobox is a Safe that has no owner. The only way out is a time lock that your wallet controls. Each wallet has one, at an address that follows from the wallet's address alone. There is no setup: the first lock creates it.
 
 **Status: proof of concept.** Tested on a local fork of Ethereum mainnet. Not yet run with real funds. Read "Limits" before you use it.
 
@@ -32,10 +34,15 @@ A finished Chronobox has four parts:
 
 So everything waits the full delay: a withdrawal, a new delay, a new wallet. One thing does not wait: cancel, and a cancel moves nothing.
 
-Setup takes two transactions from your wallet:
+The first time you lock money, the app also creates the Chronobox. A plain wallet confirms step by step:
 
-1. **Create** a 1 of 1 Safe owned by your wallet.
-2. **Lock**: one Safe transaction deploys the Delay and the cancel permission, enables them, makes your wallet the only module of the Delay, and replaces your wallet as owner with the burn address. All of it happens together or not at all.
+1. **Create** a 1 of 1 Safe owned by your wallet, at the address that follows from your wallet's address.
+2. **Switch on the time lock**: one Safe transaction deploys the Delay and the cancel permission, enables them, makes your wallet the only module of the Delay, and replaces your wallet as owner with the burn address. All of it happens together or not at all. The network's coin that you lock rides along in this transaction.
+3. One transfer per token that you lock.
+
+Later locks are plain transfers to the Chronobox.
+
+**Money at the address is protected only once the time lock is on.** Until step 2, your wallet owns the Safe outright, and anybody can deploy it at that address. So the app never sends money ahead of the lock, and money that it finds there before the lock is on is shown as "not locked yet", with a button to switch the lock on.
 
 ### The contribution
 
@@ -67,13 +74,15 @@ The Delay lets the setup wallet queue any transaction. The app builds three, and
 
 ### One transaction for wallets that can batch
 
-Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the create screen sends create, lock and any number of deposits as one atomic batch (`wallet_sendCalls`). If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets keep the two-transaction setup. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.
+Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the first lock sends create, the time lock and any number of deposits as one atomic batch (`wallet_sendCalls`), and a later lock of several assets is one batch too. If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets confirm step by step. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.
 
 This is detected, not configured. It was tested on the fork with a Safe as the wallet and in the browser with a test wallet that acts as a Safe. It was not tested with Rabby, Zodiac Pilot, Safe{Wallet} or a MetaMask smart account. With a Safe as the wallet, withdrawals go back to the Safe, and a cancel is only as fast as the Safe's signers.
 
-The app shows the deposit address only after it has checked the finished vault on chain. It runs the same checks every time you open a vault, and anybody can open any vault by address.
+The app shows the address of the Chronobox only after it has checked the finished vault on chain. It runs the same checks every time you open the page, and anybody can open any vault by address.
 
-The address of your nth vault depends only on your wallet address and n. The app finds your vaults again on any device, without a server.
+The checks that read the state of now take a moment, and the page shows your funds as soon as they are in. The history check for cancel can take long on a wallet's network, so it runs after that; until it has passed, the app does not lock more. The app remembers the block of the transaction that switched the lock on and reads the history from there.
+
+The address of the vault depends only on your wallet address. The app finds it again on any device, without a server. (The contracts allow more than one vault per wallet. This app uses the first.)
 
 ## Limits
 

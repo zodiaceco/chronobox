@@ -237,7 +237,10 @@ export function lockTx(
   cooldown: bigint,
   expiration: bigint = EXPIRATION_SECONDS,
   contribution: Contribution | null = null,
+  /** Coin that the wallet sends along and that stays in the Chronobox: locked in the same step that switches the lock on. */
+  keep: bigint = 0n,
 ): TxRequest {
+  if (keep < 0n) throw new Error("The amount must not be negative");
   if (contribution && (contribution.amount <= 0n || sameAddress(contribution.to, safe) || sameAddress(contribution.to, ZERO))) {
     throw new Error("The contribution is not valid");
   }
@@ -263,7 +266,7 @@ export function lockTx(
     { to: delay, data: call("enableModule(address)", [wallet]) },
     { to: safe, data: call("swapOwner(address,address,address)", [SENTINEL, wallet, CONTRACTS.burn]) },
     ...(contribution ? [{ to: contribution.to, data: "0x" as Hex, value: contribution.amount }] : []),
-  ], contribution?.amount ?? 0n);
+  ], (contribution?.amount ?? 0n) + keep);
 }
 
 export type Deposit = { token: Address | null; amount: bigint };
@@ -449,6 +452,8 @@ export type Check = {
   ok: boolean;
   /** True when the check could not be done, for example because the RPC did not return old logs. */
   unknown?: boolean;
+  /** True when the check has not run yet: the caller asked for the quick checks first. */
+  pending?: boolean;
   label: string;
   detail: string;
 };
@@ -475,6 +480,8 @@ export type Inspection = {
   expiration: bigint;
   txNonce: bigint;
   queueNonce: bigint;
+  /** True when the history check was left for later (see `inspect`). The state is then "unverified" for now. */
+  historyPending?: boolean;
 };
 
 /** Remembers in which block a contract was created, so its logs are read from there. */
@@ -614,7 +621,15 @@ async function safeSlot(rpc: Rpc, safe: Address, slot: Hex | bigint): Promise<He
 /** History checks that passed, per wallet connection (so per network). See where it is used. */
 const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
 
-export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Promise<Inspection> {
+/**
+ * Reads a Chronobox from the chain and checks it.
+ *
+ * Every check but one reads the state of now and takes a moment. The last one reads the event
+ * history of the Roles modifier, which can take long on a wallet's network. With `historyLater`
+ * that one is left out unless its answer is known already: the result comes at once, marked
+ * `historyPending`, and the caller asks again without the option to get the full answer.
+ */
+export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints, options: { historyLater?: boolean } = {}): Promise<Inspection> {
   const result: Inspection = {
     safe,
     state: "invalid",
@@ -757,12 +772,24 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       // passed is good until txNonce moves. Only a pass is kept, and only in memory.
       const key = `${safe}:${roles}:${delay}:${result.controller}:${txNonce}`.toLowerCase();
       const kept = passed.get(rpc)?.get(key);
-      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, result.controller, hints));
+      const later = !kept && options.historyLater === true;
+      const history = later ? null : (kept ?? (await verifyCancelPermission(rpc, roles, delay, result.controller, hints)));
       if (history?.ok && !kept) {
         if (!passed.has(rpc)) passed.set(rpc, new Map());
         passed.get(rpc)!.set(key, history);
       }
-      if (history === null) {
+      if (later) {
+        cancelUnknown = true;
+        result.historyPending = true;
+        result.checks.push({
+          id: "cancel-only",
+          ok: false,
+          unknown: true,
+          pending: true,
+          label: "Cancel is the only thing that does not wait",
+          detail: "Reading the history of the Roles modifier…",
+        });
+      } else if (history === null) {
         cancelUnknown = true;
         result.checks.push({
           id: "cancel-only",

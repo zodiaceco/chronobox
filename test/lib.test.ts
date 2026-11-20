@@ -73,6 +73,12 @@ test("addresses are predicted as on the fork", () => {
   assert.equal(predictDelay(SAFE, WEEK, WEEK), "0x4Bc1F5bDd8ac14ffEc0e91441913E428579708f7");
   assert.notEqual(predictSafe(WALLET, 1), SAFE);
   assert.throws(() => lockTx(WALLET, SAFE, 0n));
+  // Coin that is locked in the same step rides along and stays: the batch passes on the contribution only.
+  const give = { to: "0x000000000000000000000000000000000000c0de" as const, amount: 5n };
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, give, 100n).value, 105n);
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, null, 100n).value, 100n);
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, give, 100n).data, lockTx(WALLET, SAFE, WEEK, undefined, give).data);
+  assert.throws(() => lockTx(WALLET, SAFE, WEEK, undefined, null, -1n));
 });
 
 test("only a transfer to the controller is a withdrawal", () => {

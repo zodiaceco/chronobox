@@ -40,7 +40,7 @@ import {
   MAX_COOLDOWN,
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
-import { errorText, isRejection } from "../lib/wallet.ts";
+import { errorText } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -57,7 +57,7 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type VaultRef = { safe: Address; delay: Address; controller: Address; roles?: Address | null };
+export type VaultRef = { safe: Address; delay: Address; controller: Address; roles?: Address | null };
 type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "checks" | null;
 
 function useVault(session: Session, chain: Chain, safe: Address) {
@@ -133,7 +133,7 @@ function useVault(session: Session, chain: Chain, safe: Address) {
 }
 
 /** Chain time in seconds, advanced by the local clock between reads. */
-function useChainClock(data: VaultData | null): bigint {
+export function useChainClock(data: { now: bigint; fetchedAt: number } | null): bigint {
   const [, setBeat] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => setBeat((b) => b + 1), 1000);
@@ -148,14 +148,14 @@ function useChainClock(data: VaultData | null): bigint {
  * Many calendars copy their entries to a cloud. So the file says only that something waits:
  * no amount, no address and no link.
  */
-function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
+export function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
   const base = `chronobox-${status.readyAt}-${nonce}`;
   const reminders = [
     {
       uid: `${base}-ready@chronobox`,
       at: Number(status.readyAt),
-      title: "Chronobox: a withdrawal is ready",
-      description: "The wait has ended. Open your Chronobox to finish it.",
+      title: "Chronobox: your money is unlocked",
+      description: "The wait has ended. Open Chronobox to collect it.",
     },
   ];
   if (status.expiresAt !== null) {
@@ -163,8 +163,8 @@ function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
     reminders.push({
       uid: `${base}-expires@chronobox`,
       at: Number(status.expiresAt - before),
-      title: "Chronobox: a withdrawal expires soon",
-      description: `It expires on ${formatDate(status.expiresAt)}. After that you must ask again and wait again.`,
+      title: "Chronobox: collect your money soon",
+      description: `You can collect it until ${formatDate(status.expiresAt)}. After that you must unlock again and wait again.`,
     });
   }
   download("chronobox-reminder.ics", calendarFile(reminders, Number(now)));
@@ -175,16 +175,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const { data, error, refresh } = useVault(session, chain, safe);
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
-  const [cancelling, setCancelling] = useState<QueueItem | null>(null);
   const [copied, setCopied] = useState(false);
-  // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
-  // nothing else that is pending may block it.
-  const action = useAction();
-  const cancelAction = useAction();
-  const [confirming, setConfirming] = useState<QueueItem | null>(null);
-  const sending = { chainId: chain.id, chainName: chain.name };
-  const line = useRef<QueueItem[]>([]);
-  line.current = data?.queue ?? [];
 
   useEffect(() => {
     // It is remembered for the wallet that is its key, so it shows in that wallet's list only.
@@ -194,8 +185,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   if (error && !data) {
     return (
       <section class="page page-center">
-        <h1>We could not read your Chronobox.</h1>
-        <p class="lead">Your money is not affected. Check the connection of your wallet and try again.</p>
+        <h1>We could not read this Chronobox.</h1>
+        <p class="lead">The money is not affected. Check the connection of your wallet and try again.</p>
         <p class="hint">{error}</p>
         <div class="page-actions">
           <Button kind="primary" onClick={refresh}>
@@ -205,7 +196,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       </section>
     );
   }
-  if (!data) return <section class="page page-center muted">Opening your Chronobox…</section>;
+  if (!data) return <section class="page page-center muted">Opening the Chronobox…</section>;
 
   const { inspection, queue, assets, balances } = data;
   // "unverified": one check could not be done from this device. Money can still come out, so only deposits are held back.
@@ -220,49 +211,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     setSheet(null);
     refresh();
   };
-
-  // After every try the page reads the chain again: a failure often means that the line has moved.
-  const finish = (item: QueueItem) =>
-    action.run(`finish-${item.nonce}`, async (waiting) => {
-      // The item can leave the line while this waits: it was cancelled, or carried out from another device. Then there is nothing to wait for.
-      const gone = () => !line.current.some((q) => q.nonce === item.nonce);
-      try {
-        await sendAndWait(session.rpc, session.account, executeTx(inspection.delay!, item.tx!), { ...sending, ...waiting, shouldStop: () => waiting.shouldStop() || gone() });
-      } catch (e) {
-        if (!(e instanceof StoppedWaiting && gone())) throw e;
-      } finally {
-        refresh();
-      }
-    });
-  const cancel = (item: QueueItem) =>
-    cancelAction.run("cancel", async (waiting) => {
-      try {
-        await sendAndWait(session.rpc, session.account, cancelTx(inspection.roles!, inspection.delay!, item.nonce), { ...sending, ...waiting });
-        setCancelling(null);
-      } finally {
-        refresh();
-      }
-    });
-  const remove = () =>
-    action.run("remove", async (waiting) => {
-      try {
-        await sendAndWait(session.rpc, session.account, skipExpiredTx(inspection.delay!), { ...sending, ...waiting });
-      } finally {
-        refresh();
-      }
-    });
-  const askCancel = (item: QueueItem) => {
-    cancelAction.clearError();
-    setConfirming(null);
-    setCancelling(item);
-  };
   const copyAddress = async () => {
     try {
       if (!(await copyText(safe))) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     } catch {
-      // The address is on the "Add money" sheet too, where it can be selected by hand.
+      // The address is on the "Lock from elsewhere" sheet too, where it can be selected by hand.
     }
   };
 
@@ -270,10 +225,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown = held.length > 0 ? held : [{ asset: assets[0], amount: balances[0] ?? 0n }];
   const unread = assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol);
-  // The item in the line that the cancel dialog is about may be gone by now.
-  const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
   const passed = inspection.checks.filter((c) => c.ok).length;
-  const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
 
   return (
     <section class="page vault">
@@ -298,7 +250,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               View only
             </p>
           ) : null}
-          <p class="eyebrow">{viewOnly ? `A Chronobox on ${chain.name}` : `Your Chronobox on ${chain.name}`}</p>
+          <p class="eyebrow">{viewOnly ? `Locked in a Chronobox on ${chain.name}` : `Locked in this Chronobox on ${chain.name}`}</p>
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
@@ -313,60 +265,34 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             <p class="vault-lock">
               <span class="dot" aria-hidden="true" />
               <span>
-                Every withdrawal waits <b>{formatDuration(inspection.cooldown)}</b>.
+                Unlocking takes <b>{formatDuration(inspection.cooldown)}</b>.
               </span>
             </p>
           ) : null}
           {locked ? (
             <div class={viewOnly ? "vault-actions vault-actions-one" : "vault-actions"}>
               <Button kind={viewOnly ? "plain" : "primary"} disabled={!verified} onClick={() => setSheet("deposit")}>
-                Add money
+                Lock more
               </Button>
-              {viewOnly ? null : <Button onClick={() => setSheet("withdraw")}>Withdraw</Button>}
+              {viewOnly ? null : <Button onClick={() => setSheet("withdraw")}>Unlock</Button>}
             </div>
           ) : null}
           {viewOnly ? (
             <p class="hint">
-              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} />. Your wallet can look and add money. It cannot withdraw.
+              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} />. Your wallet can look and lock money in it. It cannot unlock.
             </p>
           ) : null}
         </div>
       ) : null}
 
-      {vault && queue.length > 0 ? (
-        <div class="section">
-          <h2>Waiting</h2>
-          <ol class="queue">
-            {queue.map((item, index) => (
-              <QueueCard
-                key={String(item.nonce)}
-                item={item}
-                first={index === 0}
-                status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
-                now={now}
-                cooldown={inspection.cooldown}
-                action={item.tx ? classify(item.tx, vault) : null}
-                assets={assets}
-                chain={chain}
-                safe={safe}
-                rpc={session.rpc}
-                busy={action.busy}
-                onFinish={() => finish(item)}
-                onFinishFlagged={() => setConfirming(item)}
-                onRemove={remove}
-                onCancel={canCancel ? () => askCancel(item) : null}
-              />
-            ))}
-          </ol>
-          <SlowNote action={action} />
-          {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
-        </div>
+      {vault ? (
+        <QueueSection session={session} chain={chain} vault={vault} inspection={inspection} queue={queue} assets={assets} now={now} canCancel={canCancel} refresh={refresh} />
       ) : null}
 
       {locked ? (
         <ul class="rows">
           <Row label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" strong />
-          <Row label="Delay" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
+          <Row label="Unlocking takes" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
           <Row label="Wallet" value={isController ? shortAddress(inspection.controller!) : <AddressText address={inspection.controller!} />} onClick={isController ? () => setSheet("wallet") : undefined} />
           <Row
             label="Safety checks"
@@ -385,40 +311,145 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
-        <Modal title="Add money" onClose={close}>
+        <Modal title="Lock more" onClose={close}>
           <DepositPanel session={session} chain={chain} safe={safe} assets={assets} />
         </Modal>
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
-      {sheet === "checks" ? (
-        <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
-          <ul class="checks">
-            {inspection.checks.map((check) => (
-              <li key={check.id} class={check.ok ? "check-ok" : check.unknown ? "check-unknown" : "check-bad"}>
-                <span class="check-mark" aria-hidden="true">
-                  {check.ok ? "✓" : check.unknown ? "?" : "✕"}
-                </span>
-                <span>
-                  {check.label}
-                  <small>{check.detail}</small>
-                </span>
-              </li>
+      {sheet === "checks" ? <ChecksSheet inspection={inspection} onClose={() => setSheet(null)} /> : null}
+    </section>
+  );
+}
+
+/** The safety checks, one line each, as they were read a moment ago. */
+export function ChecksSheet(props: { inspection: Inspection; onClose: () => void }) {
+  return (
+    <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={props.onClose}>
+      <ul class="checks">
+        {props.inspection.checks.map((check) => (
+          <li key={check.id} class={check.ok ? "check-ok" : check.unknown ? "check-unknown" : "check-bad"}>
+            <span class="check-mark" aria-hidden="true">
+              {check.ok ? "✓" : check.pending ? "…" : check.unknown ? "?" : "✕"}
+            </span>
+            <span>
+              {check.label}
+              <small>{check.detail}</small>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p class="hint">
+        Anybody can open a Chronobox by its address and run the same checks. <a href="#/technical">How it is built</a>
+      </p>
+    </Modal>
+  );
+}
+
+/**
+ * What is waiting: the line of the time lock, with the buttons to collect, clear and cancel,
+ * and the two questions that go with them.
+ */
+export function QueueSection(props: {
+  session: Session;
+  chain: Chain;
+  vault: VaultRef;
+  inspection: Inspection;
+  queue: QueueItem[];
+  assets: Asset[];
+  now: bigint;
+  canCancel: boolean;
+  refresh: () => void;
+}) {
+  const { session, chain, vault, inspection, queue, assets, now, canCancel, refresh } = props;
+  const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  const [confirming, setConfirming] = useState<QueueItem | null>(null);
+  // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
+  // nothing else that is pending may block it.
+  const action = useAction();
+  const cancelAction = useAction();
+  const sending = { chainId: chain.id, chainName: chain.name };
+  const line = useRef<QueueItem[]>([]);
+  line.current = queue;
+
+  // After every try the page reads the chain again: a failure often means that the line has moved.
+  const finish = (item: QueueItem) =>
+    action.run(`finish-${item.nonce}`, async (waiting) => {
+      // The item can leave the line while this waits: it was cancelled, or carried out from another device. Then there is nothing to wait for.
+      const gone = () => !line.current.some((q) => q.nonce === item.nonce);
+      try {
+        await sendAndWait(session.rpc, session.account, executeTx(vault.delay, item.tx!), { ...sending, ...waiting, shouldStop: () => waiting.shouldStop() || gone() });
+      } catch (e) {
+        if (!(e instanceof StoppedWaiting && gone())) throw e;
+      } finally {
+        refresh();
+      }
+    });
+  const cancel = (item: QueueItem) =>
+    cancelAction.run("cancel", async (waiting) => {
+      try {
+        await sendAndWait(session.rpc, session.account, cancelTx(vault.roles!, vault.delay, item.nonce), { ...sending, ...waiting });
+        setCancelling(null);
+      } finally {
+        refresh();
+      }
+    });
+  const remove = () =>
+    action.run("remove", async (waiting) => {
+      try {
+        await sendAndWait(session.rpc, session.account, skipExpiredTx(vault.delay), { ...sending, ...waiting });
+      } finally {
+        refresh();
+      }
+    });
+  const askCancel = (item: QueueItem) => {
+    cancelAction.clearError();
+    setConfirming(null);
+    setCancelling(item);
+  };
+  // The item in the line that the cancel dialog is about may be gone by now.
+  const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
+  const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
+
+  return (
+    <>
+      {queue.length > 0 ? (
+        <div class="section">
+          <h2>Waiting</h2>
+          <ol class="queue">
+            {queue.map((item, index) => (
+              <QueueCard
+                key={String(item.nonce)}
+                item={item}
+                first={index === 0}
+                status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
+                now={now}
+                cooldown={inspection.cooldown}
+                action={item.tx ? classify(item.tx, vault) : null}
+                assets={assets}
+                chain={chain}
+                safe={vault.safe}
+                rpc={session.rpc}
+                busy={action.busy}
+                onFinish={() => finish(item)}
+                onFinishFlagged={() => setConfirming(item)}
+                onRemove={remove}
+                onCancel={canCancel ? () => askCancel(item) : null}
+              />
             ))}
-          </ul>
-          <p class="hint">
-            Anybody can open this Chronobox by its address and run the same checks. <a href="#/technical">How it is built</a>
-          </p>
-        </Modal>
+          </ol>
+          <SlowNote action={action} />
+          {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+        </div>
       ) : null}
-      {cancelling && vault ? (
+      {cancelling ? (
         <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (
             <>
               <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}).title}</p>
               <p>
-                Nothing moves. Your money stays in the Chronobox.
+                Nothing moves. Your money stays locked.
                 {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
               </p>
               <SlowNote action={cancelAction} />
@@ -444,7 +475,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           )}
         </Modal>
       ) : null}
-      {confirming && vault ? (
+      {confirming ? (
         <Modal title="Carry this out?" onClose={() => setConfirming(null)}>
           <p class="big-line">{describe(confirming.tx ? classify(confirming.tx, vault) : null, assets, {}).title}</p>
           <Notice kind="risk">{describe(confirming.tx ? classify(confirming.tx, vault) : null, assets, {}).warning}</Notice>
@@ -467,13 +498,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           </div>
         </Modal>
       ) : null}
-    </section>
+    </>
   );
 }
 
 /** One line in the list under the balance. With an action it is a button. */
 /** `strong` marks the one row that people come for: the address of the Chronobox. */
-function Row(props: { label: string; value: ComponentChildren; hint?: string; onClick?: () => void; strong?: boolean }) {
+export function Row(props: { label: string; value: ComponentChildren; hint?: string; onClick?: () => void; strong?: boolean }) {
   const inner = (
     <>
       <span class="row-label">{props.label}</span>
@@ -509,7 +540,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "unverified") {
     return (
       <Notice kind="risk" title="One safety check could not run here.">
-        Nothing looks wrong, and you can withdraw. Wait with new deposits until the check passes: open this page with a wallet whose
+        Nothing looks wrong, and you can unlock. Wait with locking more until the check passes: open this page with a wallet whose
         network connection can read old records.
       </Notice>
     );
@@ -524,13 +555,13 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "open") {
     const mine = sameAddress(inspection.owners[0], session.account);
     return (
-      <Notice kind="risk" title="The time delay of this Chronobox is not on yet. Do not send money.">
+      <Notice kind="risk" title="The time lock of this Chronobox is not on yet. Do not send money.">
         {mine ? (
           <>
-            The setup stopped halfway. <a href="#/new">Finish it now</a>
+            It switches on when you lock money for the first time. <a href="#/">Go to your funds</a>
           </>
         ) : (
-          "Its setup stopped halfway. Only the wallet that started it can finish it."
+          "Only the wallet that started it can switch it on."
         )}
       </Notice>
     );
@@ -543,7 +574,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
 }
 
 /** `flagged`: this app did not make the item, so carrying it out asks for a second look first. */
-function describe(action: Action | null, assets: Asset[], tokens: Record<string, Asset>): { title: string; warning: string | null; finish: string; flagged?: boolean } {
+export function describe(action: Action | null, assets: Asset[], tokens: Record<string, Asset>): { title: string; warning: string | null; finish: string; flagged?: boolean } {
   if (!action) {
     return { title: "Something this app cannot read", warning: "Its details are not available from your wallet's network connection. It cannot be finished from this device.", finish: "Finish" };
   }
@@ -553,11 +584,11 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
   };
   switch (action.kind) {
     case "withdraw":
-      return { title: `Withdraw ${amountOf(action.token, action.amount)}`, warning: null, finish: "Collect now" };
+      return { title: `Unlock ${amountOf(action.token, action.amount)}`, warning: null, finish: "Collect now" };
     case "change-delay":
-      return { title: `Change the delay to ${formatDuration(action.cooldown)}`, warning: null, finish: "Apply now" };
+      return { title: `Change the unlock time to ${formatDuration(action.cooldown)}`, warning: null, finish: "Apply now" };
     case "change-wallet":
-      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Chronobox.`, finish: "Apply now" };
+      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} can unlock this money.`, finish: "Apply now" };
     case "transfer-elsewhere":
       return {
         title: `Send ${amountOf(action.token, action.amount)} to ${shortAddress(action.to)}`,
@@ -572,7 +603,7 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
   }
 }
 
-function QueueCard(props: {
+export function QueueCard(props: {
   item: QueueItem;
   first: boolean;
   status: ItemStatus;
@@ -677,7 +708,7 @@ async function queueItem(session: Session, chain: Chain, vault: VaultRef, tx: De
 }
 
 /** After a send whose outcome is not known. */
-function UnknownSheet(props: { onClose: () => void }) {
+export function UnknownSheet(props: { onClose: () => void }) {
   return (
     <Modal title="Look at the line" onClose={props.onClose}>
       <p>
@@ -697,7 +728,7 @@ function UnknownSheet(props: { onClose: () => void }) {
   );
 }
 
-function WithdrawSheet(props: {
+export function WithdrawSheet(props: {
   session: Session;
   chain: Chain;
   vault: VaultRef;
@@ -737,7 +768,7 @@ function WithdrawSheet(props: {
   const amount = parseUnits(amountText, asset.decimals);
   const problem =
     inside === null
-      ? `The ${asset.symbol} in your Chronobox could not be read now. Close this and try again in a moment.`
+      ? `Your locked ${asset.symbol} could not be read now. Close this and try again in a moment.`
       : amountText === ""
         ? null
         : amount === null
@@ -745,7 +776,7 @@ function WithdrawSheet(props: {
         : amount === 0n
           ? "Enter more than zero."
           : amount > available
-            ? `You can withdraw up to ${formatAmount(available, asset.decimals)} ${asset.symbol}.`
+            ? `You can unlock up to ${formatAmount(available, asset.decimals)} ${asset.symbol}.`
             : null;
   const delayText = formatDuration(inspection.cooldown);
   const amountLine = amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "";
@@ -775,7 +806,7 @@ function WithdrawSheet(props: {
         <p>
           Come back on <b>{formatDate(status.readyAt)}</b>.
           {status.expiresAt !== null
-            ? ` You then have ${formatDuration(inspection.expiration)} to collect it. After that time, this withdrawal is no longer valid and the money stays in your Chronobox.`
+            ? ` You then have ${formatDuration(inspection.expiration)} to collect it. After that time, this request is no longer valid and the money stays locked.`
             : " Then you can collect it."}
         </p>
         <div class="modal-actions">
@@ -792,7 +823,7 @@ function WithdrawSheet(props: {
 
   if (stage === "confirm") {
     return (
-      <Modal title={`Withdraw ${amountLine}`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+      <Modal title={`Unlock ${amountLine}`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <div class="delay-callout">
           <span class="delay-callout-label">This takes</span>
           <span class="delay-callout-value">{delayText}</span>
@@ -801,7 +832,7 @@ function WithdrawSheet(props: {
           <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
           {props.canCancel ? <li>You can cancel it while it waits.</li> : null}
           <li>
-            After the wait, you come back here and collect it. Then it goes to your wallet <AddressText address={vault.controller} />.
+            After the wait, you come back here and collect it. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
         <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
@@ -820,7 +851,7 @@ function WithdrawSheet(props: {
   }
 
   return (
-    <Modal title="Withdraw" lead="How much do you need?" onClose={props.onClose}>
+    <Modal title="Unlock" lead="How much do you need?" onClose={props.onClose}>
       <AssetAmount
         assets={assets}
         asset={assetIndex}
@@ -837,7 +868,7 @@ function WithdrawSheet(props: {
         <p class="field-error">{problem}</p>
       ) : (
         <p class="hint">
-          After {delayText}, you collect it here. Then it goes to your wallet <AddressText address={vault.controller} />.
+          After {delayText}, you collect it here. Then it is unlocked in your wallet <AddressText address={vault.controller} />.
         </p>
       )}
       <div class="modal-actions">
@@ -856,7 +887,7 @@ const DELAY_CHOICES: { label: string; seconds: bigint }[] = [
   { label: "30 days", seconds: 30n * 24n * 3600n },
 ];
 
-function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultRef; inspection: Inspection; canCancel: boolean; onClose: () => void }) {
+export function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultRef; inspection: Inspection; canCancel: boolean; onClose: () => void }) {
   const { session, vault, inspection } = props;
   const [picked, setPicked] = useState<bigint | "custom" | null>(null);
   const [customValue, setCustomValue] = useState("3");
@@ -872,11 +903,11 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
       : custom === null
         ? "Enter a whole number."
         : custom < MIN_COOLDOWN
-          ? `The shortest delay is ${formatDuration(MIN_COOLDOWN)}.`
+          ? `The shortest time is ${formatDuration(MIN_COOLDOWN)}.`
           : custom > MAX_COOLDOWN
-            ? `The longest delay is ${formatDuration(MAX_COOLDOWN)}.`
+            ? `The longest time is ${formatDuration(MAX_COOLDOWN)}.`
             : custom === inspection.cooldown
-              ? "That is the delay now."
+              ? "That is the time now."
               : null;
   const choice = picked === "custom" ? (problem ? null : custom) : picked;
   const submit = () =>
@@ -888,7 +919,7 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
   if (unknown) return <UnknownSheet onClose={props.onClose} />;
   if (done) {
     return (
-      <Modal title="The wait has started." lead={`In ${now} you can apply the new delay. Until then, every withdrawal still waits ${now}.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${now} you can apply the new time. Until then, unlocking still takes ${now}.`} onClose={props.onClose}>
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>
             Done
@@ -899,8 +930,8 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
   }
   return (
     <Modal
-      title="Change the delay"
-      lead={`Withdrawals wait ${now} now. A change waits ${now} too${props.canCancel ? ", and you can cancel it in that time" : ""}.`}
+      title="Change how long unlocking takes"
+      lead={`Unlocking takes ${now} now. A change waits ${now} too${props.canCancel ? ", and you can cancel it in that time" : ""}.`}
       busy={action.busy !== null && !action.slow}
       onClose={props.onClose}
     >
@@ -933,7 +964,7 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
         </div>
       ) : null}
       {problem ? <p class="field-error">{problem}</p> : null}
-      {choice !== null && choice < inspection.cooldown ? <p class="hint">A shorter delay gives you less time to notice a withdrawal that you did not ask for.</p> : null}
+      {choice !== null && choice < inspection.cooldown ? <p class="hint">A shorter time gives you less time to notice an unlock that you did not ask for.</p> : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
@@ -945,7 +976,7 @@ function ChangeDelaySheet(props: { session: Session; chain: Chain; vault: VaultR
   );
 }
 
-function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: VaultRef; inspection: Inspection; canCancel: boolean; onClose: () => void }) {
+export function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: VaultRef; inspection: Inspection; canCancel: boolean; onClose: () => void }) {
   const { session, vault, inspection } = props;
   const [text, setText] = useState("");
   const [sure, setSure] = useState(false);
@@ -1035,7 +1066,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
         role="checkbox"
         on={sure}
         title="I checked the address, and I hold its key."
-        text="If it is wrong, the money in this Chronobox is gone."
+        text="If it is wrong, the locked money is gone."
         disabled={!!action.busy}
         onClick={() => setSure(!sure)}
       />
@@ -1050,7 +1081,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
   );
 }
 
-function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void }) {
+export function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void }) {
   const [text, setText] = useState("");
   const action = useAction();
   const add = () =>
@@ -1058,7 +1089,7 @@ function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void
       const address = parseAddress(text);
       if (!address) throw new Error("This is not a token address.");
       if (sameAddress(address, CONTRACTS.burn)) throw new Error("This is not a token.");
-      if (assetsOf(props.chain).some((a) => sameAddress(a.token, address))) throw new Error("Chronobox knows this token already. It shows as soon as your Chronobox holds some.");
+      if (assetsOf(props.chain).some((a) => sameAddress(a.token, address))) throw new Error("Chronobox knows this token already. It shows as soon as you hold some.");
       const meta = await readToken(props.session.rpc, address);
       if (!meta) throw new Error(`There is no token at this address on ${props.chain.name}.`);
       if (!addCustomToken(props.chain.id, { address, ...meta })) {
@@ -1067,7 +1098,7 @@ function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void
       props.onClose();
     });
   return (
-    <Modal title="Add a token" lead={`Your Chronobox can hold any token on ${props.chain.name}. Paste its address to see it here.`} onClose={props.onClose}>
+    <Modal title="Add a token" lead={`You can lock any token on ${props.chain.name}. Paste its address to see it here.`} onClose={props.onClose}>
       <input
         class="input"
         placeholder="Token address"
