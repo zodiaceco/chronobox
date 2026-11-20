@@ -402,10 +402,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <span class="eyebrow">Your funds on</span>
         <b>{chain.name}</b>
       </p>
-      <Notice kind="info" title={`Your wallet is a Safe or another contract wallet on ${chain.name}.`}>
-        It exists on this network only. Send money to your Chronobox on {chain.name} only: on any other network, this address is not
-        yours.
-      </Notice>
+      {/* Why there is no choice of network here. The warning about other networks stands where money is sent in: "Lock from elsewhere". */}
+      <p class="hint funds-network-why">Your wallet is a Safe or another contract wallet on {chain.name}.</p>
     </div>
   ) : (
     <label class="funds-network">

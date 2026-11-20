@@ -3592,3 +3592,18 @@ img.token-icon {
   color: inherit;
   font-weight: 600;
 }
+
+/* The network of a contract wallet: its name stands on the line of the words before it, with a quiet reason under it */
+
+p.funds-network {
+  align-items: baseline;
+}
+
+.funds-network-fixed {
+  gap: 4px;
+}
+
+.funds-network-why {
+  margin: 0;
+  text-align: center;
+}
