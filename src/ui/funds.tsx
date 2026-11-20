@@ -403,7 +403,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <b>{chain.name}</b>
       </p>
       {/* Why there is no choice of network here. The warning about other networks stands where money is sent in: "Lock from elsewhere". */}
-      <p class="hint funds-network-why">Your wallet is a Safe or another contract wallet on {chain.name}.</p>
+      <Notice kind="info" title={`Your wallet is a Safe or another contract wallet on ${chain.name}.`} />
     </div>
   ) : (
     <label class="funds-network">

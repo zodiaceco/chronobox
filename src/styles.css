@@ -3599,11 +3599,3 @@ p.funds-network {
   align-items: baseline;
 }
 
-.funds-network-fixed {
-  gap: 4px;
-}
-
-.funds-network-why {
-  margin: 0;
-  text-align: center;
-}
