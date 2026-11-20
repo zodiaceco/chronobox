@@ -108,6 +108,29 @@ export function SunArt(props: ArtProps & { deg?: number }) {
   );
 }
 
+/**
+ * The sun early on its path, for "set the delay". The sun and the solid part
+ * of the path are placed by the stylesheet (.art-run), so they can move on:
+ * when the picture is in motion, the sun runs most of its way.
+ */
+export function DelayArt(props: ArtProps) {
+  const [x, y] = at(0);
+  return (
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <path d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" opacity="0.45" />
+          <path class="art-run-path" d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" pathLength="100" stroke-dasharray="100" />
+        </>
+      }
+    >
+      <circle class="art-run-sun" cx={x} cy={y} r="6" fill={WHITE} />
+    </Tile>
+  );
+}
+
 /** How long one pass of the sun takes, in seconds. */
 const PASS_SECONDS = 5;
 
@@ -158,10 +181,14 @@ export function SunPassArt(props: ArtProps) {
 export function WalletArt(props: ArtProps) {
   return (
     <Tile size={props.size} class={props.class} planet={false}>
-      <path d="M20.5 24L38 16.5L41 24" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linejoin="round" />
-      <rect x="16" y="24" width="32" height="22" rx="5" fill="none" stroke={WHITE} stroke-width="2.6" />
-      <rect x="37.5" y="30.5" width="13" height="9" rx="4.5" fill={WHITE} />
-      <circle cx="42.5" cy="35" r="1.7" fill={BLUE} />
+      <g class="art-wallet">
+        <path class="art-flap" d="M20.5 24L38 16.5L41 24" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linejoin="round" />
+        <rect x="16" y="24" width="32" height="22" rx="5" fill="none" stroke={WHITE} stroke-width="2.6" />
+        <rect x="37.5" y="30.5" width="13" height="9" rx="4.5" fill={WHITE} />
+        <circle cx="42.5" cy="35" r="1.7" fill={BLUE} />
+        {/* A signal from the clasp. It shows only while the picture is in motion. */}
+        <circle class="art-ping" cx="42.5" cy="35" r="5" fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
+      </g>
     </Tile>
   );
 }
@@ -178,9 +205,17 @@ export function BoxArt(props: ArtProps) {
 /** A coin on its way down, behind the horizon. */
 export function DepositArt(props: ArtProps) {
   return (
-    <Tile size={props.size} class={props.class}>
-      <Coin x={32} y={17.4} r={7.4} />
-      <path d="M27.4 29.2L32 33.2L36.6 29.2" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        // Behind the planet, so a coin in motion goes down behind the horizon.
+        <g class="art-coin">
+          <Coin x={32} y={17.4} r={7.4} />
+        </g>
+      }
+    >
+      <path class="art-arrow" d="M27.4 29.2L32 33.2L36.6 29.2" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
     </Tile>
   );
 }
@@ -196,9 +231,24 @@ export function NightArt(props: ArtProps) {
         <circle cx={x} cy={y} r={r} fill="#fff" />
         <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
       </mask>
-      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-moon)" />
-      <circle cx="19" cy="17" r="1.1" fill={WHITE} />
-      <circle cx="27.5" cy="12.5" r="0.8" fill={WHITE} />
+      <rect class="art-moon" x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-moon)" />
+      <circle class="art-star" cx="19" cy="17" r="1.1" fill={WHITE} />
+      <circle class="art-star" cx="27.5" cy="12.5" r="0.8" fill={WHITE} />
+      {/* A third star. It shows only while the picture is in motion. */}
+      <circle class="art-star art-star-extra" cx="12.5" cy="26" r="0.9" fill={WHITE} opacity="0" />
+    </Tile>
+  );
+}
+
+/** The guardian: a second light on the same path. It keeps watch, and it is not the sun. */
+export function GuardianArt(props: ArtProps) {
+  const deg = 42;
+  const [x, y] = at(deg);
+  return (
+    <Tile size={props.size} class={props.class} behind={<Path solidTo={MARK_DEG} gap={{ deg, half: 26 }} />}>
+      <Sun deg={MARK_DEG} />
+      <circle class="art-ping" cx={x} cy={y} r="5" fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
+      <circle cx={x} cy={y} r="5" fill="none" stroke={WHITE} stroke-width="2.6" />
     </Tile>
   );
 }

@@ -9,7 +9,7 @@ import { type Chain, CONTRACTS } from "../lib/chains.ts";
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { calendarFile, download } from "../lib/ics.ts";
-import { addCustomToken, blockHints, rememberVault, txCache } from "../lib/store.ts";
+import { addCustomToken, blockHints, pendingSwap, rememberVault, setPendingSwap, txCache } from "../lib/store.ts";
 import {
   type Action,
   type Inspection,
@@ -24,7 +24,6 @@ import {
   executeTx,
   inspect,
   itemStatus,
-  queueTx,
   queuedInReceipt,
   readQueue,
   readBalances,
@@ -32,18 +31,17 @@ import {
   sendAndWait,
   skipExpiredTx,
   withdrawalTx,
-  Replaced,
   StoppedWaiting,
-  type Receipt,
-  type DelayTx,
   receiptTime,
   MAX_COOLDOWN,
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText, isRejection } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
+import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
+import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 
 type VaultData = {
   inspection: Inspection;
@@ -57,8 +55,7 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type VaultRef = { safe: Address; delay: Address; controller: Address; roles?: Address | null };
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "checks" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | null;
 
 function useVault(session: Session, chain: Chain, safe: Address) {
   const [data, setData] = useState<VaultData | null>(null);
@@ -170,7 +167,7 @@ function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
   download("chronobox-reminder.ics", calendarFile(reminders, Number(now)));
 }
 
-export function VaultPage(props: { session: Session; chain: Chain; safe: Address }) {
+export function VaultPage(props: { session: Session; chain: Chain; safe: Address; swapTo?: Address | null }) {
   const { session, chain, safe } = props;
   const { data, error, refresh } = useVault(session, chain, safe);
   const now = useChainClock(data);
@@ -182,14 +179,19 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const action = useAction();
   const cancelAction = useAction();
   const [confirming, setConfirming] = useState<QueueItem | null>(null);
+  // A link from the owner can ask the guardian to agree to a new wallet. The sheet opens once.
+  const [agreeing, setAgreeing] = useState<Address | null>(props.swapTo ?? null);
   const sending = { chainId: chain.id, chainName: chain.name };
   const line = useRef<QueueItem[]>([]);
   line.current = data?.queue ?? [];
 
   useEffect(() => {
     // It is remembered for the wallet that is its key, so it shows in that wallet's list only.
-    if (data?.inspection.state === "locked" && data.inspection.controller) rememberVault({ chainId: chain.id, safe, wallet: data.inspection.controller });
-  }, [data?.inspection.state, data?.inspection.controller, chain.id, safe]);
+    if (data?.inspection.state !== "locked" || !data.inspection.controller) return;
+    // A guardian finds it in the list of the guardian's own wallet. On the guardian's device, that is the wallet to remember.
+    const asGuardian = sameAddress(data.inspection.guardian, session.account);
+    rememberVault({ chainId: chain.id, safe, wallet: asGuardian ? session.account : data.inspection.controller });
+  }, [data?.inspection.state, data?.inspection.controller, data?.inspection.guardian, session.account, chain.id, safe]);
 
   if (error && !data) {
     return (
@@ -212,10 +214,18 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const verified = inspection.state === "locked";
   const locked = verified || inspection.state === "unverified";
   const isController = locked && sameAddress(inspection.controller, session.account);
-  const canCancel = isController && !!inspection.roles;
+  // The guardian: a second wallet that can stop what waits, and nothing else alone.
+  const isGuardian = locked && !isController && sameAddress(inspection.guardian, session.account);
+  const canCancel = (isController || isGuardian) && !!inspection.roles;
   // Another wallet is the key. This wallet can look, and nothing else.
-  const viewOnly = locked && !isController;
-  const vault: VaultRef | null = locked ? { safe, delay: inspection.delay!, controller: inspection.controller!, roles: inspection.roles } : null;
+  const viewOnly = locked && !isController && !isGuardian;
+  const vault: VaultRef | null = locked
+    ? { safe, delay: inspection.delay!, controller: inspection.controller!, roles: inspection.roles, guardian: inspection.guardian, council: inspection.council, members: inspection.members }
+    : null;
+  // A guardian that is in the line and has not started yet.
+  const guardianWaiting = vault
+    ? (queue.map((item) => (item.tx ? classify(item.tx, vault) : null)).find((a): a is Extract<Action, { kind: "add-guardian" }> => a?.kind === "add-guardian")?.guardian ?? null)
+    : null;
   const close = () => {
     setSheet(null);
     refresh();
@@ -298,7 +308,15 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               View only
             </p>
           ) : null}
-          <p class="eyebrow">{viewOnly ? `A Chronobox on ${chain.name}` : `Your Chronobox on ${chain.name}`}</p>
+          {isGuardian ? (
+            <p class="view-only guardian-tag">
+              <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
+                <path d="M10 1.8l6.5 2.4v5c0 4-2.7 7.2-6.5 8.9-3.8-1.7-6.5-4.9-6.5-8.9v-5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+              </svg>
+              You are the guardian
+            </p>
+          ) : null}
+          <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
@@ -317,17 +335,23 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               </span>
             </p>
           ) : null}
-          {locked ? (
-            <div class={viewOnly ? "vault-actions vault-actions-one" : "vault-actions"}>
-              <Button kind={viewOnly ? "plain" : "primary"} disabled={!verified} onClick={() => setSheet("deposit")}>
+          {/* A guardian is here to watch and to stop. Adding money is not the guardian's job, so the button is not the first thing on the page. */}
+          {locked && !isGuardian ? (
+            <div class={isController ? "vault-actions" : "vault-actions vault-actions-one"}>
+              <Button kind={isController ? "primary" : "plain"} disabled={!verified} onClick={() => setSheet("deposit")}>
                 Add money
               </Button>
-              {viewOnly ? null : <Button onClick={() => setSheet("withdraw")}>Withdraw</Button>}
+              {isController ? <Button onClick={() => setSheet("withdraw")}>Withdraw</Button> : null}
             </div>
           ) : null}
           {viewOnly ? (
             <p class="hint">
               The key of this Chronobox is the wallet <AddressText address={inspection.controller!} />. Your wallet can look and add money. It cannot withdraw.
+            </p>
+          ) : null}
+          {isGuardian ? (
+            <p class="hint">
+              When a withdrawal waits here, call the owner. If you cannot reach them, or they did not ask for it, stop it. You cannot withdraw.
             </p>
           ) : null}
         </div>
@@ -355,6 +379,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 onFinishFlagged={() => setConfirming(item)}
                 onRemove={remove}
                 onCancel={canCancel ? () => askCancel(item) : null}
+                cancelLabel={isGuardian ? "Stop it" : "Cancel"}
               />
             ))}
           </ol>
@@ -367,7 +392,18 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         <ul class="rows">
           <Row label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" strong />
           <Row label="Delay" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
-          <Row label="Wallet" value={isController ? shortAddress(inspection.controller!) : <AddressText address={inspection.controller!} />} onClick={isController ? () => setSheet("wallet") : undefined} />
+          <Row
+            label="Wallet"
+            value={isController ? (inspection.guardian && pendingSwap(chain.id, safe) ? "Asking your guardian" : shortAddress(inspection.controller!)) : <AddressText address={inspection.controller!} />}
+            onClick={isController ? () => setSheet("wallet") : undefined}
+          />
+          {inspection.roles ? (
+            <Row
+              label="Guardian"
+              value={isGuardian ? "You" : inspection.guardian ? shortAddress(inspection.guardian) : guardianWaiting ? "Starts soon" : isController ? "Add" : "None"}
+              onClick={isController || inspection.guardian ? () => setSheet("guardian") : undefined}
+            />
+          ) : null}
           <Row
             label="Safety checks"
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
@@ -391,6 +427,21 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
+      {sheet === "guardian" && vault ? (
+        <GuardianSheet session={session} chain={chain} vault={vault} inspection={inspection} role={isController ? "owner" : isGuardian ? "guardian" : "viewer"} waiting={guardianWaiting} onClose={close} />
+      ) : null}
+      {agreeing && vault && isGuardian && sheet === null ? (
+        <AgreeSheet
+          session={session}
+          chain={chain}
+          vault={vault}
+          to={agreeing}
+          onClose={() => {
+            setAgreeing(null);
+            refresh();
+          }}
+        />
+      ) : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? (
         <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
@@ -413,22 +464,22 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </Modal>
       ) : null}
       {cancelling && vault ? (
-        <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
+        <Modal title={isGuardian ? "Stop this?" : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (
             <>
               <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}).title}</p>
               <p>
-                Nothing moves. Your money stays in the Chronobox.
+                {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
                 {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
               </p>
               <SlowNote action={cancelAction} />
               {cancelAction.error ? <Notice kind="bad">{cancelAction.error}</Notice> : null}
               <div class="modal-actions">
                 <Button kind="primary" busy={cancelAction.busy === "cancel"} onClick={() => cancel(cancelItem)}>
-                  Cancel it
+                  {isGuardian ? "Stop it" : "Cancel it"}
                 </Button>
                 <Button kind="quiet" onClick={() => setCancelling(null)} disabled={!!cancelAction.busy}>
-                  Keep it
+                  {isGuardian ? "Let it wait" : "Keep it"}
                 </Button>
               </div>
             </>
@@ -558,6 +609,10 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
       return { title: `Change the delay to ${formatDuration(action.cooldown)}`, warning: null, finish: "Apply now" };
     case "change-wallet":
       return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Chronobox.`, finish: "Apply now" };
+    case "add-guardian":
+      return { title: `Add the guardian ${shortAddress(action.guardian)}`, warning: `After this, the wallet ${action.guardian} can stop every withdrawal.`, finish: "Apply now" };
+    case "remove-guardian":
+      return { title: "Remove the guardian", warning: "After this, only the wallet of this Chronobox can cancel a withdrawal.", finish: "Apply now" };
     case "transfer-elsewhere":
       return {
         title: `Send ${amountOf(action.token, action.amount)} to ${shortAddress(action.to)}`,
@@ -588,6 +643,7 @@ function QueueCard(props: {
   onFinishFlagged: () => void;
   onRemove: () => void;
   onCancel: (() => void) | null;
+  cancelLabel: string;
 }) {
   const { item, status, now, action } = props;
   const [tokens, setTokens] = useState<Record<string, Asset>>({});
@@ -651,49 +707,11 @@ function QueueCard(props: {
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
           <button type="button" class="link-button" onClick={props.onCancel}>
-            Cancel
+            {props.cancelLabel}
           </button>
         ) : null}
       </div>
     </li>
-  );
-}
-
-/**
- * Puts one item into the line. Null means that the outcome is not known: the person stopped
- * waiting, or the wallet replaced the transaction. Then the line on the page has the answer,
- * and the form must not invite a second try.
- */
-async function queueItem(session: Session, chain: Chain, vault: VaultRef, tx: DelayTx, waiting: Waiting): Promise<Receipt | null> {
-  if (!sameAddress(vault.controller, session.account)) {
-    throw new Error(`Your wallet is on another account now. Only the wallet ${shortAddress(vault.controller)} can do this.`);
-  }
-  try {
-    return await sendAndWait(session.rpc, session.account, queueTx(vault.delay, tx), { chainId: chain.id, chainName: chain.name, ...waiting });
-  } catch (e) {
-    if (e instanceof Replaced || e instanceof StoppedWaiting) return null;
-    throw e;
-  }
-}
-
-/** After a send whose outcome is not known. */
-function UnknownSheet(props: { onClose: () => void }) {
-  return (
-    <Modal title="Look at the line" onClose={props.onClose}>
-      <p>
-        Your wallet sent the request, but this page did not see it arrive. That can happen when the network is slow, or when the request was
-        changed in the wallet.
-      </p>
-      <p>
-        Close this and look under "Waiting". If it is there, the wait has started. If it is not there after a few minutes, ask again. Do not ask
-        twice before you have looked.
-      </p>
-      <div class="modal-actions">
-        <Button kind="primary" onClick={props.onClose}>
-          Close
-        </Button>
-      </div>
-    </Modal>
   );
 }
 
@@ -952,8 +970,13 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
   const [done, setDone] = useState(false);
   const [copied, setCopied] = useState(false);
   const action = useAction();
+  // With a guardian there are two ways: together and now, or alone and after the wait.
+  const guard = vault.guardian && vault.council && vault.members ? { guardian: vault.guardian, council: vault.council, members: vault.members } : null;
+  const [mode, setMode] = useState<"together" | "alone">(guard ? "together" : "alone");
+  // A request that the guardian has not answered yet. The owner can close the page and come back to it.
+  const [asking, setAsking] = useState<Address | null>(() => (guard ? pendingSwap(props.chain.id, vault.safe) : null));
   const next = parseAddress(text);
-  const tx = next ? changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe) : null;
+  const tx = next ? changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe, guard) : null;
   const problem =
     text.trim() === ""
       ? null
@@ -963,6 +986,8 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
           ? "Enter a wallet other than this one."
           : sameAddress(next, vault.safe)
             ? "This is the address of the Chronobox itself. Enter the address of the new wallet."
+            : guard && sameAddress(next, guard.guardian)
+              ? "This is the wallet of your guardian. Wallet and guardian must be two wallets."
             : !tx
               ? "Nobody can sign with this address. Enter the address of a wallet."
               : null;
@@ -996,6 +1021,28 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       // The address is on screen and can be selected by hand.
     }
   };
+  const ask = () =>
+    action.run("ask", async (waiting) => {
+      if (!sameAddress(vault.controller, session.account)) throw new Error(`Your wallet is on another account now. Only the wallet ${shortAddress(vault.controller)} can do this.`);
+      await prepareSwap(session, props.chain, vault, waiting);
+      setPendingSwap(props.chain.id, vault.safe, next);
+      setAsking(next);
+    });
+  if (asking) {
+    return (
+      <AskGuardianSheet
+        session={session}
+        chain={props.chain}
+        vault={vault}
+        to={asking}
+        onDrop={() => {
+          setPendingSwap(props.chain.id, vault.safe, null);
+          setAsking(null);
+        }}
+        onClose={props.onClose}
+      />
+    );
+  }
   if (unknown) return <UnknownSheet onClose={props.onClose} />;
   if (done) {
     return (
@@ -1015,10 +1062,20 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
   return (
     <Modal
       title="Hand over to another wallet"
-      lead={`After ${wait}, the new wallet is the only key. This wallet can then do nothing.${props.canCancel ? " You can cancel while it waits." : ""}`}
+      lead={
+        guard
+          ? "The new wallet becomes the key of this Chronobox. This wallet can then do nothing."
+          : `After ${wait}, the new wallet is the only key. This wallet can then do nothing.${props.canCancel ? " You can cancel while it waits." : ""}`
+      }
       busy={action.busy !== null && !action.slow}
       onClose={props.onClose}
     >
+      {guard ? (
+        <div class="wiz-list" role="radiogroup" aria-label="How to hand over">
+          <Choice role="radio" on={mode === "together"} title="With my guardian" text="Now. Your guardian agrees on their own device." disabled={!!action.busy} onClick={() => setMode("together")} />
+          <Choice role="radio" on={mode === "alone"} title="Alone" text={`After ${wait}. Your guardian can stop it.`} disabled={!!action.busy} onClick={() => setMode("alone")} />
+        </div>
+      ) : null}
       <input
         class="input"
         placeholder="Address of the new wallet"
@@ -1041,10 +1098,19 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       />
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+      {guard && mode === "together" && !inspection.councilMade ? (
+        <p class="hint">The first time, your wallet sets up the shared key of you and your guardian. That is one transaction.</p>
+      ) : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!tx || !sure} busy={action.busy === "queue"} onClick={submit}>
-          {action.busy ? "Confirm in your wallet" : "Start the wait"}
-        </Button>
+        {guard && mode === "together" ? (
+          <Button kind="primary" disabled={!tx || !sure} busy={action.busy === "ask"} onClick={ask}>
+            {action.busy ? "Confirm in your wallet" : "Ask my guardian"}
+          </Button>
+        ) : (
+          <Button kind="primary" disabled={!tx || !sure} busy={action.busy === "queue"} onClick={submit}>
+            {action.busy ? "Confirm in your wallet" : "Start the wait"}
+          </Button>
+        )}
       </div>
     </Modal>
   );

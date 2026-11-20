@@ -62,6 +62,16 @@ export const ROLES_PROXY_CODE: Hex = concat(MINIMAL_PROXY_PREFIX, CONTRACTS.role
 export const CANCEL_ROLE: Hex = ("0x" + strip(utf8("cancel")).padEnd(64, "0")) as Hex;
 const SET_TX_NONCE = selector("setTxNonce(uint256)");
 
+/**
+ * The second role, for a Chronobox with a guardian: bytes32("council"). Its one member is a
+ * 2 of 2 Safe of the wallet and the guardian. Together they can hand the Chronobox to a new
+ * wallet at once. The role cannot move funds, change the delay, or add a module to the Safe.
+ */
+export const COUNCIL_ROLE: Hex = ("0x" + strip(utf8("council")).padEnd(64, "0")) as Hex;
+const ENABLE_MODULE = selector("enableModule(address)");
+const DISABLE_MODULE = selector("disableModule(address,address)");
+const ASSIGN_ROLES = selector("assignRoles(address,bytes32[],bool[])");
+
 // Events of the Roles modifier, from the verified ABI of the master copy.
 const ROLES_TOPIC = {
   setup: topic("RolesModSetup(address,address,address,address)"),
@@ -146,6 +156,33 @@ export function rolesInitializer(safe: Address): Hex {
 
 export function predictRoles(safe: Address): Address {
   return minimalProxyAddress(CONTRACTS.rolesMastercopy, rolesInitializer(safe));
+}
+
+/** The 2 of 2 Safe of the wallet and the guardian. It holds nothing. No module, no guard, no handler. */
+export function councilInitializer(wallet: Address, guardian: Address): Hex {
+  return call("setup(address[],uint256,address,bytes,address,address,uint256,address)", [[wallet, guardian], 2n, ZERO, "0x", ZERO, ZERO, 0n, ZERO]);
+}
+
+/** Each Chronobox has its own, so a change in one never reaches another. */
+function councilSalt(safe: Address): bigint {
+  return toBigInt(keccak(concat(uintWord(SALT_BASE), word(safe))));
+}
+
+/**
+ * The address of that Safe. Only a Safe with exactly these two owners and a threshold of 2
+ * can ever exist there, so the address can get its role before the Safe is made. Anybody
+ * can make it, at any time, and the result is the same.
+ */
+export function predictCouncil(safe: Address, wallet: Address, guardian: Address): Address {
+  const salt = keccak(concat(keccak(councilInitializer(wallet, guardian)), uintWord(councilSalt(safe))));
+  return create2(CONTRACTS.safeProxyFactory, salt, SAFE_PROXY_INIT_CODE_HASH);
+}
+
+export function councilCreateTx(safe: Address, wallet: Address, guardian: Address): TxRequest {
+  return {
+    to: CONTRACTS.safeProxyFactory,
+    data: call("createProxyWithNonce(address,bytes,uint256)", [CONTRACTS.safeSingleton, councilInitializer(wallet, guardian), councilSalt(safe)]),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +508,14 @@ export type Inspection = {
   roles: Address | null;
   /** The setup wallet: the one address that can queue transactions, and cancel them. */
   controller: Address | null;
+  /** The guardian, if there is one: a second address that can cancel, and nothing else alone. */
+  guardian: Address | null;
+  /** The 2 of 2 Safe of wallet and guardian. Null without a guardian. */
+  council: Address | null;
+  /** False while nobody has made that Safe yet. It is made the first time it is needed. */
+  councilMade: boolean;
+  /** The members of the Roles modifier in the order of the contract's list, newest first. */
+  members: Address[];
   cooldown: bigint;
   expiration: bigint;
   txNonce: bigint;
@@ -524,14 +569,22 @@ async function logsOf(rpc: Rpc, address: Address, from: bigint | null): Promise<
   }
 }
 
+/** The guardian of a Chronobox, and the 2 of 2 Safe that the guardian shares with the wallet. */
+export type Guard = { guardian: Address; council: Address };
+
 /**
  * Proves what the Roles modifier allows, from its whole event history.
  *
  * The contract has no function that lists its permissions, so the state alone
  * cannot show that there is no second, wider permission. The events can:
  * every function that grants or changes something emits one. The history
- * must hold only the cancel permission on this Delay, and the role must end
- * with exactly one member: the setup wallet.
+ * must hold only what a Chronobox sets up:
+ *   - "cancel": setTxNonce on this Delay. Members: the setup wallet, and the
+ *     guardian if there is one.
+ *   - "council", only after a guardian was added: enableModule and
+ *     disableModule on this Delay (a new wallet), assignRoles and
+ *     disableModule on this contract (the cancel right moves with it).
+ *     Member: the 2 of 2 Safe of wallet and guardian, and nobody else.
  *
  * Returns null when the RPC cannot provide the history.
  */
@@ -541,6 +594,7 @@ export async function verifyCancelPermission(
   delay: Address,
   controller: Address,
   hints?: BlockHints,
+  guard: Guard | null = null,
 ): Promise<{ ok: boolean; detail: string } | null> {
   const read = (from: bigint | null) => logsOf(rpc, roles, from);
   let logs: Log[];
@@ -553,10 +607,15 @@ export async function verifyCancelPermission(
     return null;
   }
   const bad = (detail: string) => ({ ok: false, detail });
-  const members = new Set<string>();
+  const cancellers = new Set<string>();
+  const council = new Set<string>();
+  // What each role may call, as "target:function". Nothing else may ever have been granted.
+  const allowedFor: Record<string, string[]> = {
+    [CANCEL_ROLE]: [`${delay}:${SET_TX_NONCE}`],
+    [COUNCIL_ROLE]: [`${delay}:${ENABLE_MODULE}`, `${delay}:${DISABLE_MODULE}`, `${roles}:${ASSIGN_ROLES}`, `${roles}:${DISABLE_MODULE}`],
+  };
+  const granted = new Set<string>();
   let created = false;
-  let scoped = false;
-  let allowed = false;
 
   for (const log of logs) {
     const kind = log.topics[0];
@@ -565,19 +624,20 @@ export async function verifyCancelPermission(
       hints?.set(roles, toBigInt(log.blockNumber));
     } else if (kind === ROLES_TOPIC.assignRoles) {
       const [member, keys, flags] = decode(["address", "bytes32[]", "bool[]"], log.data) as [Address, Hex[], boolean[]];
-      if (keys.length !== 1 || keys[0] !== CANCEL_ROLE || flags.length !== 1) return bad(`A role other than "cancel" was assigned to ${member}`);
-      if (flags[0]) members.add(member.toLowerCase());
-      else members.delete(member.toLowerCase());
+      if (keys.length !== 1 || flags.length !== 1 || (keys[0] !== CANCEL_ROLE && keys[0] !== COUNCIL_ROLE)) return bad(`A role that a Chronobox does not have was assigned to ${member}`);
+      const set = keys[0] === CANCEL_ROLE ? cancellers : council;
+      if (flags[0]) set.add(member.toLowerCase());
+      else set.delete(member.toLowerCase());
     } else if (kind === ROLES_TOPIC.scopeTarget) {
       const [key, target] = decode(["bytes32", "address"], log.data) as [Hex, Address];
-      if (key !== CANCEL_ROLE || !sameAddress(target, delay)) return bad(`A permission on another contract exists: ${target}`);
-      scoped = true;
+      const ok = (key === CANCEL_ROLE && sameAddress(target, delay)) || (key === COUNCIL_ROLE && (sameAddress(target, delay) || sameAddress(target, roles)));
+      if (!ok) return bad(`A permission on another contract exists: ${target}`);
     } else if (kind === ROLES_TOPIC.allowFunction) {
       const [key, target, fn, options] = decode(["bytes32", "address", "bytes4", "uint8"], log.data) as [Hex, Address, Hex, bigint];
-      if (key !== CANCEL_ROLE || !sameAddress(target, delay) || fn !== SET_TX_NONCE || options !== 0n) {
-        return bad(`A permission other than cancel exists: ${fn} on ${target}`);
-      }
-      allowed = true;
+      const wanted = (allowedFor[key] ?? []).find((entry) => entry.toLowerCase() === `${target}:${fn}`.toLowerCase());
+      // Execution option 0 only: a plain call with no value, never a delegatecall.
+      if (!wanted || options !== 0n) return bad(`A permission that a Chronobox does not have exists: ${fn} on ${target}`);
+      granted.add(`${key}:${wanted}`.toLowerCase());
     } else if (
       kind !== ROLES_TOPIC.initialized &&
       kind !== ROLES_TOPIC.avatarSet &&
@@ -592,10 +652,15 @@ export async function verifyCancelPermission(
       return bad(`The history has an event that a Chronobox never emits: ${kind}`);
     }
   }
+  const has = (key: Hex) => allowedFor[key].every((entry) => granted.has(`${key}:${entry}`.toLowerCase()));
   if (!created) return bad("The start of the history is missing");
-  if (!scoped || !allowed) return bad("The cancel permission is missing");
-  if (members.size !== 1 || !members.has(controller.toLowerCase())) {
-    return bad(`Addresses that can cancel: ${[...members].join(", ") || "none"}`);
+  if (!has(CANCEL_ROLE)) return bad("The cancel permission is missing");
+  const wantCancel = [controller, ...(guard ? [guard.guardian] : [])].map((a) => a.toLowerCase());
+  if (cancellers.size !== wantCancel.length || !wantCancel.every((a) => cancellers.has(a))) {
+    return bad(`Addresses that can cancel: ${[...cancellers].join(", ") || "none"}`);
+  }
+  if (guard ? !has(COUNCIL_ROLE) || council.size !== 1 || !council.has(guard.council.toLowerCase()) : council.size !== 0) {
+    return bad(`Addresses that can change the wallet without the wait: ${[...council].join(", ") || "none"}`);
   }
   return { ok: true, detail: `Read from the full event history of ${roles}` };
 }
@@ -611,6 +676,33 @@ async function safeSlot(rpc: Rpc, safe: Address, slot: Hex | bigint): Promise<He
   return bytes as Hex;
 }
 
+/**
+ * Is `council` the 2 of 2 Safe of this wallet and this guardian?
+ *   true: yes, and it is made.   false: yes, and it is not made yet.
+ *   null: no, and it does not look like one.   A text: it should be, and something is wrong with it.
+ */
+async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: Address, guardian: Address): Promise<boolean | string | null> {
+  const code = await getCode(rpc, council);
+  const predicted = sameAddress(council, predictCouncil(safe, wallet, guardian));
+  if (size(code) === 0) return predicted ? false : null;
+  if (keccak(code) !== SAFE_PROXY_CODE_HASH) return null;
+  const [singleton, owners, threshold, modules, guard, handler] = await Promise.all([
+    safeSlot(rpc, council, 0n),
+    read(rpc, council, "getOwners()", [], ["address[]"]).then((r) => r[0] as Address[]),
+    read(rpc, council, "getThreshold()", [], ["uint256"]).then((r) => r[0] as bigint),
+    modulesOf(rpc, council),
+    safeSlot(rpc, council, GUARD_SLOT),
+    safeSlot(rpc, council, FALLBACK_SLOT),
+  ]);
+  const both = owners.length === 2 && owners.some((o) => sameAddress(o, wallet)) && owners.some((o) => sameAddress(o, guardian));
+  // A Safe with other owners is not the shared Safe of this pair. The other order of the pair may fit.
+  if (!both) return predicted ? `The owners of the Safe ${council} are not the wallet and the guardian` : null;
+  if (!sameAddress(("0x" + strip(singleton).slice(-40)) as Address, CONTRACTS.safeSingleton)) return `The Safe ${council} does not run the official Safe code`;
+  if (threshold !== 2n) return `The Safe ${council} does not need both owners`;
+  if (modules === null || modules.length > 0 || toBigInt(guard) !== 0n || toBigInt(handler) !== 0n) return `Something extra is attached to the Safe ${council}`;
+  return true;
+}
+
 /** History checks that passed, per wallet connection (so per network). See where it is used. */
 const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
 
@@ -623,6 +715,10 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     delay: null,
     roles: null,
     controller: null,
+    guardian: null,
+    council: null,
+    councilMade: false,
+    members: [],
     cooldown: 0n,
     expiration: 0n,
     txNonce: 0n,
@@ -745,34 +841,68 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       "Only the Chronobox itself can change who can cancel",
       `Owner, avatar and target of the Roles modifier ${roles} are the Safe`,
     );
+    // One member: the wallet alone. Three: the wallet, a guardian, and the 2 of 2 Safe of the two.
+    result.members = members ?? [];
+    const controller = result.controller;
+    let guard: Guard | null = null;
+    let councilProblem: string | null = null;
+    const others = (members ?? []).filter((m) => !sameAddress(m, controller));
+    if (members !== null && members.length === 3 && others.length === 2) {
+      for (const [guardian, council] of [others, [others[1], others[0]]] as [Address, Address][]) {
+        const made = await councilState(rpc, safe, council, controller, guardian);
+        if (made === null) continue;
+        if (typeof made === "string") councilProblem ??= made;
+        else {
+          guard = { guardian, council };
+          result.councilMade = made;
+          break;
+        }
+      }
+    }
     const memberOk = add(
       "canceller",
-      members !== null && members.length === 1 && sameAddress(members[0], result.controller),
-      "Only that wallet can cancel",
-      members === null ? "More than ten" : members.join(", ") || "none",
+      members !== null && ((members.length === 1 && sameAddress(members[0], controller)) || guard !== null),
+      guard ? "Only that wallet and the guardian can cancel" : "Only that wallet can cancel",
+      members === null ? "More than ten" : guard ? `Wallet ${controller}, guardian ${guard.guardian}` : members.join(", ") || "none",
     );
+    if (guard) {
+      result.guardian = guard.guardian;
+      result.council = guard.council;
+      add(
+        "council",
+        true,
+        "A wallet change without the wait needs the wallet and the guardian together",
+        result.councilMade
+          ? `The Safe ${guard.council} has these two owners and needs both`
+          : `Only a Safe of these two, which needs both, can exist at ${guard.council}. It is not made yet.`,
+      );
+    } else if (councilProblem) {
+      add("council", false, "A wallet change without the wait needs the wallet and the guardian together", councilProblem);
+    }
     cancelOk = wiredOk && memberOk;
     if (cancelOk) {
-      // The permission can change only through the Delay, and that moves txNonce. So a history that
-      // passed is good until txNonce moves. Only a pass is kept, and only in memory.
-      const key = `${safe}:${roles}:${delay}:${result.controller}:${txNonce}`.toLowerCase();
+      // A history that passed is good until the members or txNonce change: a permission can change
+      // only through the Delay, which moves txNonce, or through wallet and guardian together, which
+      // changes the members. Only a pass is kept, and only in memory.
+      const key = `${safe}:${roles}:${delay}:${controller}:${txNonce}:${result.members.join(",")}`.toLowerCase();
       const kept = passed.get(rpc)?.get(key);
-      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, result.controller, hints));
+      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard));
       if (history?.ok && !kept) {
         if (!passed.has(rpc)) passed.set(rpc, new Map());
         passed.get(rpc)!.set(key, history);
       }
+      const label = guard ? "Only cancel, and a wallet change by both, do not wait" : "Cancel is the only thing that does not wait";
       if (history === null) {
         cancelUnknown = true;
         result.checks.push({
           id: "cancel-only",
           ok: false,
           unknown: true,
-          label: "Cancel is the only thing that does not wait",
+          label,
           detail: "Your wallet's RPC did not return the event history of the Roles modifier. Use an RPC that serves old logs.",
         });
       } else {
-        cancelOk = add("cancel-only", history.ok, "Cancel is the only thing that does not wait", history.detail);
+        cancelOk = add("cancel-only", history.ok, label, history.detail);
       }
     }
   }
@@ -944,6 +1074,8 @@ export type Action =
   | { kind: "withdraw"; token: Address | null; amount: bigint }
   | { kind: "change-delay"; cooldown: bigint }
   | { kind: "change-wallet"; to: Address }
+  | { kind: "add-guardian"; guardian: Address }
+  | { kind: "remove-guardian"; guardian: Address }
   | { kind: "transfer-elsewhere"; token: Address | null; to: Address; amount: bigint }
   | { kind: "settings"; label: string }
   | { kind: "unknown" };
@@ -975,11 +1107,22 @@ const SETTINGS: Record<string, string> = Object.fromEntries(
  * Classifies a queued transaction. Only a plain transfer to the controller
  * wallet is a "withdraw". Everything else must be shown as a warning.
  */
-export function classify(tx: DelayTx, vault: { safe: Address; delay: Address; controller: Address; roles?: Address | null }): Action {
-  // The two changes that this app builds. Anything else that touches the vault is a warning.
+export function classify(tx: DelayTx, vault: VaultParts): Action {
+  // The changes that this app builds. Anything else that touches the vault is a warning.
   const next = firstNewWallet(tx);
-  const swap = changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe);
+  const swap = changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe, guardOf(vault));
   if (next && swap && sameTx(swap, tx)) return { kind: "change-wallet", to: next };
+  if (vault.roles) {
+    const guard = guardOf(vault);
+    if (guard) {
+      const remove = removeGuardianTx(vault as Guarded);
+      if (remove && sameTx(remove, tx)) return { kind: "remove-guardian", guardian: guard.guardian };
+    } else {
+      const guardian = newGuardian(tx, vault.roles);
+      const adding = guardian ? addGuardianTx({ safe: vault.safe, delay: vault.delay, roles: vault.roles, controller: vault.controller }, guardian) : null;
+      if (guardian && adding && sameTx(adding, tx)) return { kind: "add-guardian", guardian };
+    }
+  }
   if (tx.operation !== 0) return { kind: "unknown" };
   if (sameAddress(tx.to, vault.delay) && tx.value === 0n && size(tx.data) === 36 && tx.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN) {
     const cooldown = toBigInt(tx.data.slice(10));
@@ -1048,30 +1191,233 @@ export function changeDelayTx(delay: Address, cooldown: bigint): DelayTx {
   return { to: delay, value: 0n, data: call("setTxCooldown(uint256)", [cooldown]), operation: 0 };
 }
 
+/** The parts of a Chronobox that the builders below need. With a guardian: who it is, the shared Safe, and the member list. */
+export type VaultParts = {
+  safe: Address;
+  delay: Address;
+  controller: Address;
+  roles?: Address | null;
+  guardian?: Address | null;
+  council?: Address | null;
+  members?: Address[];
+};
+type Guarded = { safe: Address; delay: Address; controller: Address; roles: Address; guardian: Address; council: Address; members: Address[] };
+type GuardList = Guard & { members: Address[] };
+
+function guardOf(vault: VaultParts): GuardList | null {
+  return vault.guardian && vault.council && vault.members ? { guardian: vault.guardian, council: vault.council, members: vault.members } : null;
+}
+
+/**
+ * The member list of the Roles modifier, as the contract keeps it: a new member goes to the
+ * front, and to take one out the contract wants the address before it.
+ */
+class Members {
+  list: Address[];
+  constructor(list: readonly Address[]) {
+    this.list = [...list];
+  }
+  add(address: Address) {
+    if (!this.list.some((m) => sameAddress(m, address))) this.list.unshift(address);
+  }
+  /** Takes the member out and returns the address before it. */
+  remove(address: Address): Address {
+    const at = this.list.findIndex((m) => sameAddress(m, address));
+    if (at < 0) throw new Error(`${address} is not a member`);
+    this.list.splice(at, 1);
+    return at === 0 ? SENTINEL : this.list[at - 1];
+  }
+}
+
+const batchItem = (target: Address, data: Hex) => "00" + strip(target) + uintWord(0n) + uintWord(size(data)) + strip(data);
+/** Several calls that the Safe runs as one step: a delegatecall into MultiSend. */
+const batchTx = (items: string[]): DelayTx => ({ to: CONTRACTS.multiSend, value: 0n, data: call("multiSend(bytes)", [concat(...items)]), operation: 1 });
+const assign = (member: Address, role: Hex, on: boolean) => call("assignRoles(address,bytes32[],bool[])", [member, [role], [on]]);
+
 /**
  * Hands the vault to another wallet, in one step (a MultiSend batch that the
  * Safe runs as a delegatecall): the Safe enables the new wallet on the Delay
  * and disables the old one, and it moves the right to cancel the same way.
  * After it executes, only the new wallet can queue and cancel.
+ *
+ * With a guardian, the shared 2 of 2 Safe changes too: its role goes to the
+ * Safe of the new wallet and the same guardian. The guardian can cancel this
+ * while it waits, like everything else.
  */
-export function changeWalletTx(delay: Address, from: Address, to: Address | null, roles: Address | null = null, safe: Address | null = null): DelayTx | null {
+export function changeWalletTx(
+  delay: Address,
+  from: Address,
+  to: Address | null,
+  roles: Address | null = null,
+  safe: Address | null = null,
+  guard: GuardList | null = null,
+): DelayTx | null {
   // An address that nobody can sign with would lock the Chronobox for ever: its own parts, and the burn address.
-  const dead = [ZERO, SENTINEL, delay, roles, safe, CONTRACTS.burn];
+  const dead = [ZERO, SENTINEL, delay, roles, safe, CONTRACTS.burn, CONTRACTS.multiSend, guard?.guardian, guard?.council];
   if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
-  const item = (target: Address, data: Hex) => "00" + strip(target) + uintWord(0n) + uintWord(size(data)) + strip(data);
-  const batch = concat(
-    item(delay, call("enableModule(address)", [to])),
+  const items = [
+    batchItem(delay, call("enableModule(address)", [to])),
     // The new wallet is now first in the list, so it is the one "before" the old wallet.
-    item(delay, call("disableModule(address,address)", [to, from])),
-    ...(roles
-      ? [
-          item(roles, call("assignRoles(address,bytes32[],bool[])", [to, [CANCEL_ROLE], [true]])),
-          item(roles, call("assignRoles(address,bytes32[],bool[])", [from, [CANCEL_ROLE], [false]])),
-          item(roles, call("disableModule(address,address)", [to, from])),
-        ]
-      : []),
+    batchItem(delay, call("disableModule(address,address)", [to, from])),
+  ];
+  if (roles) {
+    const members = new Members(guard?.members ?? [from]);
+    members.add(to);
+    items.push(batchItem(roles, assign(to, CANCEL_ROLE, true)), batchItem(roles, assign(from, CANCEL_ROLE, false)));
+    items.push(batchItem(roles, call("disableModule(address,address)", [members.remove(from), from])));
+    if (guard) {
+      if (!safe) return null;
+      const council = predictCouncil(safe, to, guard.guardian);
+      members.add(council);
+      items.push(batchItem(roles, assign(council, COUNCIL_ROLE, true)), batchItem(roles, assign(guard.council, COUNCIL_ROLE, false)));
+      items.push(batchItem(roles, call("disableModule(address,address)", [members.remove(guard.council), guard.council])));
+    }
+  }
+  return batchTx(items);
+}
+
+/**
+ * Adds a guardian, in one step that waits the delay like every change. After it:
+ *   - the guardian can cancel what waits, like the wallet can, and nothing else alone,
+ *   - the 2 of 2 Safe of wallet and guardian can hand the Chronobox to a new wallet at once.
+ * That Safe is not made here. Its address can hold only that one Safe, and it is made the
+ * first time it is needed. So nobody can make this step fail by making the Safe first.
+ */
+export function addGuardianTx(vault: { safe: Address; delay: Address; roles: Address; controller: Address }, guardian: Address | null): DelayTx | null {
+  const { safe, delay, roles, controller } = vault;
+  const dead = [ZERO, SENTINEL, delay, roles, safe, controller, CONTRACTS.burn, CONTRACTS.multiSend, CONTRACTS.safeProxyFactory, CONTRACTS.safeSingleton];
+  if (!guardian || dead.some((address) => sameAddress(guardian, address))) return null;
+  const council = predictCouncil(safe, controller, guardian);
+  const allow = (target: Address, fn: Hex) => batchItem(roles, call("allowFunction(bytes32,address,bytes4,uint8)", [COUNCIL_ROLE, target, fn, 0]));
+  return batchTx([
+    batchItem(roles, call("scopeTarget(bytes32,address)", [COUNCIL_ROLE, delay])),
+    allow(delay, ENABLE_MODULE),
+    allow(delay, DISABLE_MODULE),
+    batchItem(roles, call("scopeTarget(bytes32,address)", [COUNCIL_ROLE, roles])),
+    allow(roles, ASSIGN_ROLES),
+    allow(roles, DISABLE_MODULE),
+    batchItem(roles, assign(guardian, CANCEL_ROLE, true)),
+    batchItem(roles, assign(council, COUNCIL_ROLE, true)),
+  ]);
+}
+
+/** The guardian that an add-guardian batch names, read from its seventh call. Null for anything else. */
+function newGuardian(tx: DelayTx, roles: Address): Address | null {
+  const calls = batchCalls(tx);
+  const seventh = calls?.[6];
+  if (!calls || calls.length !== 8 || !seventh || !sameAddress(seventh.to, roles) || seventh.data.slice(0, 10).toLowerCase() !== ASSIGN_ROLES) return null;
+  try {
+    return (decode(["address", "bytes32[]", "bool[]"], "0x" + seventh.data.slice(10)) as [Address])[0];
+  } catch {
+    return null;
+  }
+}
+
+/** The calls of a MultiSend batch. Null when the transaction is not one, or when a call in it is not a plain call. */
+function batchCalls(tx: DelayTx): { to: Address; data: Hex }[] | null {
+  if (tx.operation !== 1 || !sameAddress(tx.to, CONTRACTS.multiSend) || tx.value !== 0n) return null;
+  try {
+    const [bytes] = decode(["bytes"], "0x" + tx.data.slice(10)) as [Hex];
+    const data = strip(bytes);
+    const calls: { to: Address; data: Hex }[] = [];
+    for (let at = 0; at < data.length; ) {
+      const length = Number(toBigInt("0x" + data.slice(at + 106, at + 170)));
+      if (data.slice(at, at + 2) !== "00" || toBigInt("0x" + data.slice(at + 42, at + 106)) !== 0n) return null;
+      calls.push({ to: checksum(data.slice(at + 2, at + 42)), data: ("0x" + data.slice(at + 170, at + 170 + length * 2)) as Hex });
+      at += 170 + length * 2;
+    }
+    return calls;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Takes the guardian out again: the right to cancel, and the role of the shared Safe. It waits
+ * the delay, and the guardian can cancel it. That is what a guardian is for.
+ */
+export function removeGuardianTx(vault: { roles: Address; guardian: Address; council: Address; members: Address[] }): DelayTx | null {
+  const { roles, guardian, council } = vault;
+  const members = new Members(vault.members);
+  if (![guardian, council].every((a) => members.list.some((m) => sameAddress(m, a)))) return null;
+  return batchTx([
+    batchItem(roles, assign(guardian, CANCEL_ROLE, false)),
+    batchItem(roles, assign(council, COUNCIL_ROLE, false)),
+    batchItem(roles, call("disableModule(address,address)", [members.remove(guardian), guardian])),
+    batchItem(roles, call("disableModule(address,address)", [members.remove(council), council])),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Wallet and guardian together: a new wallet at once
+// ---------------------------------------------------------------------------
+
+/** A transaction of the shared 2 of 2 Safe. */
+export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: number };
+
+/**
+ * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The shared
+ * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
+ * right to cancel, and replaces the old wallet with the new one among its own two owners.
+ * `owners` is the owner list of the shared Safe, in the contract's order.
+ */
+export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null): CouncilTx | null {
+  const { delay, roles, controller: from, council, guardian } = vault;
+  const dead = [ZERO, SENTINEL, delay, roles, vault.safe, council, guardian, CONTRACTS.burn, CONTRACTS.multiSend];
+  if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
+  const ownerAt = owners.findIndex((o) => sameAddress(o, from));
+  if (ownerAt < 0) return null;
+  const members = new Members(vault.members);
+  members.add(to);
+  const withRole = (target: Address, data: Hex) =>
+    batchItem(roles, call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [target, 0n, data, 0, COUNCIL_ROLE, true]));
+  return batchTx([
+    withRole(delay, call("enableModule(address)", [to])),
+    withRole(delay, call("disableModule(address,address)", [to, from])),
+    withRole(roles, assign(to, CANCEL_ROLE, true)),
+    withRole(roles, assign(from, CANCEL_ROLE, false)),
+    withRole(roles, call("disableModule(address,address)", [members.remove(from), from])),
+    batchItem(council, call("swapOwner(address,address,address)", [ownerAt === 0 ? SENTINEL : owners[ownerAt - 1], from, to])),
+  ]);
+}
+
+const SAFE_EXEC = "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)";
+
+export async function councilOwners(rpc: Rpc, council: Address): Promise<Address[]> {
+  return (await read(rpc, council, "getOwners()", [], ["address[]"]))[0] as Address[];
+}
+
+/** The hash that both owners agree to. The shared Safe computes it, so it holds for this Safe, this network and its next transaction only. */
+export async function councilHash(rpc: Rpc, council: Address, tx: CouncilTx): Promise<Hex> {
+  const [nonce] = (await read(rpc, council, "nonce()", [], ["uint256"])) as [bigint];
+  const [hash] = await read(
+    rpc,
+    council,
+    "getTransactionHash(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,uint256)",
+    [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, ZERO, ZERO, nonce],
+    ["bytes32"],
   );
-  return { to: CONTRACTS.multiSend, value: 0n, data: call("multiSend(bytes)", [batch]), operation: 1 };
+  return hash as Hex;
+}
+
+/** One owner agrees, on chain. Nothing has to travel back to the other owner. */
+export function councilApproveTx(council: Address, hash: Hex): TxRequest {
+  return { to: council, data: call("approveHash(bytes32)", [hash]) };
+}
+
+export async function councilApproved(rpc: Rpc, council: Address, owner: Address, hash: Hex): Promise<boolean> {
+  const [value] = (await read(rpc, council, "approvedHashes(address,bytes32)", [owner, hash], ["uint256"])) as [bigint];
+  return value !== 0n;
+}
+
+/**
+ * Carries the change out. The sender must be one owner, and the other must have agreed on
+ * chain. The Safe wants one entry for each owner, in the order of their addresses.
+ */
+export function councilExecTx(council: Address, tx: CouncilTx, owners: readonly Address[]): TxRequest {
+  const sorted = [...owners].sort((a, b) => (toBigInt(a) < toBigInt(b) ? -1 : 1));
+  const signatures = concat(...sorted.map((owner) => word(owner) + uintWord(0n) + "01"));
+  return { to: council, data: call(SAFE_EXEC, [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, ZERO, ZERO, signatures]) };
 }
 
 /**
@@ -1092,8 +1438,6 @@ export function cancelTx(roles: Address, delay: Address, nonce: bigint): TxReque
     ]),
   };
 }
-
-const ENABLE_MODULE = selector("enableModule(address)");
 
 /** The wallet that a change-wallet batch would enable, read from its first call. Null for anything else. */
 function firstNewWallet(tx: DelayTx): Address | null {

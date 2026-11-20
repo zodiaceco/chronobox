@@ -1,12 +1,13 @@
 /**
  * "How it is built": the four parts of a Chronobox, who audited them, what the
- * app checks, and what it cannot do for you. Static. Every fact here must
+ * app checks, what it cannot do for you, and the one optional part: a
+ * guardian. Static. Every fact here must
  * match README.md and src/lib/chronobox.ts.
  */
 import "../technical.css";
 import type { ComponentChildren } from "preact";
 import { CONTRACTS } from "../lib/chains.ts";
-import { BoxArt, SunArt, WalletArt } from "./art.tsx";
+import { BoxArt, GuardianArt, SunArt, WalletArt } from "./art.tsx";
 import { Tick } from "./common.tsx";
 
 const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "").slice(0, 8);
@@ -129,6 +130,51 @@ export function TechnicalPage() {
         <p class="tech-note">Cancel moves nothing, so it does not need to wait. Everything else goes through the time lock.</p>
       </div>
 
+      {/* Optional. A Chronobox is complete without it, so it looks different from the parts above: a dashed frame and a tag. */}
+      <div class="tech-block tech-optional">
+        <div class="tech-optional-head">
+          <GuardianArt class="tech-optional-glyph" />
+          <div>
+            <span class="tech-tag tech-tag-optional">Optional</span>
+            <h2>A guardian</h2>
+          </div>
+        </div>
+        <p class="tech-optional-lead">
+          A second wallet that can say stop: your own on another device, or the wallet of a person you trust. You add it later, on the page of your
+          Chronobox. A Chronobox works without one.
+        </p>
+        <ul class="tech-rows">
+          <li>
+            <span>Cancel what is waiting</span>
+            <span class="tech-tag tech-tag-now">At once</span>
+          </li>
+          <li>
+            <span>Hand over to a new wallet, together with your wallet</span>
+            <span class="tech-tag tech-tag-now">At once</span>
+          </li>
+          <li>
+            <span>Withdraw, or change anything alone</span>
+            <span class="tech-tag">Never</span>
+          </li>
+        </ul>
+        <ul class="tech-checks">
+          <li>
+            <Tick on />A person who has your wallet gains nothing by keeping you from cancelling. Your guardian cancels.
+          </li>
+          <li>
+            <Tick on />A leaked key is no standoff. You and your guardian move the Chronobox to a new wallet.
+          </li>
+        </ul>
+        <p class="tech-note">
+          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. A guardian is
+          not a backup. If you lose your wallet, the money is lost. Adding and removing a guardian wait in the time lock, like every change.
+        </p>
+        <p class="tech-note">
+          Built from the same contracts: a second rule in the cancel switch (Zodiac Roles 2.1.1), and a Safe 1.4.1 that needs your wallet and your
+          guardian together. The app checks both every time you open the Chronobox.
+        </p>
+      </div>
+
       <div class="tech-block">
         <h2>Checked every time you open it</h2>
         <ul class="tech-checks">
@@ -221,6 +267,12 @@ export function TechnicalPage() {
             A change of the delay is <code>setTxCooldown</code> on the Delay. A hand-over enables the new wallet on the Delay and the Roles
             modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Delay, called by the Safe through
             the Roles modifier. The app proves that this is the only permission from the full event history of the Roles contract.
+          </p>
+          <p>
+            A guardian is one batch through the Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
+            address of a 2 of 2 Safe of wallet and guardian. That role can call <code>enableModule</code> and <code>disableModule</code> on the
+            Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
+            A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
           <ul class="tech-addresses">
             {(

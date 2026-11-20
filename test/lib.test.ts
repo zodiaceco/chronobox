@@ -4,7 +4,7 @@ import { call, decode, encode, selector } from "../src/lib/abi.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
+import { addGuardianTx, councilSwapTx, predictCouncil, removeGuardianTx, CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -193,4 +193,39 @@ test("many balances come from one read, and a failed read is not a balance of ze
     assets,
   );
   assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+});
+
+test("guardian changes are recognised, and nothing close to them is", () => {
+  const delay = predictDelay(SAFE, WEEK, WEEK);
+  const roles = predictRoles(SAFE);
+  const guardian = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
+  const next = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const;
+  const plain = { safe: SAFE, delay, roles, controller: WALLET } as const;
+  const council = predictCouncil(SAFE, WALLET, guardian);
+  // The address of the shared Safe depends on the Chronobox, the wallet and the guardian, in that order.
+  assert.notEqual(council, predictCouncil(SAFE, guardian, WALLET));
+  assert.notEqual(council, predictCouncil(delay, WALLET, guardian));
+
+  const adding = addGuardianTx(plain, guardian)!;
+  assert.deepEqual(classify(adding, plain), { kind: "add-guardian", guardian });
+  // As a plain call it does nothing, and it is not what this app builds.
+  assert.equal(classify({ ...adding, operation: 0 }, plain).kind, "unknown");
+  for (const bad of [WALLET, SAFE, delay, roles] as `0x${string}`[]) assert.equal(addGuardianTx(plain, bad), null);
+
+  // The contract keeps its members newest first: the shared Safe, the guardian, the wallet.
+  const guarded = { ...plain, guardian, council, members: [council, guardian, WALLET] as `0x${string}`[] };
+  // With a guardian, the same batch is not "add a guardian" any more.
+  assert.equal(classify(adding, guarded).kind, "unknown");
+  assert.deepEqual(classify(removeGuardianTx(guarded)!, guarded), { kind: "remove-guardian", guardian });
+  assert.equal(classify(removeGuardianTx(guarded)!, plain).kind, "unknown");
+  const alone = changeWalletTx(delay, WALLET, next, roles, SAFE, guarded)!;
+  assert.deepEqual(classify(alone, guarded), { kind: "change-wallet", to: next });
+  // The hand-over of a Chronobox without a guardian leaves the shared Safe as it is, so it is not the right one here.
+  assert.equal(classify(changeWalletTx(delay, WALLET, next, roles, SAFE)!, guarded).kind, "unknown");
+  assert.equal(changeWalletTx(delay, WALLET, guardian, roles, SAFE, guarded), null);
+
+  // Wallet and guardian together: never to the guardian, the shared Safe or the wallet itself.
+  for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad), null);
+  assert.ok(councilSwapTx(guarded, [WALLET, guardian], next));
+  assert.equal(councilSwapTx(guarded, [guardian], next), null, "the wallet must be an owner of the shared Safe");
 });
