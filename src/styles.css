@@ -3387,3 +3387,78 @@ img.token-icon {
 .dial-cancel {
   stroke: var(--sunrise);
 }
+
+/* The line of the time lock in the question about a cancel: what goes, and what stays */
+
+.cancel-line {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.cancel-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.cancel-row + .cancel-row {
+  border-top: 1px solid var(--line);
+}
+
+.cancel-row-out {
+  background: var(--bad-bg);
+  color: var(--fg);
+}
+
+.cancel-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.cancel-row-out .cancel-mark {
+  background: var(--sunrise);
+  color: #fff;
+}
+
+.cancel-what {
+  display: grid;
+  min-width: 0;
+}
+
+.cancel-row-out .cancel-what strong {
+  text-decoration: line-through;
+  text-decoration-color: var(--sunrise);
+}
+
+.cancel-what small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cancel-tag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cancel-tag-out {
+  background: var(--sunrise);
+  color: #fff;
+}

@@ -3,7 +3,7 @@
  * short list of things you can look at or change. Every action opens a sheet
  * with one decision and one main button.
  */
-import { ChevronRight } from "lucide-preact";
+import { ChevronRight, Clock, X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CONTRACTS } from "../lib/chains.ts";
@@ -536,22 +536,58 @@ export function QueueSection(props: {
         </Modal>
       ) : null}
       {cancelling ? (
-        <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
+        <Modal title={cancelIndex > 0 ? `Cancel ${cancelIndex + 1} items?` : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (
             <>
-              <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}).title}</p>
-              <p>
-                Nothing moves. The money stays locked, and it is no longer on its way out.
-                {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
-              </p>
+              {cancelIndex > 0 ? (
+                <>
+                  {/* A cancel takes an item and everything in front of it. So the whole line is shown, with what goes and what stays. */}
+                  <p>The time lock keeps one line. A cancel takes an item <b>and everything in front of it</b>.</p>
+                  <ol class="cancel-line">
+                    {queue.map((item, index) => {
+                      const action = item.tx ? classify(item.tx, vault) : null;
+                      const token = action && (action.kind === "withdraw" || action.kind === "transfer-elsewhere") ? action.token : undefined;
+                      const asset = token === undefined ? undefined : assets.find((a) => (token === null ? a.token === null : sameAddress(a.token, token)));
+                      const goes = index <= cancelIndex;
+                      const ready = itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready";
+                      return (
+                        <li key={String(item.nonce)} class={goes ? "cancel-row cancel-row-out" : "cancel-row"}>
+                          <span class="cancel-mark" aria-hidden="true">
+                            {goes ? <X size={14} strokeWidth={3} /> : <Clock size={14} strokeWidth={2.4} />}
+                          </span>
+                          {asset ? <TokenBadge asset={asset} /> : <Mark size={28} />}
+                          <span class="cancel-what">
+                            <strong>{describe(action, assets, {}).title}</strong>
+                            <small>
+                              {index === cancelIndex ? "The one you chose" : goes ? (ready ? "In front of it, and ready to collect" : "In front of it") : "Behind it: stays in line"}
+                            </small>
+                          </span>
+                          <span class={goes ? "cancel-tag cancel-tag-out" : "cancel-tag"}>{goes ? "Cancelled" : "Stays"}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
+                    <Notice kind="risk" title="Something in front of it is ready to collect.">
+                      Collect it first if you want it. Otherwise it is cancelled too and stays locked.
+                    </Notice>
+                  ) : null}
+                  <p class="hint">Nothing moves. What is cancelled stays locked, and is no longer on its way out.</p>
+                </>
+              ) : (
+                <>
+                  <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}).title}</p>
+                  <p>Nothing moves. The money stays locked, and it is no longer on its way out.</p>
+                </>
+              )}
               <SlowNote action={cancelAction} />
               {cancelAction.error ? <Notice kind="bad">{cancelAction.error}</Notice> : null}
               <div class="modal-actions">
                 <Button kind="primary" busy={cancelAction.busy === "cancel"} onClick={() => cancel(cancelItem)}>
-                  Cancel it
+                  {cancelIndex > 0 ? `Cancel these ${cancelIndex + 1}` : "Cancel it"}
                 </Button>
                 <Button kind="quiet" onClick={() => setCancelling(null)} disabled={!!cancelAction.busy}>
-                  Keep it
+                  {cancelIndex > 0 ? "Keep them" : "Keep it"}
                 </Button>
               </div>
             </>
