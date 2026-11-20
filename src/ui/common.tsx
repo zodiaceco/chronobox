@@ -1,3 +1,4 @@
+import { X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState, useRef } from "preact/hooks";
 import type { Chain, Token } from "../lib/chains.ts";
@@ -135,9 +136,7 @@ export function Modal(props: { title: string; lead?: string; wide?: boolean; bus
         <div class="modal-head">
           <h2>{props.title}</h2>
           <button type="button" class="icon-button" aria-label="Close" disabled={props.busy} onClick={close}>
-            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-            </svg>
+            <X size={18} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
         {props.lead ? <p class="modal-lead">{props.lead}</p> : null}

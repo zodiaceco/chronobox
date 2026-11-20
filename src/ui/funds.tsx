@@ -12,6 +12,7 @@
  * never sends money ahead of the lock, and money that is found there before
  * the lock is on is shown as "not locked yet".
  */
+import { ExternalLink, Lock } from "lucide-preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
@@ -325,12 +326,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
 }
 
 function LockIcon() {
-  return (
-    <svg class="funds-lock-icon" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-      <rect x="3" y="7" width="10" height="7" rx="1.8" fill="currentColor" />
-      <path d="M5.2 7V5.2a2.8 2.8 0 015.6 0V7" fill="none" stroke="currentColor" stroke-width="1.6" />
-    </svg>
-  );
+  return <Lock class="funds-lock-icon" size={14} strokeWidth={2.4} aria-hidden="true" />;
 }
 
 export function FundsPage(props: { session: Session; chain: Chain }) {
@@ -868,9 +864,7 @@ function FundRow(props: {
       aria-label={`${asset.symbol} on the block explorer, opens in a new tab`}
       onClick={(event) => event.stopPropagation()}
     >
-      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-        <path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8L7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
+      <ExternalLink size={15} strokeWidth={2} aria-hidden="true" />
     </a>
   ) : null;
   const usable = known && all > 0n;

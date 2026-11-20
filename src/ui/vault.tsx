@@ -3,6 +3,7 @@
  * short list of things you can look at or change. Every action opens a sheet
  * with one decision and one main button.
  */
+import { ChevronRight } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CONTRACTS } from "../lib/chains.ts";
@@ -586,9 +587,7 @@ export function Row(props: { label: string; value: ComponentChildren; hint?: str
         props.hint ? (
           <span class="row-hint">{props.hint}</span>
         ) : (
-          <svg class="row-chevron" viewBox="0 0 8 14" width="8" height="14" aria-hidden="true">
-            <path d="M1 1l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
+          <ChevronRight class="row-chevron" size={18} strokeWidth={2} aria-hidden="true" />
         )
       ) : null}
     </>

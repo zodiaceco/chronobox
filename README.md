@@ -187,7 +187,7 @@ Icons: `npm run tokens:icons` copies an icon for each token of these lists from 
 
 ## Dependencies
 
-Runtime: `preact` (UI), `@noble/hashes` (keccak-256) and `qrcode-generator` (the QR code of the deposit address). None has dependencies of its own, and all are pinned to exact versions.
+Runtime: `preact` (UI), `@noble/hashes` (keccak-256), `qrcode-generator` (the QR code of the deposit address) and `lucide-preact` (icons; only the ones the app uses end up in the build). None has dependencies of its own, and all are pinned to exact versions.
 
 Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`, three `@fontsource-variable` packages (Inter, Schibsted Grotesk, JetBrains Mono), and `@web3icons/core` for the token icons. The build copies one font file from each into `out/assets`, so the page serves its own fonts and asks no font service.
 
