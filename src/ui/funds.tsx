@@ -720,7 +720,11 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "lookup" && host ? (
         <Modal
           title="Third-party services"
-          lead={`See every token you hold and what it is worth. For that, this page asks ${host}, which then sees your IP address with the address of your wallet.`}
+          lead={
+            <>
+              See every token you hold and what it is worth. For that, this page asks <b>{host}</b>, which then sees your IP address with the address of your wallet.
+            </>
+          }
           onClose={() => setSheet(null)}
         >
           {lookup ? (
