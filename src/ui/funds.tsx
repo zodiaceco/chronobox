@@ -759,10 +759,11 @@ function EditCell(props: { label: string; value: bigint; decimals: number; locke
 }
 
 /**
- * One asset in the list. A press opens it: a handle on a bar moves money between unlocked (left)
- * and locked (right), and the two balances turn into fields that can be typed over. The bar is the
- * whole holding; its dark part is what is locked now. What is already on its way out sits at the
- * start of the bar, striped and moving, and the handle cannot go into it.
+ * One asset in the list. A press opens it: a bar shows the whole holding, unlocked on the left and
+ * locked on the right, as in the columns above it. The handle is the border between the two, and
+ * moving it moves money across. The two balances turn into fields that can be typed over. What is
+ * already on its way out sits at the far right, striped and moving, and what waits to be
+ * collected at the far left. The handle goes into neither.
  */
 function FundRow(props: {
   asset: Asset;
@@ -859,14 +860,11 @@ function FundRow(props: {
         <div class="mover-bar">
           <svg class="mover-svg" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true">
             <rect class="mover-track" x="0" y="0" width="1000" height="14" />
-            <rect class="mover-locked" x="0" y="0" width={lockedNow} height="14" />
-            {delta > 0n ? <rect class="mover-adding" x={lockedNow} y="0" width={chosen - lockedNow} height="14" /> : null}
-            {delta < 0n ? <rect class="mover-leaving" x={chosen} y="0" width={lockedNow - chosen} height="14" /> : null}
-            <Stripes x={0} width={part(waiting)} height={14} />
-            {ready > 0n ? <rect class="mover-ready" x={1000 - part(ready)} y="0" width={part(ready)} height="14" /> : null}
-            {SNAPS.slice(1, -1).map((at) => (
-              <rect class="mover-tick" key={at} x={at - 1} y="0" width="2" height="14" />
-            ))}
+            <rect class="mover-locked" x={1000 - lockedNow} y="0" width={lockedNow} height="14" />
+            {delta > 0n ? <rect class="mover-adding" x={1000 - chosen} y="0" width={chosen - lockedNow} height="14" /> : null}
+            {delta < 0n ? <rect class="mover-leaving" x={1000 - lockedNow} y="0" width={lockedNow - chosen} height="14" /> : null}
+            <Stripes x={1000 - part(waiting)} width={part(waiting)} height={14} />
+            {ready > 0n ? <rect class="mover-ready" x="0" y="0" width={part(ready)} height="14" /> : null}
           </svg>
           <input
             class="mover-range"
@@ -874,10 +872,11 @@ function FundRow(props: {
             min="0"
             max="1000"
             step="1"
-            aria-label={`How much ${asset.symbol} is locked`}
-            value={chosen}
+            aria-label={`Where unlocked ${asset.symbol} ends and locked ${asset.symbol} begins`}
+            value={1000 - chosen}
             onInput={(event) => {
-              let at = Number((event.target as HTMLInputElement).value);
+              // The handle is the border: unlocked to its left, locked to its right.
+              let at = 1000 - Number((event.target as HTMLInputElement).value);
               if (snap) for (const point of SNAPS) if (Math.abs(at - point) <= SNAP_WITHIN) at = point;
               // The ends are exact: everything means everything, not everything but a rounding rest.
               setTarget(clamp(at >= 1000 ? all : at <= 0 ? 0n : (all * BigInt(at)) / 1000n));
@@ -885,11 +884,8 @@ function FundRow(props: {
           />
         </div>
         <div class="mover-scale" aria-hidden="true">
-          <span>All unlocked</span>
-          <span>25%</span>
-          <span>50%</span>
-          <span>75%</span>
-          <span>All locked</span>
+          <span>Unlocked</span>
+          <span>Locked</span>
         </div>
         {waiting > 0n ? (
           <p class="mover-note">
@@ -916,7 +912,7 @@ function FundRow(props: {
               Unlock {moved} · takes {props.delayText}
             </Button>
           ) : (
-            <Button disabled>Drag right to lock, left to unlock</Button>
+            <Button disabled>Drag left to lock, right to unlock</Button>
           )}
           <label class="mover-snap">
             <input type="checkbox" checked={snap} onChange={(event) => setSnap((event.target as HTMLInputElement).checked)} />
