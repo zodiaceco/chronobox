@@ -722,7 +722,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
           title="Third-party services"
           lead={
             <>
-              See every token you hold and what it is worth. For that, this page asks <b>{host}</b>, which then sees your IP address with the address of your wallet.
+              See every token you hold and what it is worth. For that, this page asks <a class="lead-link" href={chain.indexer} target="_blank" rel="noreferrer noopener">{host}</a>, which then sees your IP address with the address of your wallet.
             </>
           }
           onClose={() => setSheet(null)}

@@ -3585,3 +3585,10 @@ img.token-icon {
   font-size: 0.88rem;
   line-height: 1.45;
 }
+
+/* The name of the third-party host in the lead of its sheet: bold, and a link to it */
+
+.lead-link {
+  color: inherit;
+  font-weight: 600;
+}
