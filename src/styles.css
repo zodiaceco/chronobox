@@ -580,45 +580,43 @@ a:focus-visible {
   line-height: 1.4;
 }
 
-.hiw-pills {
-  display: flex;
-  /* One line, also in the narrow columns of five steps. */
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 5px;
-  margin-top: 8px;
-}
-
-.hiw-pills span {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 8px;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-}
-
 /* The arrow that says "there is more" is for the list. In the row, the pointer finds it. */
 .hiw-chevron {
   display: none;
 }
 
-/* The card. Its top padding is part of it, so the pointer can go from the step to the card without leaving. */
+/* The card. In the row it is as wide as the row and sits directly under the pictures, over the titles:
+ * nothing is half covered, and the card is close to the picture it explains. Each step has its own card
+ * in the same place, so going from step to step only changes what the card says and where its corner points.
+ * Its top padding is part of it, so the pointer can go from the picture to the card without leaving. */
+.hiw-step:nth-child(1) {
+  --hiw-at: 0;
+}
+.hiw-step:nth-child(2) {
+  --hiw-at: 1;
+}
+.hiw-step:nth-child(3) {
+  --hiw-at: 2;
+}
+.hiw-step:nth-child(4) {
+  --hiw-at: 3;
+}
+.hiw-step:nth-child(5) {
+  --hiw-at: 4;
+}
+
 .hiw-more {
   position: absolute;
-  top: 100%;
-  left: 50%;
+  top: 72px;
+  left: calc(var(--hiw-at) * -20cqw);
   z-index: 3;
-  width: min(300px, 64cqw);
-  padding-top: 14px;
+  width: 100cqw;
+  padding-top: 12px;
   text-align: left;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translate(-50%, 6px);
+  transform: translateY(6px);
   transition:
     opacity 0.16s ease,
     transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -629,32 +627,15 @@ a:focus-visible {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translate(-50%, 0);
-  transition-delay: 0s;
-}
-
-/* The first and the last card stay inside the row. */
-.hiw-step:first-child > .hiw-more {
-  left: 0;
-  transform: translate(0, 6px);
-}
-
-.hiw-step:last-child > .hiw-more {
-  left: auto;
-  right: 0;
-  transform: translate(0, 6px);
-}
-
-.hiw-step.is-open:first-child > .hiw-more,
-.hiw-step.is-open:last-child > .hiw-more {
   transform: none;
+  transition-delay: 0s;
 }
 
 .hiw-card {
   position: relative;
-  padding: 16px 18px 18px;
+  padding: 20px 24px 22px;
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 20px;
   background: var(--bg);
   box-shadow:
     0 24px 48px -20px rgba(11, 11, 12, 0.3),
@@ -666,7 +647,7 @@ a:focus-visible {
   content: "";
   position: absolute;
   top: -7px;
-  left: 50%;
+  left: calc(var(--hiw-at) * 20cqw + 10cqw);
   width: 12px;
   height: 12px;
   margin-left: -6px;
@@ -677,19 +658,38 @@ a:focus-visible {
   transform: rotate(45deg);
 }
 
-.hiw-step:first-child .hiw-card::before {
-  left: 10cqw;
-}
-
-.hiw-step:last-child .hiw-card::before {
-  left: auto;
-  right: 10cqw;
-  margin-right: -6px;
-}
-
 .hiw-card-inner {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px 32px;
+  /* Every card is the same height, so the page does not move from step to step. */
+  min-height: 148px;
+}
+
+.hiw-card-main,
+.hiw-card-side {
+  display: grid;
   gap: 10px;
+}
+
+.hiw-card-side {
+  padding-top: 32px;
+}
+
+.hiw-card .hiw-card-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hiw-card-step .hiw-num {
+  margin: 0;
+  background: var(--blue);
+  color: #fff;
 }
 
 .hiw-card p {
@@ -701,7 +701,7 @@ a:focus-visible {
 
 .hiw-card .hiw-card-lead {
   color: var(--fg);
-  font-size: 16px;
+  font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.3;
@@ -794,6 +794,23 @@ a:focus-visible {
   color: var(--blue);
 }
 
+/* The note under the row steps back while a card is open in front of it. */
+.hiw + .info-box {
+  transition: opacity 0.2s ease;
+}
+
+.hiw:has(.hiw-step.is-open) + .info-box {
+  opacity: 0;
+}
+
+/* In the list a card opens in place and covers nothing, so the note stays. The note is not inside
+ * the row, so this follows the width of the page, not of the row. */
+@media (max-width: 600px) {
+  .hiw:has(.hiw-step.is-open) + .info-box {
+    opacity: 1;
+  }
+}
+
 @container (max-width: 560px) {
   .hiw > ol {
     grid-template-columns: 1fr;
@@ -829,9 +846,6 @@ a:focus-visible {
   }
   .hiw-num {
     margin-bottom: 4px;
-  }
-  .hiw-pills {
-    justify-content: flex-start;
   }
   .hiw-chevron {
     display: block;
@@ -873,7 +887,19 @@ a:focus-visible {
     display: none;
   }
   .hiw-card-inner {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
     padding-top: 12px;
+  }
+  .hiw-card-side {
+    padding-top: 0;
+  }
+  /* In the list the title of the step is right above its card. */
+  .hiw-card .hiw-card-step {
+    display: none;
+  }
+  .hiw-card .hiw-card-lead {
+    font-size: 16px;
   }
 }
 

@@ -2,8 +2,11 @@
  * "How it works" in five pictures, drawn with the parts of the mark: the
  * Zodiac tile, the path of the sun, the sun, a coin. Captions are plain HTML.
  *
- * Each step answers the pointer: its picture moves, and a card under it says
- * what a person wants to know at that step. With a mouse the card opens on
+ * Each step answers the pointer: its picture moves, and a card says what a
+ * person wants to know at that step. In the row the card is as wide as the
+ * row and sits directly under the pictures, with a corner that points at
+ * the picture it belongs to. The row itself shows only a title and one line
+ * for each step. With a mouse the card opens on
  * hover. With a finger or the keyboard it opens and closes on a tap or Enter.
  * On a narrow column the card opens in place, under the text of its step.
  */
@@ -18,10 +21,8 @@ type StepProps = {
   title: string;
   text: string;
   art: ComponentChildren;
-  /** Small pills under the text, always in view. */
-  pills?: ComponentChildren;
-  /** The card: one sentence in bold, then what is worth knowing. */
-  more: { lead: string; body: ComponentChildren };
+  /** The card: one sentence in bold and a few words on it, and beside them what is worth knowing. */
+  more: { lead: string; text: string; side: ComponentChildren };
   open: boolean;
   onOpen: (open: boolean, how: "hover" | "toggle") => void;
 };
@@ -51,7 +52,6 @@ function Step(props: StepProps) {
           <span class="hiw-num">{props.n}</span>
           <span class="hiw-title">{props.title}</span>
           <span class="hiw-text">{props.text}</span>
-          {props.pills ? <span class="hiw-pills">{props.pills}</span> : null}
         </span>
         <svg class="hiw-chevron" viewBox="0 0 14 8" width="14" height="8" aria-hidden="true">
           <path d="M1 1l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
@@ -60,8 +60,16 @@ function Step(props: StepProps) {
       <div class="hiw-more" id={id} role="region" aria-label={props.title} aria-hidden={!props.open}>
         <div class="hiw-card">
           <div class="hiw-card-inner">
-            <p class="hiw-card-lead">{props.more.lead}</p>
-            {props.more.body}
+            <div class="hiw-card-main">
+              {/* In the row the card covers the titles, so it names its step. */}
+              <p class="hiw-card-step">
+                <span class="hiw-num">{props.n}</span>
+                {props.title}
+              </p>
+              <p class="hiw-card-lead">{props.more.lead}</p>
+              <p>{props.more.text}</p>
+            </div>
+            <div class="hiw-card-side">{props.more.side}</div>
           </div>
         </div>
       </div>
@@ -123,9 +131,9 @@ export function HowItWorks() {
           art={<WalletArt class="hiw-art" />}
           more={{
             lead: "Connect any wallet.",
-            body: (
+            text: "The wallet in your browser becomes the only key to your Chronobox. No account, no email, no password.",
+            side: (
               <>
-                <p>The wallet in your browser becomes the only key to your Chronobox. No account, no email, no password.</p>
                 <p class="hiw-card-label">Works on</p>
                 <ul class="hiw-chips">
                   {networks.map((chain) => (
@@ -144,16 +152,10 @@ export function HowItWorks() {
           title="Set the delay"
           text="Choose how long every withdrawal must wait."
           art={<DelayArt class="hiw-art" />}
-          pills={
-            <>
-              <span>1 day</span>
-              <span>1 week</span>
-              <span aria-label="Custom">+</span>
-            </>
-          }
           more={{
             lead: "You choose the wait.",
-            body: (
+            text: "Every withdrawal waits this long. You can change it later, and that change waits too.",
+            side: (
               <>
                 <dl class="hiw-times">
                   <dt>12 hours</dt>
@@ -165,7 +167,6 @@ export function HowItWorks() {
                   <dt>Your own</dt>
                   <dd>From 1 hour to 90 days</dd>
                 </dl>
-                <p>You can change it later. That change waits too.</p>
               </>
             ),
           }}
@@ -177,9 +178,9 @@ export function HowItWorks() {
           art={<DepositArt class="hiw-art" />}
           more={{
             lead: "Any token, from anywhere.",
-            body: (
+            text: "Your Chronobox has its own address. Send to it from a wallet or an exchange, as often as you like.",
+            side: (
               <>
-                <p>Your Chronobox has its own address. Send to it from a wallet or an exchange, as often as you like.</p>
                 <ul class="hiw-chips">
                   {["ETH", "USDC", "USDT", "DAI", "WBTC", "wstETH"].map((symbol) => (
                     <li key={symbol}>{symbol}</li>
@@ -197,7 +198,8 @@ export function HowItWorks() {
           art={<NightArt class="hiw-art" />}
           more={{
             lead: "A stolen key is not enough.",
-            body: <Ticks lines={["Every withdrawal waits the full time.", "You can cancel it until the wait ends.", "Withdrawals go back to your wallet."]} />,
+            text: "A person who has your wallet still has to wait. That is your time to act.",
+            side: <Ticks lines={["Every withdrawal waits the full time.", "You can cancel it until the wait ends.", "Withdrawals go back to your wallet."]} />,
           }}
         />
         <Step
@@ -205,12 +207,11 @@ export function HowItWorks() {
           title="Add a guardian"
           text="You or a friend can veto, and help you switch wallets."
           art={<GuardianArt class="hiw-art" />}
-          pills={<span>Optional</span>}
           more={{
             lead: "A second pair of eyes.",
-            body: (
+            text: "Optional. Your own second device, or the wallet of a person you trust. You add it later, from your Chronobox.",
+            side: (
               <>
-                <p>Your own second device, or the wallet of a person you trust. You add it later, from your Chronobox.</p>
                 <Ticks lines={["Can stop a withdrawal at once.", "Helps you move to a new wallet without the wait.", "Can never withdraw."]} />
               </>
             ),
