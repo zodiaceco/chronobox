@@ -385,21 +385,24 @@ export function AssetAmount(props: {
 }) {
   return (
     <div class="amount-row">
-      <input
-        class="input amount-input"
-        inputMode="decimal"
-        autocomplete="off"
-        placeholder="0.0"
-        aria-label="Amount"
-        value={props.amount}
-        disabled={props.disabled}
-        onInput={(event) => props.onAmount((event.target as HTMLInputElement).value)}
-      />
-      {props.onMax ? (
-        <button type="button" class="link-button" onClick={props.onMax} disabled={props.disabled}>
-          Max
-        </button>
-      ) : null}
+      {/* The field and, inside it at the right, the button that fills in all there is. */}
+      <span class={props.onMax ? "amount-field amount-field-max" : "amount-field"}>
+        <input
+          class="input amount-input"
+          inputMode="decimal"
+          autocomplete="off"
+          placeholder="0.0"
+          aria-label="Amount"
+          value={props.amount}
+          disabled={props.disabled}
+          onInput={(event) => props.onAmount((event.target as HTMLInputElement).value)}
+        />
+        {props.onMax ? (
+          <button type="button" class="amount-max" onClick={props.onMax} disabled={props.disabled}>
+            Max
+          </button>
+        ) : null}
+      </span>
       <TokenSelect assets={props.assets} value={props.asset} balances={props.balances} onChange={props.onAsset} disabled={props.disabled} />
     </div>
   );
