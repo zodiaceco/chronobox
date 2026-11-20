@@ -1,13 +1,14 @@
 /**
  * "How it protects me and my funds": the four parts of a Chronobox, who audited them, what the
- * app checks, and what it cannot do for you. Then, folded away, the mechanism
- * in depth for people who want all of it. Static. Every fact here must
+ * app checks, what it cannot do for you, and the one optional part: a
+ * guardian. Then, folded away, the mechanism in depth for people who want
+ * all of it. Static. Every fact here must
  * match README.md and src/lib/chronobox.ts.
  */
 import "../technical.css";
 import type { ComponentChildren } from "preact";
 import { CONTRACTS } from "../lib/chains.ts";
-import { BoxArt, SunArt, WalletArt } from "./art.tsx";
+import { BoxArt, GuardianArt, SunArt, WalletArt } from "./art.tsx";
 import { Tick } from "./common.tsx";
 
 const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "").slice(0, 8);
@@ -66,14 +67,14 @@ export function TechnicalPage() {
           <span>lets the money go</span>
         </li>
       </ol>
-      <p class="tech-caption">The money can only go this way.</p>
+      <p class="tech-caption">The money can only go this way. This app sends it only back to your wallet.</p>
 
       <div class="tech-block">
         <h2>The parts</h2>
         <ul class="tech-cards">
           <li>
             <strong>Your wallet</strong>
-            <p>The only key. It can ask to unlock or to change something, and each of these waits. It can also cancel what is waiting.</p>
+            <p>It controls the Chronobox. It can ask to unlock or to change something, and each of these waits. It can also cancel what is waiting.</p>
           </li>
           <li>
             <strong>The time lock</strong>
@@ -130,6 +131,51 @@ export function TechnicalPage() {
         <p class="tech-note">Cancel moves nothing, so it does not need to wait. Everything else goes through the time lock.</p>
       </div>
 
+      {/* Optional. A Chronobox is complete without it, so it looks different from the parts above: a dashed frame and a tag. */}
+      <div class="tech-block tech-optional">
+        <div class="tech-optional-head">
+          <GuardianArt class="tech-optional-glyph" />
+          <div>
+            <span class="tech-tag tech-tag-optional">Optional</span>
+            <h2>A guardian</h2>
+          </div>
+        </div>
+        <p class="tech-optional-lead">
+          A second wallet that can say stop: your own on another device, or the wallet of a person you trust. You add it later, on the page of your
+          Chronobox. A Chronobox works without one.
+        </p>
+        <ul class="tech-rows">
+          <li>
+            <span>Cancel what is waiting</span>
+            <span class="tech-tag tech-tag-now">At once</span>
+          </li>
+          <li>
+            <span>Hand over to a new wallet, together with your wallet</span>
+            <span class="tech-tag tech-tag-now">At once</span>
+          </li>
+          <li>
+            <span>Withdraw, or change anything alone</span>
+            <span class="tech-tag">Never</span>
+          </li>
+        </ul>
+        <ul class="tech-checks">
+          <li>
+            <Tick on />A person who has your wallet gains nothing by keeping you from cancelling. Your guardian cancels.
+          </li>
+          <li>
+            <Tick on />A leaked key is no standoff. You and your guardian move the Chronobox to a new wallet.
+          </li>
+        </ul>
+        <p class="tech-note">
+          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. A guardian is
+          not a backup. If you lose your wallet, the money is lost. Adding and removing a guardian wait in the time lock, like every change.
+        </p>
+        <p class="tech-note">
+          Built from the same contracts: a second rule in the cancel switch (Zodiac Roles 2.1.1), and a Safe 1.4.1 that needs your wallet and your
+          guardian together. The app checks both every time you open the Chronobox.
+        </p>
+      </div>
+
       <div class="tech-block">
         <h2>Checked every time you open it</h2>
         <ul class="tech-checks">
@@ -139,7 +185,7 @@ export function TechnicalPage() {
             "No person and no key owns it.",
             "The time lock is the only way out.",
             "Only the Chronobox itself can change the time lock.",
-            "One wallet controls it, and only that wallet can cancel.",
+            "One wallet controls it. Only that wallet, and a guardian if you added one, can cancel.",
             "Cancel is the only thing that does not wait.",
             "Every unlock has to wait.",
           ].map((text) => (
@@ -164,11 +210,11 @@ export function TechnicalPage() {
           </li>
           <li>
             <strong>It cannot bring a lost wallet back.</strong>
-            <p>If you lose the wallet, the locked money is lost. There is no recovery.</p>
+            <p>If you can no longer sign with your wallet, the money in the Chronobox is lost. Chronobox has no recovery of its own, and a guardian cannot help. Only the recovery of your wallet itself can.</p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>
-            <p>A person who has your wallet can also cancel what you ask for. Then the money is stuck, not gone.</p>
+            <p>A person who has your wallet can also cancel what you ask for. Then the money is stuck, not gone. A guardian can help you move to a new wallet.</p>
           </li>
         </ul>
         <p class="tech-note">
@@ -371,11 +417,11 @@ export function TechnicalPage() {
         <ul class="tech-checks">
           <li>
             <Tick on />
-            No server, no account, no tracking.
+            No backend, no account, no tracking.
           </li>
           <li>
             <Tick on />
-            Everything comes through your wallet. This page makes no network requests of its own.
+            This page loads only its own files. All chain data comes through your wallet.
           </li>
           <li>
             <Tick on />
@@ -410,6 +456,12 @@ export function TechnicalPage() {
             A change of the wait is <code>setTxCooldown</code> on the Delay. A hand-over enables the new wallet on the Delay and the Roles
             modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Delay, called by the Safe through
             the Roles modifier.
+          </p>
+          <p>
+            A guardian is one batch through the Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
+            address of a 2 of 2 Safe of wallet and guardian. That role can call <code>enableModule</code> and <code>disableModule</code> on the
+            Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
+            A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
           <ul class="tech-addresses">
             {(

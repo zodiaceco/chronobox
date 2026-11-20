@@ -6,7 +6,7 @@ You connect a wallet and see its funds as one list: unlocked (in the wallet) and
 
 Behind this, a Chronobox is a Safe that has no owner. The only way out is a time lock that your wallet controls. Each wallet has one, at an address that follows from the wallet's address alone. There is no setup: the first lock creates it.
 
-**Status: proof of concept.** Tested on a local fork of Ethereum mainnet. Not yet run with real funds. Read "Limits" before you use it.
+**Status: experimental.** The contracts it uses are audited. This app is not. Read "Limits" before you use it.
 
 ## Why
 
@@ -29,7 +29,7 @@ A finished Chronobox has four parts:
 
 - **Your setup wallet**: the control unit. It is the only module of the Delay. It can queue any transaction, and it can cancel what is in the queue.
 - **Delay**: the only way to move funds or to change the vault. Owner, avatar and target are the Safe. The cooldown is the delay you picked. A queued transaction can be executed for 7 days after the cooldown, then it expires.
-- **Roles**: the cancel permission. A Zodiac Roles modifier (2.1.1) on the Safe with one rule: your wallet may call `setTxNonce` on the Delay. It cannot move funds and it cannot change the delay. Its owner is the Safe, so the rule can only change through the Delay.
+- **Roles**: the cancel permission. A Zodiac Roles modifier (2.1.1) on the Safe with one rule: your wallet may call `setTxNonce` on the Delay. An optional guardian adds a second rule (see below). It cannot move funds and it cannot change the delay. Its owner is the Safe, so the rule can only change through the Delay.
 - **Safe**: holds the funds. The owner is `0x…dEaD`, an address with no key and no code. No guard, no fallback handler.
 
 So everything waits the full delay: a withdrawal, a new delay, a new wallet. One thing does not wait: cancel, and a cancel moves nothing.
@@ -48,7 +48,7 @@ Later locks are plain transfers to the Chronobox.
 
 The hosted app asks for a contribution when money is locked. On the first lock it is a box with the suggested amount selected; "Donate less" shows lower amounts and a free field, and 0 is allowed. On every later lock it is one quiet line that can be opened. It is voluntary. Chronobox is free software, and anybody can run it without this.
 
-- The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask.
+- The amount is in US dollars. The app turns it into the coin of the network with a Chainlink price feed, which it reads through the wallet. If there is no fresh price, the app does not ask. On a test network it does not ask either.
 - On the first lock the coin rides in the transaction that switches on the time lock: the wallet sends it along, and the same batch passes it on. Either the vault is locked and the contribution arrives, or neither happens. A plain wallet gets no extra prompt for it.
 - On a later lock a wallet that can batch sends it in the same confirmation. A plain wallet sends it as one more transaction after the money is locked.
 - The receiver is `CONTRIBUTION_RECEIVER` in `src/lib/chains.ts`, an address of Zodiac. If you host the app yourself, set it to `null` and the app asks for nothing, or set your own address. The amounts are in `CONTRIBUTION_USD`. The suggested amount is $10.
@@ -63,7 +63,7 @@ To give the setup wallet cancel and nothing else, a Zodiac Roles modifier sits b
 - The queue is first in, first out. A cancel removes one item and every item before it.
 - Cancel cannot move funds, change the delay, or add anybody.
 
-The Roles contract has no function that lists its permissions, so the app proves "cancel only" from the contract's whole event history: it accepts only the exact cancel setup, with the setup wallet as the one member. This needs old logs. If the wallet's RPC does not serve them, the vault shows as **unverified**: withdrawals and cancel work, but the app tells you not to deposit until the check passes.
+The Roles contract has no function that lists its permissions, so the app proves "cancel only" from the contract's whole event history: it accepts only the exact cancel setup: the setup wallet as the one member, or the setup wallet and the guardian setup described below. This needs old logs. If the wallet's RPC does not serve them, the vault shows as **unverified**: withdrawals and cancel work, but the app tells you not to deposit until the check passes.
 
 ### What the setup wallet can queue
 
@@ -85,15 +85,24 @@ The checks that read the state of now take a moment, and the page shows your fun
 
 The address of the vault depends only on your wallet address. The app finds it again on any device, without a server. (The contracts allow more than one vault per wallet. This app uses the first.)
 
+### The optional guardian
+
+After setup, the wallet can add a guardian: a second wallet, on another device or held by a person you trust. Adding it waits the full delay, like every change. The app checks the result every time you open the vault.
+
+- The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Delay and nothing else.
+- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
+- The guardian cannot withdraw. It can cancel every withdrawal, and the wallet can remove the guardian only through the queue, where the guardian can cancel that too.
+- A guardian is not a backup. A wallet change by both needs the wallet.
+
 ## Limits
 
 Read these. They are the honest edge of what a delay can do.
 
-- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly.
-- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. Frozen funds are better than lost funds.
-- **One wallet.** There is no second key, no guardian and no recovery.
+- **Your wallet controls it.** The app does not know what kind of wallet that is: one key, a Safe with several signers, or a smart account. Whatever protects your wallet also protects your Chronobox.
+- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can move the Chronobox to a new wallet at once.
+- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian move the Chronobox to a new wallet at once. Frozen funds are better than lost funds.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
-- **Lost wallet, lost funds.** There is no recovery.
+- **Lost wallet, lost funds.** Chronobox has no recovery of its own. If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian cannot help. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
 - **No alerts.** A web page cannot wake up when it is closed, and this version has no alert service. Use the calendar file (below), and look at your Chronobox regularly.
 
@@ -160,7 +169,7 @@ The build hash is the sha256 over the sorted lines `<path> <sha256>` of every fi
 
 ## Host it
 
-`out/` is the whole site. `out/_headers` sets the response headers on Netlify and Cloudflare Pages. On another host, set the same headers yourself:
+`out/` is the whole site. The live site is on Vercel, which reads the response headers from `vercel.json`. `out/_headers` sets the same headers on Netlify and Cloudflare Pages. On another host, set them yourself:
 
 - `index.html` must not be cached (`Cache-Control: no-cache`), so that a fix reaches people on their next visit. The files in `assets/` have a content hash in the name and can be cached for ever.
 - `Content-Security-Policy: frame-ancestors 'none'` stops other sites from showing Chronobox in a frame. This one cannot be set from inside the page.
@@ -204,7 +213,7 @@ src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/ui/              screens
 build.mjs            build, dev server, build hash
 test/fork.ts         end-to-end proof on a fork
-brand/               logo concepts
+brand/               logo and icons
 ```
 
 ## License

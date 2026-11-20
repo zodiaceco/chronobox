@@ -150,3 +150,23 @@ export function lookupAllowed(): boolean {
 export function setLookupAllowed(allowed: boolean): void {
   save("chronobox:lookup", allowed);
 }
+
+/**
+ * A wallet change that the owner asked the guardian to agree to: the new wallet. It is kept so
+ * that the owner can close the page while the guardian looks at it. The chain decides what is
+ * true: this is only what the page offers to finish.
+ */
+export function pendingSwap(chainId: number, safe: Address): Address | null {
+  const value = load<unknown>(`chronobox:swap:${chainId}:${safe.toLowerCase()}`, null);
+  return typeof value === "string" ? parseAddress(value) : null;
+}
+
+export function setPendingSwap(chainId: number, safe: Address, to: Address | null): void {
+  const key = `chronobox:swap:${chainId}:${safe.toLowerCase()}`;
+  if (to) return save(key, to);
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Storage is not available. Then nothing was kept.
+  }
+}

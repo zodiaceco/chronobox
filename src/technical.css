@@ -208,6 +208,53 @@
   color: var(--blue-text);
 }
 
+/* The optional part. Everything above is always there. This is not, and it shows: a dashed frame and a tag. */
+
+.tech-optional {
+  gap: 16px;
+  padding: 22px 20px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 22px;
+}
+
+.tech-optional-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tech-optional-head > div {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.tech-optional-glyph {
+  flex: none;
+  display: block;
+  width: 56px;
+  height: 56px;
+}
+
+.tech-tag-optional {
+  padding: 3px 10px;
+  border: 1.5px dashed var(--line-strong);
+  background: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tech-optional-lead {
+  text-wrap: pretty;
+}
+
+.tech-optional .tech-checks li {
+  align-items: start;
+  text-wrap: pretty;
+}
+
 /* Ticked lines */
 
 .tech-checks {
@@ -381,4 +428,21 @@
 .tech-theft,
 .tech-lost {
   color: var(--bad-fg);
+}
+
+/* Privacy and imprint (#/privacy, #/imprint): the same column, plain text. */
+
+.legal-block {
+  gap: 10px;
+}
+
+.legal-block ul {
+  padding-left: 1.2em;
+  display: grid;
+  gap: 4px;
+}
+
+.legal-block a {
+  color: var(--blue-text);
+  text-underline-offset: 3px;
 }

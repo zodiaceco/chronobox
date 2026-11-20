@@ -459,27 +459,55 @@ a:focus-visible {
   gap: 12px;
 }
 
-/* How it works: four glyphs in a row, a list with a dotted rail on a narrow column. */
+/* How it works: five steps in a row, a list with a dotted rail on a narrow column.
+ * A step is a button. While it is open its picture moves, and a card says more:
+ * under the step in the row, in place in the list. */
 .hiw {
   container-type: inline-size;
+  position: relative;
+  z-index: 1;
   padding: 8px 0;
 }
 
-.hiw ol {
+.hiw > ol {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* Five equal columns, whatever is in them. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
-.hiw li {
+.hiw-step {
   position: relative;
+}
+
+.hiw-step.is-open {
+  z-index: 2;
+}
+
+.hiw-trigger {
+  appearance: none;
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0 4px;
+  border: 0;
+  border-radius: 16px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hiw-trigger:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 8px;
 }
 
 .hiw-art {
@@ -488,9 +516,17 @@ a:focus-visible {
   width: 72px;
   height: 72px;
   margin-bottom: 14px;
+  transition:
+    transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 0.4s ease;
 }
 
-.hiw li + li::before {
+.hiw-step.is-open .hiw-art {
+  transform: translateY(-5px) scale(1.06);
+  filter: drop-shadow(0 12px 12px rgba(40, 108, 178, 0.32));
+}
+
+.hiw-step + .hiw-step::before {
   content: "";
   position: absolute;
   top: 36px;
@@ -519,34 +555,193 @@ a:focus-visible {
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
+  transition:
+    background 0.25s ease,
+    color 0.25s ease;
+}
+
+.hiw-step.is-open .hiw-num {
+  background: var(--blue);
+  color: #fff;
+}
+
+/* The optional step: not joined to the steps before it, and its number is an open "+". */
+.hiw-step + .hiw-step-optional::before {
+  display: none;
+}
+
+.hiw-num-optional,
+.hiw-step.is-open .hiw-num-optional,
+.hiw-card-step .hiw-num-optional {
+  border: 1.5px dashed currentColor;
+  background: transparent;
+  color: var(--blue-text);
 }
 
 .hiw-title {
+  display: block;
   font-size: 15px;
   font-weight: 600;
   line-height: 1.3;
 }
 
 .hiw-text {
+  display: block;
   margin-top: 2px;
   color: var(--muted);
   font-size: 14px;
   line-height: 1.4;
 }
 
-.hiw-pills {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 5px;
-  margin-top: 8px;
+/* The arrow that says "there is more" is for the list. In the row, the pointer finds it. */
+.hiw-chevron {
+  display: none;
 }
 
-.hiw-pills span {
+/* The card. In the row it is as wide as the row and sits directly under the pictures, over the titles:
+ * nothing is half covered, and the card is close to the picture it explains. Each step has its own card
+ * in the same place, so going from step to step only changes what the card says and where its corner points.
+ * Its top padding is part of it, so the pointer can go from the picture to the card without leaving. */
+.hiw-step:nth-child(1) {
+  --hiw-at: 0;
+}
+.hiw-step:nth-child(2) {
+  --hiw-at: 1;
+}
+.hiw-step:nth-child(3) {
+  --hiw-at: 2;
+}
+.hiw-step:nth-child(4) {
+  --hiw-at: 3;
+}
+.hiw-step:nth-child(5) {
+  --hiw-at: 4;
+}
+
+.hiw-more {
+  position: absolute;
+  top: 72px;
+  left: calc(var(--hiw-at) * -20cqw);
+  z-index: 3;
+  width: 100cqw;
+  padding-top: 12px;
+  text-align: left;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition:
+    opacity 0.16s ease,
+    transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 0.16s;
+}
+
+.hiw-step.is-open > .hiw-more {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+
+.hiw-card {
+  position: relative;
+  padding: 20px 24px 22px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow:
+    0 24px 48px -20px rgba(11, 11, 12, 0.3),
+    0 2px 8px rgba(11, 11, 12, 0.06);
+}
+
+/* A small corner that points at the picture of the step. */
+.hiw-card::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: calc(var(--hiw-at) * 20cqw + 10cqw);
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-top-left-radius: 3px;
+  background: var(--bg);
+  transform: rotate(45deg);
+}
+
+.hiw-card-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px 32px;
+  /* Every card is the same height, so the page does not move from step to step. */
+  min-height: 148px;
+}
+
+.hiw-card-main,
+.hiw-card-side {
+  display: grid;
+  gap: 10px;
+}
+
+.hiw-card-side {
+  padding-top: 32px;
+}
+
+.hiw-card .hiw-card-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hiw-card-step .hiw-num {
+  margin: 0;
+  background: var(--blue);
+  color: #fff;
+}
+
+.hiw-card p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.hiw-card .hiw-card-lead {
+  color: var(--fg);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.hiw-card .hiw-card-label {
+  margin-bottom: -4px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hiw-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hiw-chips li {
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 8px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
   border: 1.5px solid var(--line-strong);
   border-radius: 999px;
   font-size: 13px;
@@ -554,18 +749,92 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+.hiw-chips li:has(.chain-logo) {
+  padding-left: 5px;
+}
 
-@container (max-width: 480px) {
-  .hiw ol {
+.hiw-chips .hiw-chip-quiet {
+  padding: 0 2px;
+  border-color: transparent;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* The lengths of the wait, each with a word on what it is good for. */
+.hiw-times {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 14px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.hiw-times dt {
+  font-weight: 600;
+}
+
+.hiw-times dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.chain-logo {
+  display: block;
+  flex: none;
+  border-radius: 5px;
+}
+
+.hiw-ticks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.hiw-ticks li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.hiw-ticks svg {
+  margin-top: 2px;
+  color: var(--blue);
+}
+
+/* The note under the row steps back while a card is open in front of it. */
+.hiw + .info-box {
+  transition: opacity 0.2s ease;
+}
+
+.hiw:has(.hiw-step.is-open) + .info-box {
+  opacity: 0;
+}
+
+/* In the list a card opens in place and covers nothing, so the note stays. The note is not inside
+ * the row, so this follows the width of the page, not of the row. */
+@media (max-width: 600px) {
+  .hiw:has(.hiw-step.is-open) + .info-box {
+    opacity: 1;
+  }
+}
+
+@container (max-width: 560px) {
+  .hiw > ol {
     grid-template-columns: 1fr;
     gap: 22px;
   }
-  .hiw li {
+  .hiw-trigger {
     flex-direction: row;
     align-items: flex-start;
     gap: 16px;
+    height: auto;
     text-align: left;
-    padding: 0 4px;
   }
   .hiw-art {
     flex: none;
@@ -573,10 +842,14 @@ a:focus-visible {
     height: 56px;
     margin: 0;
   }
+  .hiw-step.is-open .hiw-art {
+    transform: scale(1.08);
+  }
   .hiw-copy {
+    flex: 1;
     align-items: flex-start;
   }
-  .hiw li + li::before {
+  .hiw-step + .hiw-step::before {
     top: -19px;
     height: 16px;
     left: 31px;
@@ -587,8 +860,216 @@ a:focus-visible {
   .hiw-num {
     margin-bottom: 4px;
   }
-  .hiw-pills {
-    justify-content: flex-start;
+  .hiw-chevron {
+    display: block;
+    flex: none;
+    margin: 7px 4px 0 0;
+    color: var(--muted);
+    transition: transform 0.25s ease;
+  }
+  .hiw-step.is-open .hiw-chevron {
+    transform: rotate(180deg);
+  }
+  /* In the list the card is part of its step: it opens in place, under the text. */
+  .hiw .hiw-step > .hiw-more,
+  .hiw .hiw-step.is-open > .hiw-more {
+    position: static;
+    display: grid;
+    grid-template-rows: 0fr;
+    width: auto;
+    padding: 0 4px 0 76px;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: none;
+    transition: grid-template-rows 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .hiw .hiw-step.is-open > .hiw-more {
+    grid-template-rows: 1fr;
+  }
+  .hiw-card {
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .hiw-card::before {
+    display: none;
+  }
+  .hiw-card-inner {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    padding-top: 12px;
+  }
+  .hiw-card-side {
+    padding-top: 0;
+  }
+  /* In the list the title of the step is right above its card. */
+  .hiw-card .hiw-card-step {
+    display: none;
+  }
+  .hiw-card .hiw-card-lead {
+    font-size: 16px;
+  }
+}
+
+/* The pictures of the steps. Their parts move while the step is open. */
+.art-wallet,
+.art-ping,
+.art-coin,
+.art-arrow,
+.art-star {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* The flap of the wallet turns on its left corner. */
+.art-flap {
+  transform-box: fill-box;
+  transform-origin: 0% 100%;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.is-open .art-wallet {
+  animation: art-hop 0.7s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+
+.is-open .art-flap {
+  transform: rotate(-9deg);
+}
+
+.is-open .art-ping {
+  animation: art-ping 1.6s ease-out 0.2s infinite;
+}
+
+/* The sun at sunrise, its lower part behind the horizon, and the part of the path behind it. Open: the sun runs its way to sunset. */
+.art-run-sun {
+  transform-origin: 32px 41px;
+  transform: rotate(-158deg);
+  transition: transform 1.1s cubic-bezier(0.45, 0, 0.2, 1);
+}
+
+.art-run-path {
+  stroke-dashoffset: 82.4;
+  transition: stroke-dashoffset 1.1s cubic-bezier(0.45, 0, 0.2, 1);
+}
+
+.is-open .art-run-sun {
+  transform: rotate(-22deg);
+}
+
+.is-open .art-run-path {
+  stroke-dashoffset: 17.6;
+}
+
+/* A coin goes down behind the horizon, and the next one comes from above. */
+.is-open .art-coin {
+  animation: art-drop 1.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.is-open .art-arrow {
+  animation: art-nudge 1.8s ease-in-out infinite;
+}
+
+/* The moon rocks on its own centre, and the stars twinkle. */
+.art-moon {
+  transform-origin: 40.5px 26.3px;
+}
+
+.is-open .art-moon {
+  animation: art-rock 2.6s ease-in-out infinite;
+}
+
+.is-open .art-star {
+  animation: art-twinkle 1.1s ease-in-out infinite alternate;
+}
+
+.is-open .art-star + .art-star {
+  animation-delay: -0.45s;
+}
+
+.is-open .art-star-extra {
+  animation-delay: -0.8s;
+}
+
+@keyframes art-hop {
+  30% {
+    transform: translateY(-2.5px) rotate(-7deg);
+  }
+  62% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes art-ping {
+  0% {
+    opacity: 0.85;
+    transform: scale(0.5);
+  }
+  75%,
+  100% {
+    opacity: 0;
+    transform: scale(2.1);
+  }
+}
+
+@keyframes art-drop {
+  45% {
+    transform: translateY(30px);
+  }
+  46% {
+    transform: translateY(-30px);
+  }
+}
+
+@keyframes art-nudge {
+  25% {
+    transform: translateY(2.5px);
+  }
+  50% {
+    transform: none;
+  }
+}
+
+@keyframes art-rock {
+  30% {
+    transform: rotate(-12deg);
+  }
+  70% {
+    transform: rotate(9deg);
+  }
+}
+
+@keyframes art-twinkle {
+  from {
+    opacity: 0.25;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hiw-art,
+  .hiw-more,
+  .hiw-chevron,
+  .art-flap,
+  .art-run-sun,
+  .art-run-path {
+    transition: none;
+  }
+  .is-open .art-wallet,
+  .is-open .art-ping,
+  .is-open .art-coin,
+  .is-open .art-arrow,
+  .is-open .art-moon,
+  .is-open .art-star {
+    animation: none;
   }
 }
 
@@ -1208,6 +1689,12 @@ a:focus-visible {
 
 .wiz-foot {
   display: grid;
+  gap: 12px;
+}
+
+.wiz-foot .wiz-note a {
+  color: var(--blue-text);
+  text-underline-offset: 3px;
 }
 
 .wiz-foot .button {
@@ -2378,6 +2865,16 @@ button.row-strong:hover .row-hint {
   color: var(--risk-fg);
   font-size: 0.82rem;
   text-wrap: pretty;
+}
+
+/* In the header it sits in the top right corner of the page, not of the narrow column.
+ * The shell is the positioned parent, so this is the corner of the window. */
+@media (min-width: 900px) {
+  .top > .experimental {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -3599,3 +4096,51 @@ p.funds-network {
   align-items: baseline;
 }
 
+/* The guardian on the page of a Chronobox. */
+.view-only.guardian-tag {
+  background: var(--blue-wash);
+  color: var(--blue-text);
+}
+
+.swap-to {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.swap-to-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.swap-to code {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.swap-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.swap-qr {
+  width: 168px;
+  margin-inline: auto;
+}
+
+/* Under the button of the first lock: the terms */
+
+.lock-terms {
+  margin: 0;
+  text-align: center;
+}

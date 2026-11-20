@@ -17,13 +17,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
 import { type Address, sameAddress } from "../lib/hex.ts";
-import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
+import { blockHints, lookupAllowed, pendingSwap, setLookupAllowed, txCache } from "../lib/store.ts";
 import { findCoinPrice, findTokens, lookupHost } from "../lib/lookup.ts";
 import { call } from "../lib/abi.ts";
 import {
   EXPIRATION_SECONDS,
   MAX_COOLDOWN,
   MIN_COOLDOWN,
+  type Action,
   type Inspection,
   type QueueItem,
   Replaced,
@@ -56,6 +57,7 @@ import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch
 import { Dial } from "./logo.tsx";
 import { type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, WaitBar, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
+import { GuardianSheet } from "./guardian.tsx";
 import { vaultHref } from "./start.tsx";
 import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WaitPlan, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
 
@@ -95,7 +97,7 @@ type Funds = {
   fetchedAt: number;
 };
 
-type Sheet = "lock" | "unlock" | "receive" | "token" | "delay" | "wallet" | "checks" | "lookup" | null;
+type Sheet = "lock" | "unlock" | "receive" | "token" | "delay" | "wallet" | "guardian" | "checks" | "lookup" | null;
 
 const keyOf = (asset: Asset) => asset.token?.toLowerCase() ?? "native";
 
@@ -183,7 +185,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           box[i] = first.boxed[k];
         });
         // Until the checks are in: what the last read knew, or nothing at all on the first read.
-        const standIn: Inspection = { safe, state: "missing", checks: [], owners: [], delay: null, roles: null, controller: null, cooldown: 0n, expiration: 0n, txNonce: 0n, queueNonce: 0n };
+        const standIn: Inspection = { safe, state: "missing", checks: [], owners: [], delay: null, roles: null, controller: null, cooldown: 0n, expiration: 0n, txNonce: 0n, queueNonce: 0n, guardian: null, council: null, councilMade: false, members: [] };
         let inspection: Inspection = quick ?? last.current?.inspection ?? standIn;
         let queue: QueueItem[] = last.current?.queue ?? [];
         let checking = quick === null && !last.current;
@@ -482,7 +484,13 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const checking = mine && !verified && inspection.historyPending === true;
   // Another wallet holds the key now: this one handed it over.
   const handedOver = (inspection.state === "locked" || inspection.state === "unverified") && !mine;
-  const vault: VaultRef | null = mine ? { safe, delay: inspection.delay!, controller: inspection.controller!, roles: inspection.roles } : null;
+  const vault: VaultRef | null = mine
+    ? { safe, delay: inspection.delay!, controller: inspection.controller!, roles: inspection.roles, guardian: inspection.guardian, council: inspection.council, members: inspection.members }
+    : null;
+  // A guardian that is in the line and has not started yet.
+  const guardianWaiting = vault
+    ? (queue.map((item) => (item.tx ? classify(item.tx, vault) : null)).find((a): a is Extract<Action, { kind: "add-guardian" }> => a?.kind === "add-guardian")?.guardian ?? null)
+    : null;
   const canCancel = mine && !!inspection.roles;
   const passed = inspection.checks.filter((c) => c.ok).length;
 
@@ -684,7 +692,13 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       <ul class="rows">
         {mine ? <Row label="Lock from elsewhere" value={shortAddress(safe)} onClick={verified ? () => setSheet("receive") : undefined} /> : null}
         {mine ? <Row label="Unlocking takes" value={formatDuration(inspection.cooldown)} onClick={() => setSheet("delay")} /> : null}
-        {mine ? <Row label="Wallet that unlocks" value={shortAddress(inspection.controller!)} onClick={() => setSheet("wallet")} /> : null}
+        {mine ? (
+          <Row label="Wallet that unlocks" value={inspection.guardian && pendingSwap(chain.id, safe) ? "Asking your guardian" : shortAddress(inspection.controller!)} onClick={() => setSheet("wallet")} />
+        ) : null}
+        {/* Optional: a second wallet that can stop what waits, and help to move to a new wallet. */}
+        {mine && inspection.roles ? (
+          <Row label="Guardian" value={inspection.guardian ? shortAddress(inspection.guardian) : guardianWaiting ? "Starts soon" : "Add"} onClick={() => setSheet("guardian")} />
+        ) : null}
         {inspection.checks.length > 0 ? (
           <Row
             label="Safety checks"
@@ -713,6 +727,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
+      {sheet === "guardian" && vault ? <GuardianSheet session={session} chain={chain} vault={vault} inspection={inspection} role="owner" waiting={guardianWaiting} onClose={close} /> : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? <ChecksSheet inspection={inspection} onClose={() => setSheet(null)} /> : null}
       {sheet === "lookup" && host ? (
@@ -1272,7 +1287,8 @@ function LockSheet(props: {
   const gave = useRef(false);
 
   useEffect(() => {
-    if (!RECEIVER) return;
+    // A test network has no real money: no contribution is asked for there. With no price, nothing is asked.
+    if (!RECEIVER || chain.testnet) return;
     let stale = false;
     coinPriceUsd(session.rpc, chain.usdFeed).then((p) => !stale && setPrice(p));
     return () => {
@@ -1818,7 +1834,7 @@ function LockSheet(props: {
             role="checkbox"
             on={agreed}
             title="I will keep control of the wallet I connected."
-            text={`No new key is created. My wallet ${shortAddress(session.account)} is the only way to unlock. If I lose access to it, the locked money is gone.`}
+            text={`No new key is created. My wallet ${shortAddress(session.account)} controls what I lock. If I lose access to it, the locked money is gone.`}
             onClick={() => setAgreed(!agreed)}
           />
           {giveBox}
@@ -1835,6 +1851,15 @@ function LockSheet(props: {
           {nothing ? (first && props.loose ? "Switch on the time lock" : "Lock") : `Lock ${listText(lines)}`}
         </Button>
       </div>
+      {first ? (
+        <p class="hint lock-terms">
+          By creating a Chronobox, you agree to the{" "}
+          <a href="#/terms" target="_blank" rel="noopener">
+            terms
+          </a>
+          .
+        </p>
+      ) : null}
       {ready && count > 1 ? <p class="hint lock-count">Your wallet asks you to confirm {count} times, one step after the other.</p> : null}
     </Modal>
   );

@@ -98,13 +98,46 @@ function Coin(props: { x: number; y: number; r: number }) {
 
 type ArtProps = { size?: number; class?: string };
 
-/** The mark: the sun on its path. Behind it the path is solid, ahead of it the path is pale. */
+/**
+ * The mark: the sun on its path. Behind it the path is solid, ahead of it the path is pale.
+ * The sun is behind the planet, in every picture: low on its path, the horizon covers a part
+ * of it, as at sunrise and sunset.
+ */
 export function SunArt(props: ArtProps & { deg?: number }) {
   const deg = props.deg ?? MARK_DEG;
   return (
-    <Tile size={props.size} class={props.class} behind={<Path solidTo={deg} />}>
-      <Sun deg={deg} />
-    </Tile>
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <Path solidTo={deg} />
+          <Sun deg={deg} />
+        </>
+      }
+    />
+  );
+}
+
+/**
+ * The sun at sunrise, for "set the delay". The sun and the solid part
+ * of the path are placed by the stylesheet (.art-run), so they can move on:
+ * when the picture is in motion, the sun runs its way to sunset.
+ */
+export function DelayArt(props: ArtProps) {
+  const [x, y] = at(0);
+  return (
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <path d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" opacity="0.45" />
+          <path class="art-run-path" d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" pathLength="100" stroke-dasharray="100" />
+          <circle class="art-run-sun" cx={x} cy={y} r="6" fill={WHITE} />
+        </>
+      }
+    />
   );
 }
 
@@ -141,16 +174,12 @@ export function SunPassArt(props: ArtProps) {
           {/* The mark, which comes in when the pass is over. */}
           <g opacity="0">
             <Path solidTo={MARK_DEG} />
+            <Sun deg={MARK_DEG} />
             <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
           </g>
         </>
       }
-    >
-      <g opacity="0">
-        <Sun deg={MARK_DEG} />
-        <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
-      </g>
-    </Tile>
+    />
   );
 }
 
@@ -158,10 +187,14 @@ export function SunPassArt(props: ArtProps) {
 export function WalletArt(props: ArtProps) {
   return (
     <Tile size={props.size} class={props.class} planet={false}>
-      <path d="M20.5 24L38 16.5L41 24" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linejoin="round" />
-      <rect x="16" y="24" width="32" height="22" rx="5" fill="none" stroke={WHITE} stroke-width="2.6" />
-      <rect x="37.5" y="30.5" width="13" height="9" rx="4.5" fill={WHITE} />
-      <circle cx="42.5" cy="35" r="1.7" fill={BLUE} />
+      <g class="art-wallet">
+        <path class="art-flap" d="M20.5 24L38 16.5L41 24" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linejoin="round" />
+        <rect x="16" y="24" width="32" height="22" rx="5" fill="none" stroke={WHITE} stroke-width="2.6" />
+        <rect x="37.5" y="30.5" width="13" height="9" rx="4.5" fill={WHITE} />
+        <circle cx="42.5" cy="35" r="1.7" fill={BLUE} />
+        {/* A signal from the clasp. It shows only while the picture is in motion. */}
+        <circle class="art-ping" cx="42.5" cy="35" r="5" fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
+      </g>
     </Tile>
   );
 }
@@ -178,9 +211,17 @@ export function BoxArt(props: ArtProps) {
 /** A coin on its way down, behind the horizon. */
 export function DepositArt(props: ArtProps) {
   return (
-    <Tile size={props.size} class={props.class}>
-      <Coin x={32} y={17.4} r={7.4} />
-      <path d="M27.4 29.2L32 33.2L36.6 29.2" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        // Behind the planet, so a coin in motion goes down behind the horizon.
+        <g class="art-coin">
+          <Coin x={32} y={17.4} r={7.4} />
+        </g>
+      }
+    >
+      <path class="art-arrow" d="M27.4 29.2L32 33.2L36.6 29.2" fill="none" stroke={WHITE} stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
     </Tile>
   );
 }
@@ -196,9 +237,42 @@ export function NightArt(props: ArtProps) {
         <circle cx={x} cy={y} r={r} fill="#fff" />
         <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
       </mask>
-      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-moon)" />
-      <circle cx="19" cy="17" r="1.1" fill={WHITE} />
-      <circle cx="27.5" cy="12.5" r="0.8" fill={WHITE} />
+      <rect class="art-moon" x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-moon)" />
+      <circle class="art-star" cx="19" cy="17" r="1.1" fill={WHITE} />
+      <circle class="art-star" cx="27.5" cy="12.5" r="0.8" fill={WHITE} />
+      {/* A third star. It shows only while the picture is in motion. */}
+      <circle class="art-star art-star-extra" cx="12.5" cy="26" r="0.9" fill={WHITE} opacity="0" />
+    </Tile>
+  );
+}
+
+/**
+ * The guardian: a moon in the sky, off the path. The sun keeps its place on the
+ * path, as in the mark. The moon does not walk the path: it only watches.
+ * The mask has its own id, because the night picture is on the same page.
+ */
+export function GuardianArt(props: ArtProps) {
+  const x = 47.5;
+  const y = 14.5;
+  const r = 5.2;
+  return (
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <Path solidTo={MARK_DEG} />
+          <Sun deg={MARK_DEG} />
+        </>
+      }
+    >
+      <mask id="cb-guardian-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+        <circle cx={x} cy={y} r={r} fill="#fff" />
+        <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
+      </mask>
+      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-guardian-moon)" />
+      {/* It keeps watch. The signal shows only while the picture is in motion. */}
+      <circle class="art-ping" cx={x} cy={y} r={r + 1} fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
     </Tile>
   );
 }

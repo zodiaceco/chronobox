@@ -9,10 +9,19 @@ import { DevBar } from "./ui/devbar.tsx";
 import { FundsPage } from "./ui/funds.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage } from "./ui/start.tsx";
+import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
-type Route = { page: "start" } | { page: "technical" } | { page: "vault"; chain: Chain; safe: Address } | { page: "unknown" };
+/** `swapTo`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner asks for. */
+type Route =
+  | { page: "start" }
+  | { page: "technical" }
+  | { page: "privacy" }
+  | { page: "terms" }
+  | { page: "imprint" }
+  | { page: "vault"; chain: Chain; safe: Address; swapTo: Address | null }
+  | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
 const BUILD = (document.querySelector('meta[name="chronobox-build"]')?.getAttribute("content") ?? "unknown").slice(0, 8);
@@ -24,11 +33,15 @@ function parseRoute(hash: string): Route {
   // The address of the setup that an earlier version had. There is no setup now.
   if (path === "/new") return { page: "start" };
   if (path === "/technical") return { page: "technical" };
-  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
+  if (path === "/privacy") return { page: "privacy" };
+  if (path === "/terms") return { page: "terms" };
+  if (path === "/imprint") return { page: "imprint" };
+  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40}))?$/.exec(path);
   if (match) {
     const chain = chainByShort(match[1]);
     const safe = parseAddress(match[2]);
-    if (chain && safe) return { page: "vault", chain, safe };
+    const swapTo = match[3] ? parseAddress(match[3]) : null;
+    if (chain && safe && (!match[3] || swapTo)) return { page: "vault", chain, safe, swapTo };
   }
   return { page: "unknown" };
 }
@@ -135,7 +148,8 @@ export function App() {
     if (!session) return;
     const before = lastAccount();
     setLastAccount(session.account);
-    if (before && !sameAddress(before, session.account) && route.page === "vault") location.hash = "#/";
+    // A link that asks a guardian to agree is for the account that opens it. It stays.
+    if (before && !sameAddress(before, session.account) && route.page === "vault" && !route.swapTo) location.hash = "#/";
   }, [session?.account]);
 
   const chain = useMemo(() => (session ? chainById(session.chainId) : undefined), [session?.chainId]);
@@ -171,6 +185,12 @@ export function App() {
     body = <FundsPage key={`${chain.id}:${session.account}`} session={session} chain={chain} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
+  } else if (route.page === "privacy") {
+    body = <PrivacyPage />;
+  } else if (route.page === "terms") {
+    body = <TermsPage />;
+  } else if (route.page === "imprint") {
+    body = <ImprintPage />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
@@ -218,7 +238,7 @@ export function App() {
       </section>
     );
   } else {
-    body = <VaultPage key={`${route.chain.id}:${route.safe}`} session={session} chain={route.chain} safe={route.safe} />;
+    body = <VaultPage key={`${route.chain.id}:${route.safe}:${route.swapTo ?? ""}`} session={session} chain={route.chain} safe={route.safe} swapTo={route.swapTo} />;
   }
 
   return (
@@ -258,8 +278,8 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it protects me and my funds</a>
-          <span title="Version and build of the code that runs now. Compare the build with the published release.">
+          <a href="#/technical">How it protects me and my funds</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
+          <span title="Version and build of the code that runs now. Build the same commit to compare.">
             {" "}
             · v{__VERSION__} · {BUILD}
           </span>
@@ -270,7 +290,7 @@ export function App() {
       {__DEV__ ? <DevBar /> : null}
 
       {connectOpen ? (
-        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "Chronobox shows its funds. What you lock, only this wallet can unlock."} onClose={() => setConnectOpen(false)}>
+        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "Chronobox shows its funds. This wallet controls what you lock."} onClose={() => setConnectOpen(false)}>
           {wallets.length === 0 ? (
             <p>
               There is no wallet in this browser yet. Add one, such as Rabby or MetaMask, or open this page inside your wallet app. Then
