@@ -77,10 +77,10 @@ export function Stripes(props: { x: number; width: number; height: number }) {
  * How much of a wait has passed, as a bar. The part that has passed is striped and moving, like
  * the unlocking part of the bar in the list: the same thing, shown in two places.
  */
-export function WaitBar(props: { value: number }) {
+export function WaitBar(props: { value: number; label?: string }) {
   const done = Math.round(Math.max(0, Math.min(1, props.value)) * 1000);
   return (
-    <svg class="wait-bar" viewBox="0 0 1000 8" preserveAspectRatio="none" role="img" aria-label={`${Math.round(done / 10)} percent of the wait has passed`}>
+    <svg class="wait-bar" viewBox="0 0 1000 8" preserveAspectRatio="none" role="img" aria-label={props.label ?? `${Math.round(done / 10)} percent of the wait has passed`}>
       <rect class="wait-bar-track" x="0" y="0" width="1000" height="8" />
       <Stripes x={0} width={done} height={8} />
     </svg>

@@ -53,7 +53,7 @@ import {
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { Dial } from "./logo.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, WaitBar, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { vaultHref } from "./start.tsx";
 import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
@@ -102,6 +102,8 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
   const [data, setData] = useState<Funds | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
+  // How far the first read has come: which of its parts are in. For the bar on the page that waits for it.
+  const [steps, setSteps] = useState<string[]>([]);
   // One read at a time. A read that is asked for while another runs starts when that one ends.
   const reading = useRef(false);
   const wanted = useRef(false);
@@ -150,7 +152,17 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           return { mine: mine.balances, boxed: boxed.balances };
         };
 
-        const [quick, now, first] = await Promise.all([inspect(rpc, safe, hints, { historyLater: true }), chainTime(rpc), readSome(some)]);
+        const step = <T,>(name: string, work: Promise<T>): Promise<T> =>
+          work.then((value) => {
+            if (!stale) setSteps((done) => (done.includes(name) ? done : [...done, name]));
+            return value;
+          });
+        setSteps([]);
+        const [quick, now, first] = await Promise.all([
+          step("checks", inspect(rpc, safe, hints, { historyLater: true })),
+          step("clock", chainTime(rpc)),
+          step("balances", readSome(some)),
+        ]);
         const fetchedAt = Date.now();
         let inspection = quick;
         const queue = inspection.state === "locked" || inspection.state === "unverified" ? await readQueue(rpc, inspection, txCache(chain.id, inspection.delay!)) : [];
@@ -291,7 +303,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
     return () => clearTimeout(timer);
   }, [error, data, refresh]);
 
-  return { data, error, refresh };
+  return { data, error, refresh, steps };
 }
 
 function LockIcon() {
@@ -312,7 +324,15 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const host = lookupHost(chain);
   const [vpn, setVpn] = useState(false);
   const [trusts, setTrusts] = useState(false);
-  const { data, error, refresh } = useFunds(session, chain, safe, lookup && host !== null);
+  const { data, error, refresh, steps } = useFunds(session, chain, safe, lookup && host !== null);
+  // The first read takes as long as the wallet's network takes. After a while the page says so.
+  const [slowRead, setSlowRead] = useState(false);
+  useEffect(() => {
+    if (data) return;
+    setSlowRead(false);
+    const timer = setTimeout(() => setSlowRead(true), 2000);
+    return () => clearTimeout(timer);
+  }, [!!data, chain, session.account]);
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [preset, setPreset] = useState<number | null>(null);
@@ -414,7 +434,32 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       </section>
     );
   }
-  if (!data) return <section class="page page-center muted">Reading your funds…</section>;
+  if (!data) {
+    // Three parts are read at once, then what is waiting. The bar shows how much of that is in: the checks are
+    // the largest part, then the balances. The hint about a slow network is for a read that is stuck early.
+    const weight: Record<string, number> = { checks: 0.5, balances: 0.3, clock: 0.1 };
+    const readSoFar = steps.reduce((sum, name) => sum + (weight[name] ?? 0), 0);
+    const waitingFor = [
+      ["checks", "the safety checks"],
+      ["balances", "your balances"],
+      ["clock", "the time of the network"],
+    ]
+      .filter(([name]) => !steps.includes(name))
+      .map(([, label]) => label);
+    return (
+      <section class="page page-center funds-loading">
+        <p class="muted">Reading your funds…</p>
+        <WaitBar value={Math.max(0.06, readSoFar)} label={`Reading your funds: ${Math.round(readSoFar * 100)} percent`} />
+        <p class="hint">{waitingFor.length > 0 ? `Waiting for ${waitingFor.join(" and ")}.` : "Almost there."}</p>
+        {slowRead && readSoFar < 0.8 ? (
+          <p class="hint funds-loading-slow">
+            <b>Taking long?</b> Everything is read through the network connection (RPC) of your wallet, and this one answers slowly. A faster one for{" "}
+            {chain.name}, set in the network settings of your wallet, makes this page faster.
+          </p>
+        ) : null}
+      </section>
+    );
+  }
 
   const { inspection, queue, assets, wallet, box, prices } = data;
   const mine = (inspection.state === "locked" || inspection.state === "unverified") && sameAddress(inspection.controller, session.account);
@@ -614,7 +659,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             {checking ? " Running the last safety check…" : ""}
           </>
         ) : fresh ? (
-          "Locked money cannot leave in a hurry. Unlocking it takes the time you choose, and nobody can make that faster. Not even you."
+          "Locked funds cannot leave in a hurry. Unlocking them takes the time you choose, and nobody can make that faster. Not even you."
         ) : null}
       </p>
 
@@ -1681,7 +1726,7 @@ function LockSheet(props: {
   );
 
   return (
-    <Modal title={first && nothing && props.loose ? "Switch on the time lock" : "Lock"} lead="Locked money cannot leave in a hurry. To get it back, you unlock it and wait." onClose={props.onClose}>
+    <Modal title={first && nothing && props.loose ? "Switch on the time lock" : "Lock"} lead="Locked funds cannot leave in a hurry. To get them back, you unlock them and wait." onClose={props.onClose}>
       <div class="wiz-fund">
         {batch ? (
           <Picker assets={assets} available={props.wallet} entries={entries} most={most} onChange={setEntries} />
