@@ -910,6 +910,11 @@ function FundRow(props: {
           )}
         </div>
         {!props.canLock && W > 0n ? <p class="mover-note">Locking is not possible right now. See the notice above.</p> : null}
+        {props.canLock && props.most < W ? (
+          <p class="mover-note mover-note-quiet">
+            {shortAmount(W - props.most, asset.decimals)} {asset.symbol} stays unlocked: your wallet pays the network fee with it, also the fee to unlock again.
+          </p>
+        ) : null}
       </div>
     </div>
   );
