@@ -1416,6 +1416,8 @@ function LockSheet(props: {
       if (held[0] !== null && !batch) {
         const room = (await feeReserve(rpc)) * (setup ? 8n : 1n);
         if (coin + (give?.amount ?? 0n) + room > held[0]) {
+          // Nothing of the coin is being locked or given: then there is simply too little of it in the wallet to pay the fee.
+          if (coin === 0n && !give) throw new Error(`Your wallet has too little ${assets[0].symbol} to pay the network fee. Nothing was sent.`);
           throw new Error(`Leave some ${assets[0].symbol} unlocked for the network fee${give ? " and your contribution" : ""}. Lock less, or choose a lower contribution.`);
         }
       } else if (held[0] !== null && coin + (give?.amount ?? 0n) > held[0]) {

@@ -69,6 +69,12 @@ export function Dial(props: {
           {play === "drain" ? <animate attributeName="stroke-dashoffset" from="0" to="14" begin="0.3s" dur="1.4s" {...ease} /> : null}
         </circle>
       ) : null}
+      {/* A ring that was drawn shut still has a hairline where its two ends meet. When it is shut, a plain circle takes its place. */}
+      {play === "close" ? (
+        <circle cx="32" cy="32" r={RING_RADIUS} fill="none" stroke="currentColor" stroke-width={RING_WIDTH} opacity="0">
+          <set attributeName="opacity" to="1" begin="0.9s" fill="freeze" />
+        </circle>
+      ) : null}
       <path d={KNOB} fill-rule="evenodd" fill="currentColor" transform={props.turned ? `rotate(-180 32 32) ${KNOB_SCALE}` : KNOB_SCALE} />
     </svg>
   );
