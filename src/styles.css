@@ -945,24 +945,24 @@ a:focus-visible {
   animation: art-ping 1.6s ease-out 0.2s infinite;
 }
 
-/* The sun early on its path, and the part of the path behind it. Open: the sun runs most of its way. */
+/* The sun at sunrise, its lower part behind the horizon, and the part of the path behind it. Open: the sun runs its way to sunset. */
 .art-run-sun {
   transform-origin: 32px 41px;
-  transform: rotate(-150deg);
+  transform: rotate(-158deg);
   transition: transform 1.1s cubic-bezier(0.45, 0, 0.2, 1);
 }
 
 .art-run-path {
-  stroke-dashoffset: 78.6;
+  stroke-dashoffset: 82.4;
   transition: stroke-dashoffset 1.1s cubic-bezier(0.45, 0, 0.2, 1);
 }
 
 .is-open .art-run-sun {
-  transform: rotate(-40deg);
+  transform: rotate(-22deg);
 }
 
 .is-open .art-run-path {
-  stroke-dashoffset: 26.2;
+  stroke-dashoffset: 17.6;
 }
 
 /* A coin goes down behind the horizon, and the next one comes from above. */
