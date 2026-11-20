@@ -3289,3 +3289,44 @@ img.token-icon {
 .mover-note-quiet {
   color: var(--muted);
 }
+
+/* The name of an asset is the button that opens its row. Beside it, on hover, the link to the token's page. */
+
+.funds-asset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.funds-asset-button:disabled {
+  cursor: default;
+}
+
+.funds-ext {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted);
+  opacity: 0;
+}
+
+.funds-ext:hover {
+  color: var(--fg);
+  background: var(--panel);
+}
+
+.funds-row:hover .funds-ext,
+.funds-item-open .funds-ext,
+.funds-ext:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .funds-ext {
+    opacity: 0.7;
+  }
+}

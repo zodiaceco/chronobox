@@ -544,6 +544,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             open={openRow === keyOf(r.asset)}
             onToggle={() => setOpenRow(openRow === keyOf(r.asset) ? null : keyOf(r.asset))}
             most={mostOf(r.index)}
+            explorer={chain.explorer}
             canLock={(fresh || verified) && !handedOver}
             canUnlock={mine}
             delayText={mine ? formatDuration(inspection.cooldown) : ""}
@@ -738,6 +739,8 @@ function FundRow(props: {
   onToggle: () => void;
   /** The most of the wallet's amount that can be locked: all of it, less what the wallet needs for fees. */
   most: bigint;
+  /** The block explorer of the network, for the link to a token's own page. */
+  explorer: string;
   canLock: boolean;
   canUnlock: boolean;
   delayText: string;
@@ -785,11 +788,43 @@ function FundRow(props: {
       </span>
     </>
   );
+  // A token has a page of its own on the block explorer. The network's coin has none.
+  const link = asset.token ? (
+    <a
+      class="funds-ext"
+      href={`${props.explorer}/token/${asset.token}`}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={`${asset.symbol} on the block explorer`}
+      aria-label={`${asset.symbol} on the block explorer, opens in a new tab`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8L7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </a>
+  ) : null;
+  const usable = known && all > 0n;
 
   if (!props.open) {
     return (
-      <button type="button" class="funds-row funds-row-button" aria-expanded="false" disabled={!known || all === 0n} onClick={props.onToggle}>
-        <span class="funds-asset">{name}</span>
+      // The whole row opens on a press. The name is the button of it, for the keyboard, and the link is a link of its own beside it.
+      <div class={usable ? "funds-row funds-row-button" : "funds-row"} onClick={usable ? props.onToggle : undefined}>
+        <span class="funds-asset">
+          <button
+            type="button"
+            class="funds-asset-button"
+            aria-expanded="false"
+            disabled={!usable}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onToggle();
+            }}
+          >
+            {name}
+          </button>
+          {link}
+        </span>
         <span class="funds-num" title={exact(known ? U : null)}>
           {show(known ? U : null)}
         </span>
@@ -800,7 +835,7 @@ function FundRow(props: {
         <span class="funds-num funds-total" title={exact(known ? all : null)}>
           {show(known ? all : null)}
         </span>
-      </button>
+      </div>
     );
   }
 
@@ -821,9 +856,12 @@ function FundRow(props: {
   return (
     <div class="funds-item-open">
       <div class="funds-row">
-        <button type="button" class="funds-asset funds-asset-button" aria-expanded="true" onClick={props.onToggle}>
-          {name}
-        </button>
+        <span class="funds-asset">
+          <button type="button" class="funds-asset-button" aria-expanded="true" onClick={props.onToggle}>
+            {name}
+          </button>
+          {link}
+        </span>
         <EditCell label={`${asset.symbol} that stays unlocked`} value={U - delta} decimals={asset.decimals} onValue={(value) => setTarget(clamp(all - value))} />
         <EditCell label={`${asset.symbol} that is locked`} value={L + delta} decimals={asset.decimals} locked onValue={(value) => setTarget(clamp(value))} />
         <span class="funds-num funds-total" title={exact(all)}>
