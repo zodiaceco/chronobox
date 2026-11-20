@@ -116,7 +116,7 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
   // The long list of tokens is read on the first look and after something was done, not on every tick.
   const deep = useRef(true);
   const last = useRef<Funds | null>(null);
-  // Tokens that the balance lookup found and the app's own lists do not have.
+  // Tokens that the token index found and the app's own lists do not have.
   const found = useRef<Asset[]>([]);
   const prices = useRef<Record<string, number>>({});
   const refresh = useCallback((all = true) => {

@@ -181,7 +181,7 @@ A Chronobox can hold any ERC-20 token. The app shows the ones it knows:
 
 The app reads all balances in a few requests through your wallet, with the Multicall3 contract. It does not ask a token service, so nobody learns which address you look at. A token that is in none of the lists is not shown until you add it. It is still in your Chronobox.
 
-Icons: `npm run tokens:icons` copies an icon for each token of these lists from the `@web3icons` packages into `static/tokens` and writes `src/lib/token-icons.ts`, first by the token's address and then by its symbol. The page serves the icons itself. A token without an icon, and every token that only the balance lookup found, shows the first letter of its symbol.
+Icons: `npm run tokens:icons` copies an icon for each token of these lists from the `@web3icons` packages into `static/tokens` and writes `src/lib/token-icons.ts`, first by the token's address and then by its symbol. The page serves the icons itself. A token without an icon, and every token that only the token index found, shows the first letter of its symbol.
 
 `npm run tokens:list -- <tokens.json>` writes the long list again from a ranked list of tokens and checks each one against the real chain. `npm run test:tokens` checks the main tokens.
 

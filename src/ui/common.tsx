@@ -18,7 +18,7 @@ export type Session = {
 };
 
 /** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
-export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean; /** Found by the balance lookup. The app's own lists do not know it. */ found?: boolean; /** The icon file of a token of the app's own lists. */ icon?: string | null };
+export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean; /** Found by the token index (third-party services). The app's own lists do not know it. */ found?: boolean; /** The icon file of a token of the app's own lists. */ icon?: string | null };
 
 /**
  * Every asset the app knows on a network: the coin, the main tokens, tokens

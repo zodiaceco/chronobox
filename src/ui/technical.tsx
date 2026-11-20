@@ -379,7 +379,7 @@ export function TechnicalPage() {
           </li>
           <li>
             <Tick on />
-            One exception, and only if you switch it on: the balance lookup asks a public node and a token index for your balances.
+            One exception, and only if you switch it on: third-party services ask Blockscout which tokens you hold and what they are worth. Blockscout then sees your IP address with your addresses. Your balances still come through your wallet.
           </li>
         </ul>
       </div>

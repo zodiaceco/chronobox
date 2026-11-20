@@ -142,7 +142,7 @@ export function setLastWallet(rdns: string | null): void {
   save("chronobox:wallet", rdns);
 }
 
-/** Did the person allow the balance lookup outside the wallet (see lookup.ts)? Off unless they said yes in this browser. */
+/** Did the person switch on third-party services (see lookup.ts)? Off unless they said yes in this browser. */
 export function lookupAllowed(): boolean {
   return load<unknown>("chronobox:lookup", false) === true;
 }
