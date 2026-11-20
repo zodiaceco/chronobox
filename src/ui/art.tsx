@@ -98,20 +98,31 @@ function Coin(props: { x: number; y: number; r: number }) {
 
 type ArtProps = { size?: number; class?: string };
 
-/** The mark: the sun on its path. Behind it the path is solid, ahead of it the path is pale. */
+/**
+ * The mark: the sun on its path. Behind it the path is solid, ahead of it the path is pale.
+ * The sun is behind the planet, in every picture: low on its path, the horizon covers a part
+ * of it, as at sunrise and sunset.
+ */
 export function SunArt(props: ArtProps & { deg?: number }) {
   const deg = props.deg ?? MARK_DEG;
   return (
-    <Tile size={props.size} class={props.class} behind={<Path solidTo={deg} />}>
-      <Sun deg={deg} />
-    </Tile>
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <Path solidTo={deg} />
+          <Sun deg={deg} />
+        </>
+      }
+    />
   );
 }
 
 /**
- * The sun early on its path, for "set the delay". The sun and the solid part
+ * The sun at sunrise, for "set the delay". The sun and the solid part
  * of the path are placed by the stylesheet (.art-run), so they can move on:
- * when the picture is in motion, the sun runs most of its way.
+ * when the picture is in motion, the sun runs its way to sunset.
  */
 export function DelayArt(props: ArtProps) {
   const [x, y] = at(0);
@@ -123,11 +134,10 @@ export function DelayArt(props: ArtProps) {
         <>
           <path d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" opacity="0.45" />
           <path class="art-run-path" d={arc(PATH_START, PATH_END)} fill="none" stroke={WHITE} stroke-width="2.6" pathLength="100" stroke-dasharray="100" />
+          <circle class="art-run-sun" cx={x} cy={y} r="6" fill={WHITE} />
         </>
       }
-    >
-      <circle class="art-run-sun" cx={x} cy={y} r="6" fill={WHITE} />
-    </Tile>
+    />
   );
 }
 
@@ -164,16 +174,12 @@ export function SunPassArt(props: ArtProps) {
           {/* The mark, which comes in when the pass is over. */}
           <g opacity="0">
             <Path solidTo={MARK_DEG} />
+            <Sun deg={MARK_DEG} />
             <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
           </g>
         </>
       }
-    >
-      <g opacity="0">
-        <Sun deg={MARK_DEG} />
-        <animate attributeName="opacity" from="0" to="1" begin={`${PASS_SECONDS}s`} dur="0.6s" fill="freeze" />
-      </g>
-    </Tile>
+    />
   );
 }
 
@@ -250,8 +256,16 @@ export function GuardianArt(props: ArtProps) {
   const y = 14.5;
   const r = 5.2;
   return (
-    <Tile size={props.size} class={props.class} behind={<Path solidTo={MARK_DEG} />}>
-      <Sun deg={MARK_DEG} />
+    <Tile
+      size={props.size}
+      class={props.class}
+      behind={
+        <>
+          <Path solidTo={MARK_DEG} />
+          <Sun deg={MARK_DEG} />
+        </>
+      }
+    >
       <mask id="cb-guardian-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
         <circle cx={x} cy={y} r={r} fill="#fff" />
         <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
