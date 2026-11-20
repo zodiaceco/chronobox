@@ -123,7 +123,7 @@ npm run dev          # http://localhost:3130, with a test wallet for a local for
 npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :8545
 ```
 
-The dev build injects a test wallet ("Anvil test wallet") that signs with anvil's unlocked accounts. Add `?account=1` (up to 9) for another account, or `?safe=1` to make it act as a Safe that can batch. It does not exist in the production build. In the browser console, `__anvil.warp(seconds)` moves the fork's clock.
+The dev build injects a test wallet ("Anvil test wallet") that signs with anvil's unlocked accounts. The dev server shows a small bar at the bottom left that sets what kind of wallet it is: a plain account without batching, an account that batches (EIP-5792), or a Safe. It also picks one of ten anvil accounts. The bar writes `?wallet=plain|batch|safe` and `?account=0..9` into the address and loads the page again. It does not exist in the production build. In the browser console, `__anvil.warp(seconds)` moves the fork's clock.
 
 ```bash
 npm test             # unit tests

@@ -5,6 +5,7 @@ import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
+import { DevBar } from "./ui/devbar.tsx";
 import { FundsPage } from "./ui/funds.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage } from "./ui/start.tsx";
@@ -266,6 +267,7 @@ export function App() {
         </span>
       </footer>
       <div class="horizon" aria-hidden="true" />
+      {__DEV__ ? <DevBar /> : null}
 
       {connectOpen ? (
         <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "Chronobox shows its funds. What you lock, only this wallet can unlock."} onClose={() => setConnectOpen(false)}>

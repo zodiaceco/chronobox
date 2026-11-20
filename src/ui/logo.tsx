@@ -76,7 +76,7 @@ export function Lockup() {
   return (
     <a class="lockup" href="#/" aria-label="Zodiac Chronobox, start page">
       <Mark size={26} />
-      <span class="lockup-word">Chronobox</span>
+      <span class="lockup-word">CHRONOBOX</span>
     </a>
   );
 }
