@@ -2786,3 +2786,240 @@ h2,
 .wiz-give-quiet p {
   font-size: 0.85rem;
 }
+
+/* A row of the list that opens: a handle moves money between unlocked and locked */
+
+.funds-row-button {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.funds-row-button:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.funds-row-button:disabled {
+  cursor: default;
+}
+
+.funds-table > * + * {
+  border-top: 1px solid var(--line);
+}
+
+.funds-item-open {
+  background: var(--blue-wash);
+}
+
+.funds-item-open .funds-row {
+  min-height: 64px;
+}
+
+.funds-asset-button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  min-height: 44px;
+  text-align: left;
+}
+
+.funds-locked {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.funds-locked-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.funds-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.funds-pending-ready {
+  color: var(--good-fg);
+}
+
+.funds-pending-bar {
+  width: 28px;
+  height: 6px;
+  border-radius: 999px;
+  color: var(--blue);
+  overflow: hidden;
+}
+
+.funds-edit {
+  min-height: 44px;
+  padding: 0 10px;
+  text-align: right;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.funds-edit-locked {
+  color: var(--blue-text);
+  font-weight: 600;
+}
+
+.mover {
+  display: grid;
+  gap: 8px;
+  padding: 2px 18px 18px;
+}
+
+.mover-bar {
+  position: relative;
+  height: 36px;
+}
+
+.mover-svg {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 11px;
+  width: calc(100% - 28px);
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--blue);
+}
+
+.mover-track {
+  fill: var(--bg);
+}
+
+.mover-locked {
+  fill: var(--fg);
+}
+
+.mover-adding {
+  fill: var(--blue);
+}
+
+.mover-leaving {
+  fill: var(--blue-light);
+}
+
+.mover-pending-back {
+  fill: var(--blue-light);
+}
+
+.mover-tick {
+  fill: var(--line-strong);
+  opacity: 0.7;
+}
+
+.mover-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: grab;
+}
+
+.mover-range::-webkit-slider-runnable-track {
+  height: 36px;
+  background: none;
+}
+
+.mover-range::-moz-range-track {
+  background: none;
+}
+
+.mover-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: 4px;
+  border: 3px solid var(--blue);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--blue);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mover-note {
+  color: var(--blue-text);
+  font-size: 0.85rem;
+}
+
+.mover-note-ready {
+  color: var(--good-fg);
+}
+
+.mover-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mover-actions .button {
+  min-height: 48px;
+}
+
+.mover-snap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 32px;
+}
+
+.mover-snap input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--fg);
+}
+
+.funds-pending {
+  white-space: nowrap;
+}
+
+.funds-pending-bar {
+  width: 18px;
+}
+
+.funds-row {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1.15fr);
+}

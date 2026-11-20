@@ -862,12 +862,14 @@ export function WithdrawSheet(props: {
   queue: QueueItem[];
   now: bigint;
   canCancel: boolean;
+  /** An asset and amount that were chosen in the list already: the sheet opens on the question about the wait. */
+  preset?: { asset: number; amount: string } | null;
   onClose: () => void;
 }) {
   const { session, vault, inspection, assets, balances } = props;
-  const [assetIndex, setAssetIndex] = useState(0);
-  const [amountText, setAmountText] = useState("");
-  const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
+  const [assetIndex, setAssetIndex] = useState(props.preset?.asset ?? 0);
+  const [amountText, setAmountText] = useState(props.preset?.amount ?? "");
+  const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">(props.preset ? "confirm" : "form");
   const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();

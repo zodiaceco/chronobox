@@ -312,6 +312,17 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [preset, setPreset] = useState<number | null>(null);
+  // The amount that was chosen in a row of the list, for the sheet that carries it out.
+  const [presetAmount, setPresetAmount] = useState<string | null>(null);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [reserve, setReserve] = useState<bigint | null>(null);
+  useEffect(() => {
+    let stale = false;
+    feeReserve(session.rpc).then((r) => !stale && setReserve(r));
+    return () => {
+      stale = true;
+    };
+  }, [session.rpc]);
   const [batch, setBatch] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const chooseLookup = (on: boolean) => {
@@ -406,11 +417,38 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   // A token that only the lookup knows does not count: anybody can send such a token to any address.
   const loose = assets.map((asset, i) => ({ asset, amount: mine || asset.found ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
   const anyLocked = mine && box.some((b) => (b ?? 0n) > 0n);
+  // What is on its way out, by asset: asked for and not collected yet.
+  const pendingOf = new Map<string, Pending>();
+  if (vault) {
+    for (const item of queue) {
+      if (!item.tx) continue;
+      const status = itemStatus(item, inspection.cooldown, inspection.expiration, now);
+      if (status.phase === "expired") continue;
+      const action = classify(item.tx, vault);
+      if (action.kind !== "withdraw") continue;
+      const key = action.token?.toLowerCase() ?? "native";
+      const before = pendingOf.get(key);
+      pendingOf.set(key, {
+        amount: (before?.amount ?? 0n) + action.amount,
+        readyAt: before && before.readyAt > status.readyAt ? before.readyAt : status.readyAt,
+        ready: (before?.ready ?? true) && status.phase === "ready",
+      });
+    }
+  }
+  /** The most of an unlocked balance that can be locked from a row: the coin keeps what the next steps cost. */
+  const mostOf = (index: number): bigint => {
+    const held = wallet[index] ?? 0n;
+    if (index !== 0 || batch) return held;
+    const room = (reserve ?? 0n) * (fresh ? 8n : 1n);
+    return held > room ? held - room : 0n;
+  };
   const anyUnlocked = wallet.some((b) => (b ?? 0n) > 0n);
   const unread = assets.filter((a, i) => a.main && (wallet[i] === null || box[i] === null)).map((a) => a.symbol);
   const close = () => {
     setSheet(null);
     setPreset(null);
+    setPresetAmount(null);
+    setOpenRow(null);
     refresh();
   };
   // A large amount needs no long tail of decimals, and with one it does not fit its column.
@@ -454,37 +492,38 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         </Notice>
       ) : null}
 
-      <div class="funds-table" role="table" aria-label="Your funds">
-        <div class="funds-row funds-header" role="row">
-          <span role="columnheader">Asset</span>
-          <span role="columnheader">Unlocked</span>
-          <span role="columnheader">Locked</span>
+      <div class="funds-table" aria-label="Your funds">
+        <div class="funds-row funds-header">
+          <span>Asset</span>
+          <span>Unlocked</span>
+          <span>Locked</span>
         </div>
         {rows.map((r) => (
-          <div class="funds-row" role="row" key={keyOf(r.asset)}>
-            <span class="funds-asset" role="cell">
-              <span class="token-badge" aria-hidden="true">
-                {r.asset.symbol.slice(0, 1)}
-              </span>
-              <span class="funds-symbol">
-                {r.asset.symbol}
-                {r.usd !== null || (r.asset.found && r.asset.token) ? (
-                  <small>
-                    {r.usd !== null ? dollars(r.usd) : ""}
-                    {r.usd !== null && r.asset.found ? " · " : ""}
-                    {r.asset.found && r.asset.token ? shortAddress(r.asset.token) : ""}
-                  </small>
-                ) : null}
-              </span>
-            </span>
-            <span class="funds-num" role="cell">
-              {amount(r.unlocked, r.asset)}
-            </span>
-            <span class={(r.locked ?? 0n) > 0n ? "funds-num funds-locked" : "funds-num funds-none"} role="cell">
-              {(r.locked ?? 0n) > 0n ? <LockIcon /> : null}
-              {amount(r.locked, r.asset)}
-            </span>
-          </div>
+          <FundRow
+            key={keyOf(r.asset)}
+            asset={r.asset}
+            note={[r.usd !== null ? dollars(r.usd) : "", r.asset.found && r.asset.token ? shortAddress(r.asset.token) : ""].filter(Boolean).join(" · ") || null}
+            unlocked={r.unlocked}
+            locked={r.locked}
+            pending={pendingOf.get(keyOf(r.asset)) ?? null}
+            now={now}
+            open={openRow === keyOf(r.asset)}
+            onToggle={() => setOpenRow(openRow === keyOf(r.asset) ? null : keyOf(r.asset))}
+            most={mostOf(r.index)}
+            canLock={(fresh || verified) && !handedOver}
+            canUnlock={mine}
+            delayText={mine ? formatDuration(inspection.cooldown) : ""}
+            onLock={(value) => {
+              setPreset(r.index);
+              setPresetAmount(formatUnits(value, r.asset.decimals));
+              setSheet("lock");
+            }}
+            onUnlock={(value) => {
+              setPreset(r.index);
+              setPresetAmount(formatUnits(value, r.asset.decimals));
+              setSheet("unlock");
+            }}
+          />
         ))}
       </div>
       {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
@@ -559,13 +598,13 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       <OpenOther chain={chain} />
 
       {sheet === "lock" ? (
-        <LockSheet session={session} chain={chain} safe={safe} inspection={inspection} assets={assets} wallet={wallet} loose={loose.length > 0} batch={batch} preset={preset ?? 0} onChanged={() => refresh()} onClose={close} />
+        <LockSheet session={session} chain={chain} safe={safe} inspection={inspection} assets={assets} wallet={wallet} loose={loose.length > 0} batch={batch} preset={preset ?? 0} presetAmount={presetAmount} onChanged={() => refresh()} onClose={close} />
       ) : null}
       {sheet === "unlock" && vault && batch ? (
-        <UnlockManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+        <UnlockManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} preset={presetAmount && preset !== null ? { asset: preset, amount: presetAmount } : null} onClose={close} />
       ) : null}
       {sheet === "unlock" && vault && !batch ? (
-        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} preset={presetAmount && preset !== null ? { asset: preset, amount: presetAmount } : null} onClose={close} />
       ) : null}
       {sheet === "receive" ? (
         <Modal title="Lock from elsewhere" lead="Money that is sent to this address is locked when it arrives." onClose={close}>
@@ -637,6 +676,217 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   );
 }
 
+
+/** What is on its way out of the lock for one asset: asked for, and waiting or ready to be collected. */
+type Pending = { amount: bigint; readyAt: bigint; ready: boolean };
+
+/** Where the handle catches when snapping is on: nothing, a quarter, half, three quarters, everything. In thousandths. */
+const SNAPS = [0, 250, 500, 750, 1000];
+const SNAP_WITHIN = 22;
+
+/** Moving stripes: something is in progress. Drawn with SVG, because the page allows no inline style. */
+function Stripes(props: { x: number; width: number; height: number }) {
+  if (props.width <= 0) return null;
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <>
+      <defs>
+        <pattern id="cb-stripes" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="skewX(-30)">
+          <rect width="8" height="16" fill="currentColor" />
+          {still ? null : <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="16 0" dur="0.9s" repeatCount="indefinite" additive="sum" />}
+        </pattern>
+      </defs>
+      <rect class="mover-pending-back" x={props.x} y="0" width={props.width} height={props.height} />
+      <rect class="mover-pending" x={props.x} y="0" width={props.width} height={props.height} fill="url(#cb-stripes)" />
+    </>
+  );
+}
+
+/** A number in a cell that can be typed over. While it has the focus it shows what was typed, not what was understood. */
+function EditCell(props: { label: string; value: bigint; decimals: number; locked?: boolean; onValue: (value: bigint) => void }) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      class={props.locked ? "input funds-edit funds-edit-locked" : "input funds-edit"}
+      inputMode="decimal"
+      autocomplete="off"
+      aria-label={props.label}
+      value={text ?? formatUnits(props.value, props.decimals)}
+      onFocus={(event) => (event.target as HTMLInputElement).select()}
+      onInput={(event) => {
+        const typed = (event.target as HTMLInputElement).value;
+        setText(typed);
+        const parsed = parseUnits(typed, props.decimals);
+        if (parsed !== null) props.onValue(parsed);
+      }}
+      onBlur={() => setText(null)}
+    />
+  );
+}
+
+/**
+ * One asset in the list. A press opens it: a handle on a bar moves money between unlocked (left)
+ * and locked (right), and the two balances turn into fields that can be typed over. The bar is the
+ * whole holding; its dark part is what is locked now. What is already on its way out sits at the
+ * start of the bar, striped and moving, and the handle cannot go into it.
+ */
+function FundRow(props: {
+  asset: Asset;
+  note: string | null;
+  unlocked: bigint | null;
+  locked: bigint | null;
+  pending: Pending | null;
+  now: bigint;
+  open: boolean;
+  onToggle: () => void;
+  /** The most of the unlocked amount that can be locked: all of it, less what the wallet needs for fees. */
+  most: bigint;
+  canLock: boolean;
+  canUnlock: boolean;
+  delayText: string;
+  onLock: (amount: bigint) => void;
+  onUnlock: (amount: bigint) => void;
+}) {
+  const { asset, pending, now } = props;
+  const U = props.unlocked ?? 0n;
+  const L = props.locked ?? 0n;
+  const R = pending ? (pending.amount > L ? L : pending.amount) : 0n;
+  const all = U + L;
+  const [target, setTarget] = useState<bigint>(L);
+  const [snap, setSnap] = useState(true);
+  // The balances are the starting point. When they change, or the row closes, the choice is gone.
+  useEffect(() => setTarget(L), [props.open, U, L]);
+
+  const lo = props.canUnlock ? R : L;
+  const hi = props.canLock ? L + (props.most < U ? props.most : U) : L;
+  const clamp = (value: bigint) => (value < lo ? lo : value > hi ? hi : value);
+  const choice = clamp(target);
+  const delta = choice - L;
+  const show = (value: bigint | null) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 10_000n * 10n ** BigInt(asset.decimals) ? 2 : 6));
+  const part = (value: bigint) => (all > 0n ? Number((value * 1000n) / all) : 0);
+  const moved = `${formatAmount(delta < 0n ? -delta : delta, asset.decimals, 6)} ${asset.symbol}`;
+  const pendingLine = pending
+    ? pending.ready
+      ? `${formatAmount(pending.amount, asset.decimals, 6)} ready to collect`
+      : `${formatAmount(pending.amount, asset.decimals, 6)} unlocking · ${formatDuration(pending.readyAt > now ? pending.readyAt - now : 0n)}`
+    : null;
+
+  const name = (
+    <>
+      <span class="token-badge" aria-hidden="true">
+        {asset.symbol.slice(0, 1)}
+      </span>
+      <span class="funds-symbol">
+        {asset.symbol}
+        {props.note ? <small>{props.note}</small> : null}
+      </span>
+    </>
+  );
+  const usable = props.unlocked !== null && props.locked !== null && all > 0n;
+
+  if (!props.open) {
+    return (
+      <button type="button" class="funds-row funds-row-button" aria-expanded="false" disabled={!usable} onClick={props.onToggle}>
+        <span class="funds-asset">
+          {name}
+        </span>
+        <span class="funds-num">
+          {show(props.unlocked)}
+        </span>
+        <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"}>
+          <span class="funds-locked-line">
+            {L > 0n ? <LockIcon /> : null}
+            {show(props.locked)}
+          </span>
+          {pendingLine ? (
+            <span class={pending!.ready ? "funds-pending funds-pending-ready" : "funds-pending"}>
+              {pending!.ready ? null : (
+                <svg class="funds-pending-bar" viewBox="0 0 64 6" preserveAspectRatio="none" aria-hidden="true">
+                  <Stripes x={0} width={64} height={6} />
+                </svg>
+              )}
+              {pendingLine}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    );
+  }
+
+  const lockedNow = part(L);
+  const chosen = part(choice);
+  return (
+    <div class="funds-item-open">
+      <div class="funds-row">
+        <button type="button" class="funds-asset funds-asset-button" aria-expanded="true" onClick={props.onToggle}>
+          {name}
+        </button>
+        <EditCell label={`${asset.symbol} that stays unlocked`} value={U - delta} decimals={asset.decimals} onValue={(value) => setTarget(clamp(all - value))} />
+        <EditCell label={`${asset.symbol} that is locked`} value={L + delta} decimals={asset.decimals} locked onValue={(value) => setTarget(clamp(value))} />
+      </div>
+      <div class="mover">
+        <div class="mover-bar">
+          <svg class="mover-svg" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true">
+            <rect class="mover-track" x="0" y="0" width="1000" height="14" />
+            <rect class="mover-locked" x="0" y="0" width={lockedNow} height="14" />
+            {delta > 0n ? <rect class="mover-adding" x={lockedNow} y="0" width={chosen - lockedNow} height="14" /> : null}
+            {delta < 0n ? <rect class="mover-leaving" x={chosen} y="0" width={lockedNow - chosen} height="14" /> : null}
+            <Stripes x={0} width={part(R)} height={14} />
+            {SNAPS.slice(1, -1).map((at) => (
+              <rect class="mover-tick" key={at} x={at - 1} y="0" width="2" height="14" />
+            ))}
+          </svg>
+          <input
+            class="mover-range"
+            type="range"
+            min="0"
+            max="1000"
+            step="1"
+            aria-label={`How much ${asset.symbol} is locked`}
+            value={chosen}
+            onInput={(event) => {
+              let at = Number((event.target as HTMLInputElement).value);
+              if (snap) for (const point of SNAPS) if (Math.abs(at - point) <= SNAP_WITHIN) at = point;
+              // The ends are exact: everything means everything, not everything but a rounding rest.
+              setTarget(clamp(at >= 1000 ? all : at <= 0 ? 0n : (all * BigInt(at)) / 1000n));
+            }}
+          />
+        </div>
+        <div class="mover-scale" aria-hidden="true">
+          <span>All unlocked</span>
+          <span>25%</span>
+          <span>50%</span>
+          <span>75%</span>
+          <span>All locked</span>
+        </div>
+        {pendingLine ? (
+          <p class={pending!.ready ? "mover-note mover-note-ready" : "mover-note"}>
+            {pendingLine}. It is on its way out, so the handle does not go into the striped part.
+          </p>
+        ) : null}
+        <div class="mover-actions">
+          {delta > 0n ? (
+            <Button kind="primary" onClick={() => props.onLock(delta)}>
+              Lock {moved}
+            </Button>
+          ) : delta < 0n ? (
+            <Button onClick={() => props.onUnlock(-delta)}>
+              Unlock {moved} · takes {props.delayText}
+            </Button>
+          ) : (
+            <Button disabled>Drag right to lock, left to unlock</Button>
+          )}
+          <label class="mover-snap">
+            <input type="checkbox" checked={snap} onChange={(event) => setSnap((event.target as HTMLInputElement).checked)} />
+            Catch at quarters
+          </label>
+        </div>
+        {!props.canLock && U > 0n ? <p class="mover-note">Locking is not possible right now. See the notice above.</p> : null}
+      </div>
+    </div>
+  );
+}
+
 type Line = { asset: Asset; index: number; amount: bigint };
 type Step = { id: string; text: string };
 
@@ -701,11 +951,13 @@ function UnlockManySheet(props: {
   queue: QueueItem[];
   now: bigint;
   canCancel: boolean;
+  /** An asset and amount that were chosen in the list already: the sheet opens on the question about the wait. */
+  preset?: Entry | null;
   onClose: () => void;
 }) {
   const { session, chain, vault, inspection, assets } = props;
-  const [entries, setEntries] = useState<Entry[]>([]);
-  const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
+  const [entries, setEntries] = useState<Entry[]>(props.preset ? [props.preset] : []);
+  const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">(props.preset ? "confirm" : "form");
   const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();
@@ -846,6 +1098,8 @@ function LockSheet(props: {
   loose: boolean;
   batch: boolean;
   preset: number;
+  /** An amount that was chosen in the list already. */
+  presetAmount?: string | null;
   onChanged: () => void;
   onClose: () => void;
 }) {
@@ -853,7 +1107,7 @@ function LockSheet(props: {
   // What the page knew when the sheet opened. Every press reads the chain again.
   const [first] = useState(props.inspection.state === "missing" || props.inspection.state === "open");
   // A wallet that batches ticks assets in a list. A plain wallet starts with one line.
-  const [entries, setEntries] = useState<Entry[]>(batch ? [] : [{ asset: props.preset, amount: "" }]);
+  const [entries, setEntries] = useState<Entry[]>(props.presetAmount ? [{ asset: props.preset, amount: props.presetAmount }] : batch ? [] : [{ asset: props.preset, amount: "" }]);
   const [delay, setDelay] = useState<number | "custom">(1);
   const [customValue, setCustomValue] = useState("3");
   const [customUnit, setCustomUnit] = useState<"hours" | "days">("days");
