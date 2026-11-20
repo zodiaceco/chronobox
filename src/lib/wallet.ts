@@ -211,8 +211,8 @@ export async function canBatch(provider: Provider, account: Address, chainId: nu
     const entry = all?.[id] ?? all?.[id.toLowerCase()] ?? all?.[String(chainId)];
     const status = entry?.atomic?.status;
     // "ready" means a plain account that the wallet would upgrade to a smart account when the
-    // first batch is sent. Chronobox does not start that: the wallet is the only key, and what
-    // kind of account it is stays the owner's choice. Such an account takes the plain path.
+    // first batch is sent. Chronobox does not start that: what kind of account the wallet is
+    // stays the owner's choice. Such an account takes the plain path.
     return status === "supported" || entry?.atomicBatch?.supported === true;
   } catch {
     return false;

@@ -66,14 +66,14 @@ export function TechnicalPage() {
           <span>lets the money go</span>
         </li>
       </ol>
-      <p class="tech-caption">The money can only go this way, and only back to your wallet.</p>
+      <p class="tech-caption">The money can only go this way. This app sends it only back to your wallet.</p>
 
       <div class="tech-block">
         <h2>The parts</h2>
         <ul class="tech-cards">
           <li>
             <strong>Your wallet</strong>
-            <p>The only key. It can ask for a withdrawal or a change, and each one waits. It can also cancel what is waiting.</p>
+            <p>It controls the Chronobox. It can ask for a withdrawal or a change, and each one waits. It can also cancel what is waiting.</p>
           </li>
           <li>
             <strong>The time lock</strong>
@@ -184,7 +184,7 @@ export function TechnicalPage() {
             "No person and no key owns it.",
             "The time lock is the only way out.",
             "Only the Chronobox itself can change the time lock.",
-            "One wallet controls it, and only that wallet can cancel.",
+            "One wallet controls it. Only that wallet, and a guardian if you added one, can cancel.",
             "Cancel is the only thing that does not wait.",
             "Every withdrawal has to wait.",
           ].map((text) => (
@@ -209,11 +209,11 @@ export function TechnicalPage() {
           </li>
           <li>
             <strong>It cannot bring a lost wallet back.</strong>
-            <p>If you lose the wallet, the money in the Chronobox is lost. There is no recovery.</p>
+            <p>If you can no longer sign with your wallet, the money in the Chronobox is lost. Chronobox has no recovery of its own, and a guardian cannot help. Only the recovery of your wallet itself can.</p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>
-            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone.</p>
+            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone. A guardian can help you move to a new wallet.</p>
           </li>
         </ul>
         <p class="tech-note">
@@ -227,11 +227,11 @@ export function TechnicalPage() {
         <ul class="tech-checks">
           <li>
             <Tick on />
-            No server, no account, no tracking.
+            No backend, no account, no tracking.
           </li>
           <li>
             <Tick on />
-            This page makes no network requests. Everything comes through your wallet.
+            This page loads only its own files. All chain data comes through your wallet.
           </li>
         </ul>
       </div>

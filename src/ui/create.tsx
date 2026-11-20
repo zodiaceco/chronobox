@@ -467,7 +467,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             role="checkbox"
             on={keepSafe}
             title="I will keep this wallet safe."
-            text="It is the only key. If I lose it, the money in my Chronobox is gone."
+            text="It controls my Chronobox. If I lose it, the money in my Chronobox is gone."
             onClick={() => setKeepSafe(!keepSafe)}
           />
           <Choice
@@ -535,7 +535,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             <dd>{delayText}</dd>
           </div>
           <div>
-            <dt>Your wallet, the only key</dt>
+            <dt>Controlled by your wallet</dt>
             <dd class="mono">
               <AddressText address={session.account} full />
             </dd>

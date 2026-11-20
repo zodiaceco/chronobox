@@ -229,7 +229,7 @@ function serve(req, res) {
     return send(400, "Bad request\n");
   }
   if (pathname.endsWith("/")) pathname += "index.html";
-  // The dev server also shows the logo concept sheet at /brand/concepts.html.
+  // The dev server also serves the files in brand/.
   const base = pathname.startsWith("/brand/") ? ROOT : OUT;
   const file = path.join(base, path.normalize(pathname));
   if (file !== base && !file.startsWith(base + path.sep)) return send(403, "Forbidden\n");

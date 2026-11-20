@@ -144,7 +144,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
       : !guardian
         ? "This is not a wallet address."
         : sameAddress(guardian, vault.controller)
-          ? "This is your own wallet. A guardian is another wallet, with another key."
+          ? "This is your own wallet. A guardian is another wallet."
           : sameAddress(guardian, vault.safe)
             ? "This is the address of the Chronobox itself. Enter the address of your guardian's wallet."
             : !tx
