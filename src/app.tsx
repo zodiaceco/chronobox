@@ -181,7 +181,7 @@ export function App() {
       <section class="page page-center">
         <h1>{route.page === "new" ? "First, connect your wallet." : "Connect your wallet to open this Chronobox."}</h1>
         <p class="lead">
-          {route.page === "new" ? "It becomes the only key to your Chronobox." : "Chronobox has no server. It reads everything through your wallet."}
+          {route.page === "new" ? "It will control your Chronobox." : "Chronobox has no server. It reads everything through your wallet."}
         </p>
         <div class="page-actions">
           <Button kind="primary" onClick={() => setConnectOpen(true)}>
@@ -264,7 +264,7 @@ export function App() {
         <ByZodiac />
         <span class="muted">
           <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
-          <span title="Version and build of the code that runs now. Compare the build with the published release.">
+          <span title="Version and build of the code that runs now. Build the same commit to compare.">
             {" "}
             · v{__VERSION__} · {BUILD}
           </span>
@@ -274,7 +274,7 @@ export function App() {
       <div class="horizon" aria-hidden="true" />
 
       {connectOpen ? (
-        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "It becomes the only key to your Chronobox."} onClose={() => setConnectOpen(false)}>
+        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "It will control your Chronobox."} onClose={() => setConnectOpen(false)}>
           {wallets.length === 0 ? (
             <p>
               There is no wallet in this browser yet. Add one, such as Rabby or MetaMask, or open this page inside your wallet app. Then

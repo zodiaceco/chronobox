@@ -193,7 +193,7 @@ export function TermsPage() {
 
       <header class="tech-head">
         <h1>Terms</h1>
-        <p class="lead">Chronobox is free software. You hold the only key. We cannot move, stop or recover your money.</p>
+        <p class="lead">Chronobox is free software. Your wallet controls your Chronobox. We cannot move, stop or recover your money.</p>
         <p class="tech-note">Last updated {UPDATED}</p>
       </header>
 
@@ -215,7 +215,7 @@ export function TermsPage() {
 
       <Block title="3. What you are responsible for">
         <ul>
-          <li>Your wallet is the only key. If you lose it, the money in your Chronobox is gone. Nobody can get it back.</li>
+          <li>Your wallet controls your Chronobox. If you can no longer sign with it, the money in your Chronobox is gone. We cannot get it back.</li>
           <li>Check each transaction in your wallet before you sign it. Transactions on a blockchain are final.</li>
           <li>
             Look at your Chronobox regularly. If somebody steals your key, the delay protects you only if you cancel their withdrawal in

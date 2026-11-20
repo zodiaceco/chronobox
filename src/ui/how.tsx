@@ -142,8 +142,8 @@ export function HowItWorks() {
           text="Create your Chronobox with your wallet."
           art={<WalletArt class="hiw-art" />}
           more={{
-            lead: "Connect any wallet.",
-            text: "The wallet in your browser becomes the only key to your Chronobox. No account, no email, no password.",
+            lead: "Connect your wallet.",
+            text: "Your wallet controls your Chronobox. No account, no email, no password.",
             side: (
               <>
                 <p class="hiw-card-label">Works on</p>
@@ -197,7 +197,7 @@ export function HowItWorks() {
                   {["ETH", "USDC", "USDT", "DAI", "WBTC", "wstETH"].map((symbol) => (
                     <li key={symbol}>{symbol}</li>
                   ))}
-                  <li class="hiw-chip-quiet">and every other token</li>
+                  <li class="hiw-chip-quiet">and other ERC-20 tokens</li>
                 </ul>
               </>
             ),
@@ -211,7 +211,7 @@ export function HowItWorks() {
           more={{
             lead: "A stolen key is not enough.",
             text: "A person who has your wallet still has to wait. That is your time to act.",
-            side: <Ticks lines={["Every withdrawal waits the full time.", "You can cancel it until the wait ends.", "Withdrawals go back to your wallet."]} />,
+            side: <Ticks lines={["Every withdrawal waits the full time.", "You can cancel it until the wait ends.", "This app sends withdrawals back to your wallet."]} />,
           }}
         />
         <Step

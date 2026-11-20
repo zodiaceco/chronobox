@@ -1064,8 +1064,8 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       title="Hand over to another wallet"
       lead={
         guard
-          ? "The new wallet becomes the key of this Chronobox. This wallet can then do nothing."
-          : `After ${wait}, the new wallet is the only key. This wallet can then do nothing.${props.canCancel ? " You can cancel while it waits." : ""}`
+          ? "The new wallet then controls this Chronobox. This wallet can then do nothing."
+          : `After ${wait}, the new wallet controls this Chronobox. This wallet can then do nothing.${props.canCancel ? " You can cancel while it waits." : ""}`
       }
       busy={action.busy !== null && !action.slow}
       onClose={props.onClose}
@@ -1091,7 +1091,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       <Choice
         role="checkbox"
         on={sure}
-        title="I checked the address, and I hold its key."
+        title="I checked the address, and I control this wallet."
         text="If it is wrong, the money in this Chronobox is gone."
         disabled={!!action.busy}
         onClick={() => setSure(!sure)}
@@ -1099,7 +1099,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       {guard && mode === "together" && !inspection.councilMade ? (
-        <p class="hint">The first time, your wallet sets up the shared key of you and your guardian. That is one transaction.</p>
+        <p class="hint">The first time, your wallet sets up a Safe that needs both you and your guardian. That is one transaction.</p>
       ) : null}
       <div class="modal-actions">
         {guard && mode === "together" ? (

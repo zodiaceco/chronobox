@@ -235,7 +235,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         </li>
         <li>
           <Tick />
-          <strong>No data</strong>
+          <strong>No data collected</strong>
         </li>
         <li>
           <Tick />
