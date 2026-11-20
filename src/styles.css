@@ -3237,3 +3237,16 @@ img.token-icon {
 .queue-head .mark {
   color: var(--fg);
 }
+
+/* The assets of a group of unlocks, each with its icon */
+
+.queue-lines {
+  padding-left: 0;
+  gap: 6px;
+}
+
+.queue-lines li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}

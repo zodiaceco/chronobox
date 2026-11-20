@@ -41,7 +41,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { assertWallet, errorText, sendBatch } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, WaitBar, type Waiting, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, TokenBadge, WaitBar, type Waiting, useAction } from "./common.tsx";
 import { Dial } from "./logo.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
@@ -713,13 +713,16 @@ export function QueueCard(props: {
   }, [token, known, props.rpc]);
 
   const { title, warning, finish, flagged } = describe(action, props.assets, tokens);
+  // What moves, when the item moves an asset: it gets the icon of that asset. Anything else gets the mark.
+  const moves = action && (action.kind === "withdraw" || action.kind === "transfer-elsewhere");
+  const asset = moves ? (props.assets.find((a) => (token === null ? a.token === null : sameAddress(a.token, token))) ?? (token ? tokens[token.toLowerCase()] : undefined)) : undefined;
   const progress = Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(props.cooldown || 1n)));
 
   return (
     <li class={`queue-item queue-${status.phase}${warning ? " queue-warning" : ""}`}>
       <div class="queue-main">
         <span class="queue-head">
-          <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />
+          {asset ? <TokenBadge asset={asset} /> : <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />}
           <strong class="queue-title">{title}</strong>
         </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
@@ -787,14 +790,19 @@ function GroupCard(props: {
   return (
     <li class={`queue-item queue-${status.phase}`}>
       <div class="queue-main">
-        <span class="queue-head">
-          <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />
-          <strong class="queue-title">Unlock {items.length} assets</strong>
-        </span>
+        <strong class="queue-title">Unlock {items.length} assets</strong>
         <ul class="queue-lines">
-          {items.map((item) => (
-            <li key={String(item.nonce)}>{describe(classify(item.tx!, props.vault), props.assets, {}).title.replace(/^Unlock /, "")}</li>
-          ))}
+          {items.map((item) => {
+            const action = classify(item.tx!, props.vault);
+            const token = action.kind === "withdraw" ? action.token : null;
+            const asset = props.assets.find((a) => (token === null ? a.token === null : sameAddress(a.token, token)));
+            return (
+              <li key={String(item.nonce)}>
+                {asset ? <TokenBadge asset={asset} /> : null}
+                {describe(action, props.assets, {}).title.replace(/^Unlock /, "")}
+              </li>
+            );
+          })}
         </ul>
         {status.phase === "waiting" ? (
           <>
