@@ -16,7 +16,10 @@ import { Mark } from "./logo.tsx";
 // The film and its poster get a tag in their address. A new film has a new address, so no browser shows an old copy.
 // In the dev build the tag is new on every page load.
 const FILM_TAG = __DEV__ ? String(Date.now()) : __FILM__;
-const FILM = `./chronobox-film.mp4?v=${FILM_TAG}`;
+// Two sizes of the same film. A large screen gets the larger one, which stays sharp there and when the film
+// fills the screen. Every other screen gets 1920 x 1080, which every phone can play.
+const LARGE_SCREEN = typeof screen !== "undefined" && Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1) >= 2200;
+const FILM = `./chronobox-film${LARGE_SCREEN ? "-1440" : ""}.mp4?v=${FILM_TAG}`;
 const POSTER = `./chronobox-film-poster.jpg?v=${FILM_TAG}`;
 
 type Row = { chain: Chain; safe: Address; title: string; note: string };
@@ -261,7 +264,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           <video class="film" src={FILM} poster={POSTER} controls autoplay playsinline />
         ) : (
           <button type="button" class="film film-poster" aria-label="Play the film" onClick={() => setFilm(true)}>
-            <img src={POSTER} alt="" width="1280" height="720" loading="lazy" />
+            <img src={POSTER} alt="" width="1920" height="1080" loading="lazy" />
             <span class="film-play">
               <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
                 <path d="M8 5v14l11-7z" fill="currentColor" />
