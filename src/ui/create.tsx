@@ -6,7 +6,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
-import { formatAmount, formatDuration, parseUnits } from "../lib/format.ts";
+import { formatAmount, formatDuration, parseUnits, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
 import { blockHints, rememberVault } from "../lib/store.ts";
 import {
@@ -460,13 +460,13 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     );
   } else if (current === "promises") {
     screen = (
-      <Screen title="Two promises to yourself" lead="Chronobox is simple because it has no back door. Tap each one when you mean it.">
+      <Screen title="Two promises to yourself" lead="Chronobox has no back door, and it gives you nothing new to store. Tap each one when you mean it.">
         <div class="wiz-list">
           <Choice
             role="checkbox"
             on={keepSafe}
-            title="I will keep this wallet safe."
-            text="It is the only key. If I lose it, the money in my Chronobox is gone."
+            title="I will keep control of the wallet I connected."
+            text={`Chronobox gives me no new key and no new password. My wallet ${shortAddress(session.account)} is the only way in. If I lose access to it, the money in my Chronobox is gone.`}
             onClick={() => setKeepSafe(!keepSafe)}
           />
           <Choice
@@ -534,7 +534,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             <dd>{delayText}</dd>
           </div>
           <div>
-            <dt>Your wallet, the only key</dt>
+            <dt>Your connected wallet, the only key</dt>
             <dd class="mono">
               <AddressText address={session.account} full />
             </dd>
