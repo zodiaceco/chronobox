@@ -2854,6 +2854,16 @@ button.row-strong:hover .row-hint {
   text-wrap: pretty;
 }
 
+/* In the header it sits in the top right corner of the page, not of the narrow column.
+ * The shell is the positioned parent, so this is the corner of the window. */
+@media (min-width: 900px) {
+  .top > .experimental {
+    position: absolute;
+    top: 18px;
+    right: 20px;
+  }
+}
+
 @media (max-width: 560px) {
   /* The text goes under the tag here, so the box is even on all sides. */
   .experimental {
