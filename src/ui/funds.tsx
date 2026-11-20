@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
-import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
+import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
 import { type Address, sameAddress } from "../lib/hex.ts";
 import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
 import { findCoinPrice, findTokens, lookupServices, publicRpc, withFallback } from "../lib/lookup.ts";
@@ -513,7 +513,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         </Notice>
       ) : null}
       {loose.length > 0 && fresh ? (
-        <Notice kind="risk" title={`${loose.map((l) => `${formatAmount(l.amount, l.asset.decimals, 6)} ${l.asset.symbol}`).join(", ")} is not locked yet.`}>
+        <Notice kind="risk" title={`${loose.map((l) => `${shortAmount(l.amount, l.asset.decimals)} ${l.asset.symbol}`).join(", ")} is not locked yet.`}>
           It sits at the address of your Chronobox, but the time lock is not on. Until it is, whoever holds your wallet can take it at once.{" "}
           <button type="button" class="link-button" onClick={() => setSheet("lock")}>
             Switch on the time lock
@@ -806,9 +806,11 @@ function FundRow(props: {
   const clamp = (value: bigint) => (value < lo ? lo : value > hi ? hi : value);
   const choice = clamp(target);
   const delta = choice - L;
-  const show = (value: bigint | null) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 1000n * 10n ** BigInt(asset.decimals) ? 2 : 4));
+  // A short form in the list, so that every amount fits its column. The exact amount is in the tooltip.
+  const show = (value: bigint | null) => (value === null ? "–" : shortAmount(value, asset.decimals, value >= 1000n * 10n ** BigInt(asset.decimals) ? 2 : 4));
+  const exact = (value: bigint | null) => (value === null ? undefined : `${formatAmount(value, asset.decimals, asset.decimals)} ${asset.symbol}`);
   const part = (value: bigint) => (all > 0n ? Number((value * 1000n) / all) : 0);
-  const moved = `${formatAmount(delta < 0n ? -delta : delta, asset.decimals, 6)} ${asset.symbol}`;
+  const moved = `${shortAmount(delta < 0n ? -delta : delta, asset.decimals)} ${asset.symbol}`;
   const known = props.inWallet !== null && props.inBox !== null;
 
   const name = (
@@ -825,12 +827,16 @@ function FundRow(props: {
     return (
       <button type="button" class="funds-row funds-row-button" aria-expanded="false" disabled={!known || all === 0n} onClick={props.onToggle}>
         <span class="funds-asset">{name}</span>
-        <span class="funds-num">{show(known ? U : null)}</span>
-        <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"}>
+        <span class="funds-num" title={exact(known ? U : null)}>
+          {show(known ? U : null)}
+        </span>
+        <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"} title={exact(known ? L : null)}>
           {show(known ? L : null)}
           {L > 0n ? <LockIcon /> : null}
         </span>
-        <span class="funds-num funds-total">{show(known ? all : null)}</span>
+        <span class="funds-num funds-total" title={exact(known ? all : null)}>
+          {show(known ? all : null)}
+        </span>
       </button>
     );
   }
@@ -845,7 +851,9 @@ function FundRow(props: {
         </button>
         <EditCell label={`${asset.symbol} that stays unlocked`} value={U - delta} decimals={asset.decimals} onValue={(value) => setTarget(clamp(all - value))} />
         <EditCell label={`${asset.symbol} that is locked`} value={L + delta} decimals={asset.decimals} locked onValue={(value) => setTarget(clamp(value))} />
-        <span class="funds-num funds-total">{show(all)}</span>
+        <span class="funds-num funds-total" title={exact(all)}>
+          {show(all)}
+        </span>
       </div>
       <div class="mover">
         <div class="mover-bar">
@@ -885,7 +893,7 @@ function FundRow(props: {
         </div>
         {waiting > 0n ? (
           <p class="mover-note">
-            {formatAmount(waiting, asset.decimals, 6)} {asset.symbol} of this is unlocking: the striped part.{" "}
+            {shortAmount(waiting, asset.decimals)} {asset.symbol} of this is unlocking: the striped part.{" "}
             {props.onRelock ? (
               <button type="button" class="link-button" onClick={props.onRelock}>
                 Keep it locked instead
@@ -895,7 +903,7 @@ function FundRow(props: {
         ) : null}
         {ready > 0n ? (
           <p class="mover-note mover-note-ready">
-            {formatAmount(ready, asset.decimals, 6)} {asset.symbol} is unlocked and waits to be collected below. Collect it before you lock it again.
+            {shortAmount(ready, asset.decimals)} {asset.symbol} is unlocked and waits to be collected below. Collect it before you lock it again.
           </p>
         ) : null}
         <div class="mover-actions">
@@ -950,7 +958,7 @@ function Picker(props: { assets: Asset[]; available: (bigint | null)[]; entries:
               <TokenBadge asset={asset} />
               <span class="picker-name">
                 <strong>{asset.symbol}</strong>
-                <small>{available[index] === null ? "" : `${formatAmount(available[index]!, asset.decimals, 6)} available`}</small>
+                <small>{available[index] === null ? "" : `${shortAmount(available[index]!, asset.decimals)} available`}</small>
               </span>
             </button>
             {entry ? (
@@ -1022,10 +1030,10 @@ function UnlockManySheet(props: {
   const problem = parsed.some((p) => p.amount === null || p.amount === 0n)
     ? "Enter each amount as a plain number above zero, for example 1000 or 1.5."
     : over
-      ? `You can unlock up to ${formatAmount(available[over.index] ?? 0n, over.asset.decimals, 6)} ${over.asset.symbol}.`
+      ? `You can unlock up to ${shortAmount(available[over.index] ?? 0n, over.asset.decimals)} ${over.asset.symbol}.`
       : null;
   const delayText = formatDuration(inspection.cooldown);
-  const listText = lines.map((l) => `${formatAmount(l.amount, l.asset.decimals, 6)} ${l.asset.symbol}`).join(", ");
+  const listText = lines.map((l) => `${shortAmount(l.amount, l.asset.decimals)} ${l.asset.symbol}`).join(", ");
 
   const submit = () =>
     action.run("queue", async (waiting) => {
@@ -1239,11 +1247,11 @@ function LockSheet(props: {
     : tooMuch
       ? tooMuch.index === 0 && tooMuch.amount <= (props.wallet[0] ?? 0n)
         ? `Leave some ${tooMuch.asset.symbol} unlocked for the network fee${contribution ? " and your contribution" : ""}.`
-        : `Your wallet has only ${formatAmount(props.wallet[tooMuch.index]!, tooMuch.asset.decimals, 6)} ${tooMuch.asset.symbol}.`
+        : `Your wallet has only ${shortAmount(props.wallet[tooMuch.index]!, tooMuch.asset.decimals)} ${tooMuch.asset.symbol}.`
       : null;
   const nothing = lines.length === 0;
   const ready = !amountProblem && !cooldownProblem && !giveProblem && (first ? agreed && (!nothing || props.loose) : !nothing);
-  const listText = (list: Line[]) => list.map((l) => `${formatAmount(l.amount, l.asset.decimals, 6)} ${l.asset.symbol}`).join(", ");
+  const listText = (list: Line[]) => list.map((l) => `${shortAmount(l.amount, l.asset.decimals)} ${l.asset.symbol}`).join(", ");
 
   /** The most of an asset that can be locked: all of it, less what the wallet needs for the fee and the contribution. */
   const most = (index: number): bigint => {
@@ -1313,7 +1321,7 @@ function LockSheet(props: {
       const held = (await readBalances(rpc, session.account, involved.map((i) => assets[i]))).balances;
       for (const line of todo) {
         const has = held[involved.indexOf(line.index)];
-        if (has !== null && line.amount > has) throw new Error(`Your wallet has only ${formatAmount(has, line.asset.decimals, 6)} ${line.asset.symbol}.`);
+        if (has !== null && line.amount > has) throw new Error(`Your wallet has only ${shortAmount(has, line.asset.decimals)} ${line.asset.symbol}.`);
       }
       const coin = todo.find((l) => l.index === 0)?.amount ?? 0n;
       if (held[0] !== null && !batch) {
@@ -1322,7 +1330,7 @@ function LockSheet(props: {
           throw new Error(`Leave some ${assets[0].symbol} unlocked for the network fee${give ? " and your contribution" : ""}. Lock less, or choose a lower contribution.`);
         }
       } else if (held[0] !== null && coin + (give?.amount ?? 0n) > held[0]) {
-        throw new Error(`Your wallet has only ${formatAmount(held[0], 18, 6)} ${assets[0].symbol}.`);
+        throw new Error(`Your wallet has only ${shortAmount(held[0], 18)} ${assets[0].symbol}.`);
       }
       for (const line of todo) {
         if (!line.asset.token) continue;
@@ -1428,7 +1436,7 @@ function LockSheet(props: {
             // A token can report success and still not move the money, or keep a part as a fee. Its own events say what arrived.
             const arrived = arrivedInReceipt(receipt, line.asset.token, safe);
             if (arrived === 0n) notes.current.push(`${line.asset.symbol} did not move: the token reported success, but nothing arrived.`);
-            else if (arrived + 2n < line.amount) notes.current.push(`${formatAmount(arrived, line.asset.decimals, 6)} ${line.asset.symbol} arrived. The token kept the rest.`);
+            else if (arrived + 2n < line.amount) notes.current.push(`${shortAmount(arrived, line.asset.decimals)} ${line.asset.symbol} arrived. The token kept the rest.`);
           }
         }
       }

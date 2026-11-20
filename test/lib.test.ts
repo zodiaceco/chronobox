@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { call, decode, encode, selector } from "../src/lib/abi.ts";
 import { calendarFile } from "../src/lib/ics.ts";
-import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
+import { formatAmount, formatDuration, formatUnits, parseUnits, shortAmount } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
 import { CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
 
@@ -57,6 +57,15 @@ test("amounts are exact", () => {
   assert.equal(formatAmount(1_234_567_890_000n, 6), "1,234,567.89");
   assert.equal(formatAmount(1n, 18), "< 0.000001");
   assert.equal(formatAmount(0n, 18), "0");
+  // A huge amount is shown short, and never as more than it is.
+  assert.equal(shortAmount(999_999_999_999n, 6), "999,999.999999");
+  assert.equal(shortAmount(1_000_000_000_000n, 6), "1.00M");
+  assert.equal(shortAmount(1_239_999_000_000n, 6), "1.23M");
+  assert.equal(shortAmount(45_678_000_000n * 10n ** 6n, 6), "45.6B");
+  assert.equal(shortAmount(789_999_000_000_000n * 10n ** 18n, 18), "789T");
+  assert.equal(shortAmount(1_000_000_000_000_000n * 10n ** 18n, 18), "1.00 × 10¹⁵");
+  assert.equal(shortAmount(2n ** 256n - 1n, 0), "1.15 × 10⁷⁷");
+  assert.equal(shortAmount(1n, 18), "< 0.000001");
 });
 
 test("durations read well", () => {
