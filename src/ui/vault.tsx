@@ -362,6 +362,9 @@ export function QueueSection(props: {
   canCancel: boolean;
   /** The wallet can send several calls as one. Unlocks that were asked for together are then shown, and collected, as one. */
   batch?: boolean;
+  /** The number of an item that the person asked to cancel somewhere else on the page. The question opens here. */
+  askCancel?: bigint | null;
+  onAskedCancel?: () => void;
   refresh: () => void;
 }) {
   const { session, chain, vault, inspection, queue, assets, now, canCancel, refresh } = props;
@@ -430,22 +433,8 @@ export function QueueSection(props: {
     if (props.batch && last && plain(item) && plain(last[0]) && last[0].createdAt === item.createdAt) last.push(item);
     else groups.push([item]);
   }
-  const askCancel = (item: QueueItem) => {
-    cancelAction.clearError();
-    setConfirming(null);
-    setCancelling(item);
-  };
-  // The item in the line that the cancel dialog is about may be gone by now.
-  const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
-  const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
-
-  return (
-    <>
-      {queue.length > 0 ? (
-        <div class="section">
-          <h2>Waiting</h2>
-          <ol class="queue">
-            {groups.map((group) => {
+  /** One card of the line: a single item, or a group that was asked for together. */
+  const card = (group: QueueItem[]) => {
               const item = group[0];
               const index = queue.indexOf(item);
               if (group.length > 1) {
@@ -487,11 +476,45 @@ export function QueueSection(props: {
                   onCancel={canCancel ? () => askCancel(item) : null}
                 />
               );
-            })}
-          </ol>
+  };
+  // What can be collected now comes first, under its own heading. The rest is still on its way.
+  const isReady = (group: QueueItem[]) => itemStatus(group[0], inspection.cooldown, inspection.expiration, now).phase === "ready";
+  const ready = groups.filter(isReady);
+  const others = groups.filter((group) => !isReady(group));
+  const askCancel = (item: QueueItem) => {
+    cancelAction.clearError();
+    setConfirming(null);
+    setCancelling(item);
+  };
+  useEffect(() => {
+    if (props.askCancel === null || props.askCancel === undefined) return;
+    const item = queue.find((q) => q.nonce === props.askCancel);
+    if (item) askCancel(item);
+    props.onAskedCancel?.();
+  }, [props.askCancel]);
+  // The item in the line that the cancel dialog is about may be gone by now.
+  const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
+  const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
+
+  return (
+    <>
+      {ready.length > 0 ? (
+        <div class="section">
+          <h2>Unlocked, ready to collect</h2>
+          <ol class="queue">{ready.map(card)}</ol>
+        </div>
+      ) : null}
+      {others.length > 0 ? (
+        <div class="section">
+          <h2>Unlocking</h2>
+          <ol class="queue">{others.map(card)}</ol>
+        </div>
+      ) : null}
+      {queue.length > 0 ? (
+        <>
           <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
-        </div>
+        </>
       ) : null}
       {cancelling ? (
         <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
@@ -499,7 +522,7 @@ export function QueueSection(props: {
             <>
               <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}).title}</p>
               <p>
-                Nothing moves. Your money stays locked.
+                Nothing moves. The money stays locked, and it is no longer on its way out.
                 {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
               </p>
               <SlowNote action={cancelAction} />

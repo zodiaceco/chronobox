@@ -3023,3 +3023,30 @@ h2,
 .funds-row {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1.15fr);
 }
+
+/* Four columns: asset, unlocked, locked, total */
+
+.funds-row {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 10px;
+  padding: 0 16px;
+}
+
+.funds-locked {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.funds-total {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.funds-num {
+  font-size: 1rem;
+}
+
+.mover-ready {
+  fill: var(--good-line);
+}

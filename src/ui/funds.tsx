@@ -315,6 +315,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   // The amount that was chosen in a row of the list, for the sheet that carries it out.
   const [presetAmount, setPresetAmount] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  // The item in the line that the person wants to cancel from a row of the list.
+  const [askCancel, setAskCancel] = useState<bigint | null>(null);
   const [reserve, setReserve] = useState<bigint | null>(null);
   useEffect(() => {
     let stale = false;
@@ -419,6 +421,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const anyLocked = mine && box.some((b) => (b ?? 0n) > 0n);
   // What is on its way out, by asset: asked for and not collected yet.
   const pendingOf = new Map<string, Pending>();
+  // The last waiting item of each asset. A cancel takes an item and every item before it, so this one takes all of the asset's.
+  const lastWaiting = new Map<string, bigint>();
   if (vault) {
     for (const item of queue) {
       if (!item.tx) continue;
@@ -427,12 +431,13 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       const action = classify(item.tx, vault);
       if (action.kind !== "withdraw") continue;
       const key = action.token?.toLowerCase() ?? "native";
-      const before = pendingOf.get(key);
-      pendingOf.set(key, {
-        amount: (before?.amount ?? 0n) + action.amount,
-        readyAt: before && before.readyAt > status.readyAt ? before.readyAt : status.readyAt,
-        ready: (before?.ready ?? true) && status.phase === "ready",
-      });
+      const before = pendingOf.get(key) ?? { waiting: 0n, ready: 0n };
+      if (status.phase === "ready") before.ready += action.amount;
+      else {
+        before.waiting += action.amount;
+        lastWaiting.set(key, item.nonce);
+      }
+      pendingOf.set(key, before);
     }
   }
   /** The most of an unlocked balance that can be locked from a row: the coin keeps what the next steps cost. */
@@ -497,16 +502,17 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
           <span>Asset</span>
           <span>Unlocked</span>
           <span>Locked</span>
+          <span>Total</span>
         </div>
         {rows.map((r) => (
           <FundRow
             key={keyOf(r.asset)}
             asset={r.asset}
             note={[r.usd !== null ? dollars(r.usd) : "", r.asset.found && r.asset.token ? shortAddress(r.asset.token) : ""].filter(Boolean).join(" · ") || null}
-            unlocked={r.unlocked}
-            locked={r.locked}
-            pending={pendingOf.get(keyOf(r.asset)) ?? null}
-            now={now}
+            inWallet={r.unlocked}
+            inBox={mine ? box[r.index] : 0n}
+            waiting={pendingOf.get(keyOf(r.asset))?.waiting ?? 0n}
+            ready={pendingOf.get(keyOf(r.asset))?.ready ?? 0n}
             open={openRow === keyOf(r.asset)}
             onToggle={() => setOpenRow(openRow === keyOf(r.asset) ? null : keyOf(r.asset))}
             most={mostOf(r.index)}
@@ -523,6 +529,11 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
               setPresetAmount(formatUnits(value, r.asset.decimals));
               setSheet("unlock");
             }}
+            onRelock={
+              canCancel && lastWaiting.has(keyOf(r.asset))
+                ? () => setAskCancel(lastWaiting.get(keyOf(r.asset))!)
+                : null
+            }
           />
         ))}
       </div>
@@ -578,7 +589,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         ) : null}
       </p>
 
-      {vault ? <QueueSection session={session} chain={chain} vault={vault} inspection={inspection} queue={queue} assets={assets} now={now} canCancel={canCancel} batch={batch} refresh={() => refresh()} /> : null}
+      {vault ? <QueueSection session={session} chain={chain} vault={vault} inspection={inspection} queue={queue} assets={assets} now={now} canCancel={canCancel} batch={batch} askCancel={askCancel} onAskedCancel={() => setAskCancel(null)} refresh={() => refresh()} /> : null}
 
       <ul class="rows">
         {mine ? <Row label="Lock from elsewhere" value={shortAddress(safe)} onClick={verified ? () => setSheet("receive") : undefined} /> : null}
@@ -677,8 +688,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
 }
 
 
-/** What is on its way out of the lock for one asset: asked for, and waiting or ready to be collected. */
-type Pending = { amount: bigint; readyAt: bigint; ready: boolean };
+/** What is on its way out of the lock for one asset: still waiting, and ready to be collected. */
+type Pending = { waiting: bigint; ready: bigint };
 
 /** Where the handle catches when snapping is on: nothing, a quarter, half, three quarters, everything. In thousandths. */
 const SNAPS = [0, 250, 500, 750, 1000];
@@ -733,43 +744,49 @@ function EditCell(props: { label: string; value: bigint; decimals: number; locke
 function FundRow(props: {
   asset: Asset;
   note: string | null;
-  unlocked: bigint | null;
-  locked: bigint | null;
-  pending: Pending | null;
-  now: bigint;
+  /** In the wallet. */
+  inWallet: bigint | null;
+  /** At the address of the Chronobox, whatever its state. */
+  inBox: bigint | null;
+  /** Asked for and still waiting: locked until the wait is over. */
+  waiting: bigint;
+  /** The wait is over: unlocked, and to be collected before it is in the wallet. */
+  ready: bigint;
   open: boolean;
   onToggle: () => void;
-  /** The most of the unlocked amount that can be locked: all of it, less what the wallet needs for fees. */
+  /** The most of the wallet's amount that can be locked: all of it, less what the wallet needs for fees. */
   most: bigint;
   canLock: boolean;
   canUnlock: boolean;
   delayText: string;
   onLock: (amount: bigint) => void;
   onUnlock: (amount: bigint) => void;
+  /** Keep what is unlocking locked after all: cancels it. Null when this wallet cannot cancel. */
+  onRelock: (() => void) | null;
 }) {
-  const { asset, pending, now } = props;
-  const U = props.unlocked ?? 0n;
-  const L = props.locked ?? 0n;
-  const R = pending ? (pending.amount > L ? L : pending.amount) : 0n;
+  const { asset } = props;
+  const W = props.inWallet ?? 0n;
+  const B = props.inBox ?? 0n;
+  const ready = props.ready > B ? B : props.ready;
+  // What the list calls locked and unlocked. Money whose wait is over is unlocked, also before it is collected.
+  const L = B - ready;
+  const U = W + ready;
+  const waiting = props.waiting > L ? L : props.waiting;
   const all = U + L;
   const [target, setTarget] = useState<bigint>(L);
   const [snap, setSnap] = useState(true);
   // The balances are the starting point. When they change, or the row closes, the choice is gone.
   useEffect(() => setTarget(L), [props.open, U, L]);
 
-  const lo = props.canUnlock ? R : L;
-  const hi = props.canLock ? L + (props.most < U ? props.most : U) : L;
+  const lo = props.canUnlock ? waiting : L;
+  const hi = props.canLock ? L + (props.most < W ? props.most : W) : L;
   const clamp = (value: bigint) => (value < lo ? lo : value > hi ? hi : value);
   const choice = clamp(target);
   const delta = choice - L;
-  const show = (value: bigint | null) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 10_000n * 10n ** BigInt(asset.decimals) ? 2 : 6));
+  const show = (value: bigint | null) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 1000n * 10n ** BigInt(asset.decimals) ? 2 : 4));
   const part = (value: bigint) => (all > 0n ? Number((value * 1000n) / all) : 0);
   const moved = `${formatAmount(delta < 0n ? -delta : delta, asset.decimals, 6)} ${asset.symbol}`;
-  const pendingLine = pending
-    ? pending.ready
-      ? `${formatAmount(pending.amount, asset.decimals, 6)} ready to collect`
-      : `${formatAmount(pending.amount, asset.decimals, 6)} unlocking · ${formatDuration(pending.readyAt > now ? pending.readyAt - now : 0n)}`
-    : null;
+  const known = props.inWallet !== null && props.inBox !== null;
 
   const name = (
     <>
@@ -782,33 +799,17 @@ function FundRow(props: {
       </span>
     </>
   );
-  const usable = props.unlocked !== null && props.locked !== null && all > 0n;
 
   if (!props.open) {
     return (
-      <button type="button" class="funds-row funds-row-button" aria-expanded="false" disabled={!usable} onClick={props.onToggle}>
-        <span class="funds-asset">
-          {name}
-        </span>
-        <span class="funds-num">
-          {show(props.unlocked)}
-        </span>
+      <button type="button" class="funds-row funds-row-button" aria-expanded="false" disabled={!known || all === 0n} onClick={props.onToggle}>
+        <span class="funds-asset">{name}</span>
+        <span class="funds-num">{show(known ? U : null)}</span>
         <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"}>
-          <span class="funds-locked-line">
-            {L > 0n ? <LockIcon /> : null}
-            {show(props.locked)}
-          </span>
-          {pendingLine ? (
-            <span class={pending!.ready ? "funds-pending funds-pending-ready" : "funds-pending"}>
-              {pending!.ready ? null : (
-                <svg class="funds-pending-bar" viewBox="0 0 64 6" preserveAspectRatio="none" aria-hidden="true">
-                  <Stripes x={0} width={64} height={6} />
-                </svg>
-              )}
-              {pendingLine}
-            </span>
-          ) : null}
+          {L > 0n ? <LockIcon /> : null}
+          {show(known ? L : null)}
         </span>
+        <span class="funds-num funds-total">{show(known ? all : null)}</span>
       </button>
     );
   }
@@ -823,6 +824,7 @@ function FundRow(props: {
         </button>
         <EditCell label={`${asset.symbol} that stays unlocked`} value={U - delta} decimals={asset.decimals} onValue={(value) => setTarget(clamp(all - value))} />
         <EditCell label={`${asset.symbol} that is locked`} value={L + delta} decimals={asset.decimals} locked onValue={(value) => setTarget(clamp(value))} />
+        <span class="funds-num funds-total">{show(all)}</span>
       </div>
       <div class="mover">
         <div class="mover-bar">
@@ -831,7 +833,8 @@ function FundRow(props: {
             <rect class="mover-locked" x="0" y="0" width={lockedNow} height="14" />
             {delta > 0n ? <rect class="mover-adding" x={lockedNow} y="0" width={chosen - lockedNow} height="14" /> : null}
             {delta < 0n ? <rect class="mover-leaving" x={chosen} y="0" width={lockedNow - chosen} height="14" /> : null}
-            <Stripes x={0} width={part(R)} height={14} />
+            <Stripes x={0} width={part(waiting)} height={14} />
+            {ready > 0n ? <rect class="mover-ready" x={1000 - part(ready)} y="0" width={part(ready)} height="14" /> : null}
             {SNAPS.slice(1, -1).map((at) => (
               <rect class="mover-tick" key={at} x={at - 1} y="0" width="2" height="14" />
             ))}
@@ -859,9 +862,19 @@ function FundRow(props: {
           <span>75%</span>
           <span>All locked</span>
         </div>
-        {pendingLine ? (
-          <p class={pending!.ready ? "mover-note mover-note-ready" : "mover-note"}>
-            {pendingLine}. It is on its way out, so the handle does not go into the striped part.
+        {waiting > 0n ? (
+          <p class="mover-note">
+            {formatAmount(waiting, asset.decimals, 6)} {asset.symbol} of this is unlocking: the striped part.{" "}
+            {props.onRelock ? (
+              <button type="button" class="link-button" onClick={props.onRelock}>
+                Keep it locked instead
+              </button>
+            ) : null}
+          </p>
+        ) : null}
+        {ready > 0n ? (
+          <p class="mover-note mover-note-ready">
+            {formatAmount(ready, asset.decimals, 6)} {asset.symbol} is unlocked and waits to be collected below. Collect it before you lock it again.
           </p>
         ) : null}
         <div class="mover-actions">
@@ -881,7 +894,7 @@ function FundRow(props: {
             Catch at quarters
           </label>
         </div>
-        {!props.canLock && U > 0n ? <p class="mover-note">Locking is not possible right now. See the notice above.</p> : null}
+        {!props.canLock && W > 0n ? <p class="mover-note">Locking is not possible right now. See the notice above.</p> : null}
       </div>
     </div>
   );
