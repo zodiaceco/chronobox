@@ -565,6 +565,19 @@ a:focus-visible {
   color: #fff;
 }
 
+/* The optional step: not joined to the steps before it, and its number is an open "+". */
+.hiw-step + .hiw-step-optional::before {
+  display: none;
+}
+
+.hiw-num-optional,
+.hiw-step.is-open .hiw-num-optional,
+.hiw-card-step .hiw-num-optional {
+  border: 1.5px dashed currentColor;
+  background: transparent;
+  color: var(--blue-text);
+}
+
 .hiw-title {
   display: block;
   font-size: 15px;

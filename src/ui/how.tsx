@@ -23,15 +23,27 @@ type StepProps = {
   art: ComponentChildren;
   /** The card: one sentence in bold and a few words on it, and beside them what is worth knowing. */
   more: { lead: string; text: string; side: ComponentChildren };
+  /** Not part of the setup: no line joins it to the step before, and its number is a "+". */
+  optional?: boolean;
   open: boolean;
   onOpen: (open: boolean, how: "hover" | "toggle") => void;
 };
+
+function Num(props: { n: number; optional?: boolean }) {
+  return props.optional ? (
+    <span class="hiw-num hiw-num-optional" role="img" aria-label="Optional">
+      +
+    </span>
+  ) : (
+    <span class="hiw-num">{props.n}</span>
+  );
+}
 
 function Step(props: StepProps) {
   const id = `hiw-more-${props.n}`;
   return (
     <li
-      class={props.open ? "hiw-step is-open" : "hiw-step"}
+      class={`hiw-step${props.optional ? " hiw-step-optional" : ""}${props.open ? " is-open" : ""}`}
       // Only a mouse hovers. A finger that taps also sends these, and the tap itself then decides.
       onPointerEnter={(event) => event.pointerType === "mouse" && props.onOpen(true, "hover")}
       onPointerLeave={(event) => event.pointerType === "mouse" && props.onOpen(false, "hover")}
@@ -49,7 +61,7 @@ function Step(props: StepProps) {
       >
         {props.art}
         <span class="hiw-copy">
-          <span class="hiw-num">{props.n}</span>
+          <Num n={props.n} optional={props.optional} />
           <span class="hiw-title">{props.title}</span>
           <span class="hiw-text">{props.text}</span>
         </span>
@@ -63,7 +75,7 @@ function Step(props: StepProps) {
             <div class="hiw-card-main">
               {/* In the row the card covers the titles, so it names its step. */}
               <p class="hiw-card-step">
-                <span class="hiw-num">{props.n}</span>
+                <Num n={props.n} optional={props.optional} />
                 {props.title}
               </p>
               <p class="hiw-card-lead">{props.more.lead}</p>
@@ -204,6 +216,7 @@ export function HowItWorks() {
         />
         <Step
           {...step(5)}
+          optional
           title="Add a guardian"
           text="You or a friend can veto, and help you switch wallets."
           art={<GuardianArt class="hiw-art" />}
