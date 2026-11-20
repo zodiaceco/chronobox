@@ -736,7 +736,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             <>
               <div class="wiz-list">
                 <Choice role="checkbox" on={vpn} title="I use a VPN." text="It hides my IP address from Blockscout." onClick={() => setVpn(!vpn)} />
-                <Choice role="checkbox" on={trusts} title="I trust Blockscout not to leak my IP address." onClick={() => setTrusts(!trusts)} />
+                <Choice role="checkbox" on={trusts} title="I trust Blockscout." text="I hope they won't leak my IP address." onClick={() => setTrusts(!trusts)} />
               </div>
               <div class="modal-actions">
                 <Button kind="primary" disabled={!vpn && !trusts} onClick={() => chooseLookup(true)}>
