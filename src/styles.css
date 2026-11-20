@@ -3179,3 +3179,7 @@ img.token-icon {
   background: none;
   object-fit: contain;
 }
+
+.devbar-account select {
+  max-width: 190px;
+}
