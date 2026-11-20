@@ -274,7 +274,10 @@ export function lockTx(
   cooldown: bigint,
   expiration: bigint = EXPIRATION_SECONDS,
   contribution: Contribution | null = null,
+  /** Coin that the wallet sends along and that stays in the Chronobox: locked in the same step that switches the lock on. */
+  keep: bigint = 0n,
 ): TxRequest {
+  if (keep < 0n) throw new Error("The amount must not be negative");
   if (contribution && (contribution.amount <= 0n || sameAddress(contribution.to, safe) || sameAddress(contribution.to, ZERO))) {
     throw new Error("The contribution is not valid");
   }
@@ -300,7 +303,7 @@ export function lockTx(
     { to: delay, data: call("enableModule(address)", [wallet]) },
     { to: safe, data: call("swapOwner(address,address,address)", [SENTINEL, wallet, CONTRACTS.burn]) },
     ...(contribution ? [{ to: contribution.to, data: "0x" as Hex, value: contribution.amount }] : []),
-  ], contribution?.amount ?? 0n);
+  ], (contribution?.amount ?? 0n) + keep);
 }
 
 export type Deposit = { token: Address | null; amount: bigint };
@@ -486,6 +489,8 @@ export type Check = {
   ok: boolean;
   /** True when the check could not be done, for example because the RPC did not return old logs. */
   unknown?: boolean;
+  /** True when the check has not run yet: the caller asked for the quick checks first. */
+  pending?: boolean;
   label: string;
   detail: string;
 };
@@ -520,6 +525,8 @@ export type Inspection = {
   expiration: bigint;
   txNonce: bigint;
   queueNonce: bigint;
+  /** True when the history check was left for later (see `inspect`). The state is then "unverified" for now. */
+  historyPending?: boolean;
 };
 
 /** Remembers in which block a contract was created, so its logs are read from there. */
@@ -706,7 +713,15 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
 /** History checks that passed, per wallet connection (so per network). See where it is used. */
 const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
 
-export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Promise<Inspection> {
+/**
+ * Reads a Chronobox from the chain and checks it.
+ *
+ * Every check but one reads the state of now and takes a moment. The last one reads the event
+ * history of the Roles modifier, which can take long on a wallet's network. With `historyLater`
+ * that one is left out unless its answer is known already: the result comes at once, marked
+ * `historyPending`, and the caller asks again without the option to get the full answer.
+ */
+export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints, options: { historyLater?: boolean } = {}): Promise<Inspection> {
   const result: Inspection = {
     safe,
     state: "invalid",
@@ -886,13 +901,25 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       // changes the members. Only a pass is kept, and only in memory.
       const key = `${safe}:${roles}:${delay}:${controller}:${txNonce}:${result.members.join(",")}`.toLowerCase();
       const kept = passed.get(rpc)?.get(key);
-      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard));
+      const later = !kept && options.historyLater === true;
+      const history = later ? null : (kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard)));
       if (history?.ok && !kept) {
         if (!passed.has(rpc)) passed.set(rpc, new Map());
         passed.get(rpc)!.set(key, history);
       }
       const label = guard ? "Only cancel, and a wallet change by both, do not wait" : "Cancel is the only thing that does not wait";
-      if (history === null) {
+      if (later) {
+        cancelUnknown = true;
+        result.historyPending = true;
+        result.checks.push({
+          id: "cancel-only",
+          ok: false,
+          unknown: true,
+          pending: true,
+          label,
+          detail: "Reading the history of the Roles modifier…",
+        });
+      } else if (history === null) {
         cancelUnknown = true;
         result.checks.push({
           id: "cancel-only",
@@ -1519,55 +1546,93 @@ export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: He
   });
 }
 
-/** How many balances go into one request. Small enough for the read limits of the networks that wallets use. */
-const BALANCES_PER_READ = 100;
+/**
+ * How many balances go into one request, largest first. The reads go through the wallet's own
+ * network, and free networks differ in what they accept: in the gas of one call, in the size of a
+ * request and of an answer, in how many requests they take at once. Fifty balances are about
+ * 1.5 million gas and 11 kB, which the usual free networks take. Where that fails, the same
+ * balances are asked for in smaller and smaller pieces, down to three.
+ */
+const BALANCES_PER_READ = [50, 20, 8, 3] as const;
+/** How many requests of one read are on their way at the same time. A weak network refuses a crowd. */
+const READS_AT_ONCE = 4;
+
+/** The size that worked last on a connection, so that a network with tight limits is not asked the large size every time. */
+const readSize = new WeakMap<Rpc, number>();
 
 export type Balances = {
   /** One entry for each asset. Null where the balance is not known. That is never "nothing". */
   balances: (bigint | null)[];
-  /** False when a combined read failed and only the main assets were read one by one. */
+  /** False when combined reads failed at every size and only the main assets were read one by one. */
   complete: boolean;
+  /** True when the network refused the usual size and smaller pieces had to be used. Everything was read, but slowly. */
+  reduced: boolean;
 };
+
+/** Runs the jobs a few at a time, in order. */
+async function inTurns(jobs: (() => Promise<void>)[]): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) await jobs[next++]();
+  };
+  await Promise.all(Array.from({ length: Math.min(READS_AT_ONCE, jobs.length) }, worker));
+}
 
 /**
  * The balances of one address for a long list of assets, in a few requests.
- * When a combined read fails, the main assets are read one by one, and the
+ * A combined read that fails is tried again in smaller pieces. Where the
+ * smallest piece fails too, the main assets are read one by one, and the
  * others stay "not known".
  */
 export async function readBalances(rpc: Rpc, holder: Address, assets: readonly { token: Address | null; main?: boolean }[]): Promise<Balances> {
   const balances: (bigint | null)[] = assets.map(() => null);
   let complete = true;
-  const groups: number[][] = [];
-  for (let i = 0; i < assets.length; i += BALANCES_PER_READ) groups.push(assets.slice(i, i + BALANCES_PER_READ).map((_, k) => i + k));
-  await Promise.all(
-    groups.map(async (group) => {
-      try {
-        const answers = await readMany(
-          rpc,
-          group.map((i) => {
-            const token = assets[i].token;
-            return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
-          }),
-        );
-        group.forEach((i, k) => {
-          const answer = answers[k];
-          // An address with no token behind it answers with nothing. That is not a balance of zero.
-          balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
-        });
-      } catch {
-        complete = false;
-        await Promise.all(
-          group
-            .filter((i) => assets[i].main)
-            .map(async (i) => {
-              const token = assets[i].token;
-              balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
-            }),
-        );
-      }
-    }),
-  );
-  return { balances, complete };
+  const combined = async (group: number[]) => {
+    const answers = await readMany(
+      rpc,
+      group.map((i) => {
+        const token = assets[i].token;
+        return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+      }),
+    );
+    group.forEach((i, k) => {
+      const answer = answers[k];
+      // An address with no token behind it answers with nothing. That is not a balance of zero.
+      balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
+    });
+  };
+  const oneByOne = async (group: number[]) => {
+    complete = false;
+    await inTurns(
+      group
+        .filter((i) => assets[i].main)
+        .map((i) => async () => {
+          const token = assets[i].token;
+          balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
+        }),
+    );
+  };
+  /** Reads a group at one size. What fails goes on to the next smaller size, and after the smallest to single reads. */
+  const read = async (group: number[], step: number): Promise<void> => {
+    if (step >= BALANCES_PER_READ.length) return oneByOne(group);
+    const per = BALANCES_PER_READ[step];
+    const pieces: number[][] = [];
+    for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
+    await inTurns(
+      pieces.map((piece) => async () => {
+        try {
+          await combined(piece);
+          // Only a read that was really cut to this size says something about the network.
+          if (group.length > per && step > 0) readSize.set(rpc, per);
+        } catch {
+          await read(piece, step + 1);
+        }
+      }),
+    );
+  };
+  const start = BALANCES_PER_READ.findIndex((per) => per === readSize.get(rpc));
+  await read(assets.map((_, i) => i), start < 0 ? 0 : start);
+  return { balances, complete, reduced: complete && readSize.has(rpc) };
 }
 
 /** Reads symbol and decimals of a token. Returns null when the address is not an ERC-20 token. */

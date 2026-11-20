@@ -138,8 +138,8 @@ export function HowItWorks() {
       <ol>
         <Step
           {...step(1)}
-          title="Set up"
-          text="Create your Chronobox with your wallet."
+          title="Connect"
+          text="Connect your wallet. There is nothing to set up."
           art={<WalletArt class="hiw-art" />}
           more={{
             lead: "Connect your wallet.",
@@ -161,36 +161,12 @@ export function HowItWorks() {
         />
         <Step
           {...step(2)}
-          title="Set the delay"
-          text="Choose how long every withdrawal must wait."
-          art={<DelayArt class="hiw-art" />}
-          more={{
-            lead: "You choose the wait.",
-            text: "Every withdrawal waits this long. You can change it later, and that change waits too.",
-            side: (
-              <>
-                <dl class="hiw-times">
-                  <dt>12 hours</dt>
-                  <dd>Overnight</dd>
-                  <dt>1 day</dt>
-                  <dd>A good start</dd>
-                  <dt>1 week</dt>
-                  <dd>The strongest of the three</dd>
-                  <dt>Your own</dt>
-                  <dd>From 1 hour to 90 days</dd>
-                </dl>
-              </>
-            ),
-          }}
-        />
-        <Step
-          {...step(3)}
-          title="Deposit"
-          text="Send money to your Chronobox."
+          title="Lock"
+          text="Choose the money that should not leave in a hurry."
           art={<DepositArt class="hiw-art" />}
           more={{
-            lead: "Any token, from anywhere.",
-            text: "Your Chronobox has its own address. Send to it from a wallet or an exchange, as often as you like.",
+            lead: "Any token, as often as you like.",
+            text: "Lock what you hold in your wallet. The first lock creates your Chronobox, and what stays in your wallet stays free.",
             side: (
               <>
                 <ul class="hiw-chips">
@@ -204,6 +180,30 @@ export function HowItWorks() {
           }}
         />
         <Step
+          {...step(3)}
+          title="Unlocking waits"
+          text="You choose how long. Nobody can make it faster."
+          art={<DelayArt class="hiw-art" />}
+          more={{
+            lead: "You choose the wait.",
+            text: "Every unlock waits this long. You can change it later, and that change waits too.",
+            side: (
+              <>
+                <dl class="hiw-times">
+                  <dt>1 day</dt>
+                  <dd>A good start</dd>
+                  <dt>2 days</dt>
+                  <dd>What most people take</dd>
+                  <dt>1 week</dt>
+                  <dd>The strongest of the three</dd>
+                  <dt>Your own</dt>
+                  <dd>From 1 hour to 90 days</dd>
+                </dl>
+              </>
+            ),
+          }}
+        />
+        <Step
           {...step(4)}
           title="Peace of mind"
           text="Nobody can take it in a hurry."
@@ -211,7 +211,7 @@ export function HowItWorks() {
           more={{
             lead: "A stolen key is not enough.",
             text: "A person who has your wallet still has to wait. That is your time to act.",
-            side: <Ticks lines={["Every withdrawal waits the full time.", "You can cancel it until the wait ends.", "This app sends withdrawals back to your wallet."]} />,
+            side: <Ticks lines={["Every unlock waits the full time.", "You can cancel it until the wait ends.", "What you unlock goes back to your wallet."]} />,
           }}
         />
         <Step
@@ -225,7 +225,7 @@ export function HowItWorks() {
             text: "Optional. Your own second device, or the wallet of a person you trust. You add it later, from your Chronobox.",
             side: (
               <>
-                <Ticks lines={["Can stop a withdrawal at once.", "Helps you move to a new wallet without the wait.", "Can never withdraw."]} />
+                <Ticks lines={["Can stop an unlock at once.", "Helps you move to a new wallet without the wait.", "Can never unlock."]} />
               </>
             ),
           }}

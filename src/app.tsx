@@ -5,9 +5,10 @@ import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
-import { CreatePage } from "./ui/create.tsx";
+import { DevBar } from "./ui/devbar.tsx";
+import { FundsPage } from "./ui/funds.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
-import { StartPage, vaultHref } from "./ui/start.tsx";
+import { StartPage } from "./ui/start.tsx";
 import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
@@ -15,7 +16,6 @@ import { VaultPage } from "./ui/vault.tsx";
 /** `swapTo`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner asks for. */
 type Route =
   | { page: "start" }
-  | { page: "new" }
   | { page: "technical" }
   | { page: "privacy" }
   | { page: "terms" }
@@ -30,7 +30,8 @@ const UPDATED = buildChanged(BUILD);
 function parseRoute(hash: string): Route {
   const path = hash.replace(/^#/, "");
   if (path === "" || path === "/" || !path.startsWith("/")) return { page: "start" };
-  if (path === "/new") return { page: "new" };
+  // The address of the setup that an earlier version had. There is no setup now.
+  if (path === "/new") return { page: "start" };
   if (path === "/technical") return { page: "technical" };
   if (path === "/privacy") return { page: "privacy" };
   if (path === "/terms") return { page: "terms" };
@@ -154,8 +155,34 @@ export function App() {
   const chain = useMemo(() => (session ? chainById(session.chainId) : undefined), [session?.chainId]);
 
   let body;
-  if (route.page === "start") {
-    body = <StartPage session={session} chain={chain} onConnect={() => setConnectOpen(true)} />;
+  const networks = (target: Chain | undefined) =>
+    CHAINS.filter((c) => (!c.testnet || __DEV__) && c.id !== target?.id).map((c) => (
+      <Button
+        key={c.id}
+        onClick={() => {
+          setSwitchError(null);
+          switchChain(session!.wallet.provider, c).catch((e) => {
+            if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${c.name} in your wallet itself.`);
+          });
+        }}
+      >
+        {c.name}
+      </Button>
+    ));
+  if (route.page === "start" && !session) {
+    body = <StartPage onConnect={() => setConnectOpen(true)} />;
+  } else if (route.page === "start" && session && !chain) {
+    body = (
+      <section class="page page-center">
+        <h1>Chronobox does not work on the network of your wallet.</h1>
+        <p class="lead">Choose one of these.</p>
+        <div class="page-actions">{networks(undefined)}</div>
+        {switchError ? <Notice kind="bad">{switchError}</Notice> : null}
+      </section>
+    );
+  } else if (route.page === "start" && session && chain) {
+    // Another account or another network is another list of funds.
+    body = <FundsPage key={`${chain.id}:${session.account}`} session={session} chain={chain} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
   } else if (route.page === "privacy") {
@@ -176,29 +203,17 @@ export function App() {
         </div>
       </section>
     );
-  } else if (!session) {
+  } else if (!session || route.page === "start") {
     body = (
       <section class="page page-center">
-        <h1>{route.page === "new" ? "First, connect your wallet." : "Connect your wallet to open this Chronobox."}</h1>
-        <p class="lead">
-          {route.page === "new" ? "It will control your Chronobox." : "Chronobox has no server. It reads everything through your wallet."}
-        </p>
+        <h1>Connect your wallet to open this Chronobox.</h1>
+        <p class="lead">Chronobox has no server. It reads everything through your wallet.</p>
         <div class="page-actions">
           <Button kind="primary" onClick={() => setConnectOpen(true)}>
             Connect wallet
           </Button>
         </div>
       </section>
-    );
-  } else if (route.page === "new") {
-    body = (
-      <CreatePage
-        session={session}
-        chain={chain}
-        onDone={(c, safe) => {
-          location.hash = vaultHref(c, safe);
-        }}
-      />
     );
   } else if (route.chain.id !== session.chainId) {
     const target = route.chain;
@@ -263,7 +278,7 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
+          <a href="#/technical">How it protects me and my funds</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
           <span title="Version and build of the code that runs now. Build the same commit to compare.">
             {" "}
             · v{__VERSION__} · {BUILD}
@@ -272,9 +287,10 @@ export function App() {
         </span>
       </footer>
       <div class="horizon" aria-hidden="true" />
+      {__DEV__ ? <DevBar /> : null}
 
       {connectOpen ? (
-        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "It will control your Chronobox."} onClose={() => setConnectOpen(false)}>
+        <Modal title="Connect your wallet" lead={wallets.length === 0 ? undefined : "Chronobox shows its funds. This wallet controls what you lock."} onClose={() => setConnectOpen(false)}>
           {wallets.length === 0 ? (
             <p>
               There is no wallet in this browser yet. Add one, such as Rabby or MetaMask, or open this page inside your wallet app. Then

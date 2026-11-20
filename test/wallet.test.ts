@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
-import { CONTRACTS } from "../src/lib/chains.ts";
-import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, sendBatch } from "../src/lib/wallet.ts";
+import { readFileSync } from "node:fs";
+import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
+import { parseTokenList, plainPrice, plainSymbol } from "../src/lib/lookup.ts";
+import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, canBatch, sendBatch } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const B = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -197,6 +199,24 @@ test("a batch is not sent twice, and an unknown outcome is not called a failure"
   assert.equal(sent.atomicRequired, true);
 });
 
+test("only a wallet that can batch today gets the setup in one confirmation", async () => {
+  const answers = (answer: unknown) => provider({ wallet_getCapabilities: () => answer });
+  // EIP-5792 as it is now, and the first draft of it.
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "supported" } } }), A as any, 1), true);
+  assert.equal(await canBatch(answers({ "0x1": { atomicBatch: { supported: true } } }), A as any, 1), true);
+  // The answer is for this network only.
+  assert.equal(await canBatch(answers({ "0x2105": { atomic: { status: "supported" } } }), A as any, 1), false);
+  // A plain account that the wallet would first turn into a smart account takes two confirmations.
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "ready" } } }), A as any, 1), false);
+  assert.equal(await canBatch(answers({ "0x1": { atomic: { status: "unsupported" } } }), A as any, 1), false);
+  assert.equal(await canBatch(answers(null), A as any, 1), false);
+  // A wallet that does not know the method, and the question as it is asked.
+  assert.equal(await canBatch(provider({}), A as any, 1), false);
+  let asked: any[] = [];
+  await canBatch(provider({ wallet_getCapabilities: (params) => ((asked = params), {}) }), A as any, 8453);
+  assert.deepEqual(asked, [A, ["0x2105"]]);
+});
+
 test("errors reach the person in plain words", () => {
   const plain = (code: number | undefined, message: string) => errorText(code === undefined ? new Error(message) : rpcError(code, message));
   assert.match(plain(4001, "MetaMask Tx Signature: User denied transaction signature."), /You rejected/);
@@ -227,4 +247,30 @@ test("a Chronobox cannot be handed to an address that nobody can sign with", () 
   for (const dead of [safe, delay, roles, CONTRACTS.burn, A, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000001"]) {
     assert.equal(changeWalletTx(delay, A as any, dead as any, roles, safe), null, dead);
   }
+});
+
+test("the page may talk to the index only, and takes nothing from it on trust", async () => {
+  // The page may talk to exactly the hosts of the index. The policy in index.html names each of them.
+  const policy = /connect-src ([^;]+);/.exec(readFileSync(new URL("../src/index.html", import.meta.url), "utf8"))![1].split(" ");
+  const wanted = CHAINS.flatMap((c) => (c.indexer ? [c.indexer] : [])).map((url) => new URL(url).origin);
+  assert.deepEqual([...policy].sort(), [...new Set(wanted)].sort());
+
+  const token = (over: Record<string, unknown>, value: unknown = "5") => ({ token: { address_hash: B, type: "ERC-20", decimals: "6", symbol: "USDX", ...over }, value });
+  assert.deepEqual(parseTokenList([token({})]), [{ address: B, symbol: "USDX", decimals: 6, usd: null }]);
+  // With more tokens than the list takes, those with a price stay, the most valuable first.
+  const many = parseTokenList([token({}), token({ address_hash: A, exchange_rate: "2" }, "1000000"), token({ address_hash: CONTRACTS.burn, exchange_rate: "1" }, "9000000")], 2);
+  assert.deepEqual(many.map((t) => [t.address, t.usd]), [[CONTRACTS.burn, 1], [A, 2]]);
+  assert.equal(plainPrice("1647.3"), 1647.3);
+  for (const bad of ["-1", "0", "abc", null, "1e99", {}]) assert.equal(plainPrice(bad), null);
+  // An older index names the field "address".
+  assert.equal(parseTokenList([{ token: { address: B, type: "ERC-20", decimals: "18", symbol: "T" }, value: "1" }]).length, 1);
+  // Not a token with a balance, marked as a scam, the same address twice, or not a list at all.
+  assert.deepEqual(parseTokenList([token({ type: "ERC-721" }), token({ reputation: "scam" }), token({}, "0"), token({ decimals: "99" }), token({ address_hash: "0x12" }), token({}, "x")]), []);
+  assert.equal(parseTokenList([token({}), token({})]).length, 1);
+  assert.deepEqual(parseTokenList({ items: [] }), []);
+  assert.deepEqual(parseTokenList(null), []);
+  // A name is somebody else's text.
+  assert.equal(plainSymbol("US DC\u200b<b>"), "USDC<b>");
+  assert.equal(plainSymbol("A".repeat(40)).length, 12);
+  assert.equal(plainSymbol(7), "?");
 });

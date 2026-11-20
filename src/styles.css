@@ -2935,6 +2935,1167 @@ button.row-strong:hover .row-hint {
   opacity: 0;
 }
 
+/* The funds of a wallet: one list, unlocked and locked */
+
+.funds {
+  padding-top: 3vh;
+}
+
+.funds-network {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.funds-network .select {
+  min-height: 36px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.funds-table {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.funds-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 0 18px;
+}
+
+.funds-row + .funds-row {
+  border-top: 1px solid var(--line);
+}
+
+.funds-header {
+  min-height: 40px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.funds-row > :nth-child(n + 2) {
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.funds-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.funds-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.funds-locked {
+  color: var(--blue-text);
+  font-weight: 600;
+}
+
+.funds-none {
+  color: var(--muted);
+}
+
+.funds-lock-icon {
+  flex: none;
+}
+
+.funds-note {
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.funds-note b {
+  color: var(--fg);
+}
+
+.funds-other {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.lock-time {
+  display: grid;
+  gap: 10px;
+}
+
+.modal {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lock-time-label {
+  font-weight: 600;
+}
+
+.lock-work {
+  justify-self: stretch;
+  font-size: 1rem;
+}
+
+.lock-count {
+  text-align: center;
+}
+
+.funds-symbol {
+  display: grid;
+  min-width: 0;
+}
+
+.funds-symbol small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.funds-more {
+  justify-self: center;
+}
+
+/*
+ * Brand. Midnight and white, a sky blue for the lock and for time, sunrise red for a cancel
+ * and for what went wrong. Schibsted Grotesk for headlines, Inter for text, JetBrains Mono for
+ * labels and addresses. The page serves the font files itself (fonts.css).
+ */
+:root {
+  --bg: #ffffff;
+  --fg: #0b1a3d;
+  --muted: #5d6577;
+  --line: #e3e6ec;
+  --line-strong: #c5cbd8;
+  --panel: #f1f3f6;
+  --blue: #467dff;
+  --blue-dark: #2f5fd6;
+  --blue-light: #b9ccff;
+  --blue-wash: #eef3ff;
+  --blue-text: #2a56c6;
+  --gold: #467dff;
+  --sunrise: #e25647;
+  --bad-bg: #fdeeec;
+  --bad-fg: #a8321f;
+  --bad-line: #f3c5be;
+  --display: "Schibsted Grotesk", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1a3d;
+    --fg: #eef2fb;
+    --muted: #a7b1c9;
+    --line: #263a66;
+    --line-strong: #3a5088;
+    --panel: #13254f;
+    --blue: #7ea3ff;
+    --blue-dark: #467dff;
+    --blue-light: #263a66;
+    --blue-wash: #13254f;
+    --blue-text: #a9c1ff;
+    --gold: #7ea3ff;
+    --sunrise: #ff8a7d;
+    --bad-bg: #3a1c26;
+    --bad-fg: #ff8a7d;
+    --bad-line: #6b2f36;
+    --risk-bg: #2c2620;
+    --risk-fg: #ffb454;
+    --risk-line: #5c4420;
+    --good-bg: #12304a;
+    --good-fg: #5fd39b;
+    --good-line: #1f5a4a;
+  }
+}
+
+h1,
+h2,
+.wiz-title,
+.big-line,
+.balance-amount,
+.delay-callout-value,
+.hiw-title {
+  font-family: var(--display);
+  letter-spacing: -0.015em;
+}
+
+.lockup {
+  gap: 8px;
+}
+
+.lockup-word {
+  font-family: var(--display);
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Small labels: mono, upper case, a little air between the letters. */
+.eyebrow,
+.funds-header,
+.vault .section h2,
+.delay-callout-label,
+.experimental-tag {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* The sky behind the foot of the page: the dome of the brand, on the page's own colour. */
+.horizon {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 300px;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: radial-gradient(120% 100% at 50% 118%, rgb(98 146 207 / 0.62) 0%, rgb(98 146 207 / 0.42) 30%, rgb(98 146 207 / 0.2) 55%, rgb(98 146 207 / 0.07) 78%, rgb(98 146 207 / 0) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .horizon {
+    box-shadow: none;
+    background: radial-gradient(120% 100% at 50% 118%, rgb(98 146 207 / 0.95) 0%, rgb(98 146 207 / 0.72) 30%, rgb(98 146 207 / 0.4) 55%, rgb(98 146 207 / 0.14) 78%, rgb(98 146 207 / 0) 100%);
+  }
+}
+
+.funds-locked {
+  color: var(--blue-text);
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-head .mark {
+  color: var(--blue);
+}
+
+.queue-ready .queue-head .mark {
+  color: var(--fg);
+}
+
+.sun-pass .mark {
+  color: var(--fg);
+}
+
+/* Several assets at once */
+
+.picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 140px);
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px 0 0;
+}
+
+.picker-row + .picker-row {
+  border-top: 1px solid var(--line);
+}
+
+.picker-on {
+  background: var(--blue-wash);
+}
+
+.picker-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 8px 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-name {
+  display: grid;
+  min-width: 0;
+}
+
+.picker-name small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.picker-amount {
+  min-height: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 40px;
+  display: grid;
+  gap: 2px;
+  font-weight: 600;
+}
+
+.wiz-give-quiet {
+  border-width: 1px;
+  border-color: var(--line);
+  background: var(--bg);
+  padding: 14px 16px;
+}
+
+.wiz-give-quiet strong {
+  font-size: 1rem;
+}
+
+.wiz-give-quiet p {
+  font-size: 0.85rem;
+}
+
+/* A row of the list that opens: a handle moves money between unlocked and locked */
+
+.funds-row-button {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.funds-row-button:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.funds-row-button:disabled {
+  cursor: default;
+}
+
+.funds-table > * + * {
+  border-top: 1px solid var(--line);
+}
+
+.funds-item-open {
+  background: var(--blue-wash);
+}
+
+.funds-item-open .funds-row {
+  min-height: 64px;
+}
+
+.funds-asset-button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+  min-height: 44px;
+  text-align: left;
+}
+
+.funds-locked {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.funds-locked-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.funds-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--blue-text);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.funds-pending-ready {
+  color: var(--good-fg);
+}
+
+.funds-pending-bar {
+  width: 28px;
+  height: 6px;
+  border-radius: 999px;
+  color: var(--blue);
+  overflow: hidden;
+}
+
+.funds-edit {
+  min-height: 44px;
+  padding: 0 10px;
+  text-align: right;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.funds-edit-locked {
+  color: var(--blue-text);
+  font-weight: 600;
+}
+
+.mover {
+  display: grid;
+  gap: 8px;
+  padding: 2px 18px 18px;
+}
+
+.mover-bar {
+  position: relative;
+  height: 36px;
+}
+
+.mover-svg {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 11px;
+  width: calc(100% - 28px);
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--blue);
+}
+
+.mover-track {
+  fill: var(--bg);
+}
+
+.mover-locked {
+  fill: var(--fg);
+}
+
+.mover-adding {
+  fill: var(--blue);
+}
+
+.mover-leaving {
+  fill: var(--blue-light);
+}
+
+.mover-pending-back {
+  fill: var(--blue-light);
+}
+
+.mover-tick {
+  fill: var(--line-strong);
+  opacity: 0.7;
+}
+
+.mover-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: grab;
+}
+
+.mover-range::-webkit-slider-runnable-track {
+  height: 36px;
+  background: none;
+}
+
+.mover-range::-moz-range-track {
+  background: none;
+}
+
+.mover-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: 4px;
+  border: 3px solid var(--blue);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--blue);
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mover-note {
+  color: var(--blue-text);
+  font-size: 0.85rem;
+}
+
+.mover-note-ready {
+  color: var(--good-fg);
+}
+
+.mover-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mover-actions .button {
+  min-height: 48px;
+}
+
+.mover-snap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 32px;
+}
+
+.mover-snap input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--fg);
+}
+
+.funds-pending {
+  white-space: nowrap;
+}
+
+.funds-pending-bar {
+  width: 18px;
+}
+
+.funds-row {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1.15fr);
+}
+
+/* Four columns: asset, unlocked, locked, total */
+
+.funds-row {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  gap: 10px;
+  padding: 0 16px;
+}
+
+.funds-locked {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.funds-total {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.funds-num {
+  font-size: 1rem;
+}
+
+.mover-ready {
+  fill: var(--good-line);
+}
+
+/* The dev bar. Only the dev server shows it. */
+
+.devbar {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(11 26 61 / 0.18);
+  font-size: 0.8rem;
+}
+
+.devbar-tag {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--sunrise);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.devbar-label {
+  color: var(--muted);
+}
+
+.devbar-kinds {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+.devbar-kind {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.devbar-kind-on {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.devbar-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.devbar-account select {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.lockup-word {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+}
+
+/* The list is as wide as the header: from the logo to the wallet. */
+
+.funds {
+  max-width: none;
+}
+
+.funds-network-fixed {
+  display: grid;
+  gap: 12px;
+}
+
+p.funds-network b {
+  font-family: var(--display);
+  font-size: 1.05rem;
+}
+
+/* The lock sits after the locked amount, in room of its own, so that the amounts stay in line with their heading. */
+
+.funds-row > :nth-child(3) {
+  position: relative;
+  padding-right: 24px;
+}
+
+.funds-row > input:nth-child(3) {
+  padding-right: 10px;
+  margin-right: 24px;
+  width: calc(100% - 24px);
+}
+
+.funds-row .funds-lock-icon {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.funds-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+}
+
+/* An icon in place of the letter badge */
+
+img.token-icon {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  object-fit: contain;
+}
+
+.devbar-account select {
+  max-width: 190px;
+}
+
+/* The names of the parts of the bar, each under its part */
+
+.mover-scale {
+  padding: 0 14px;
+  gap: 0;
+}
+
+.mover-part {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.mover-part-mid {
+  text-align: center;
+  color: var(--blue-text);
+}
+
+.mover-part-end {
+  text-align: right;
+}
+
+/* The wait of an unlock, in the stripes of the unlocking part of the bar */
+
+.wait-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--blue);
+}
+
+.wait-bar-track {
+  fill: var(--panel);
+}
+
+/* Cancel sits at the right end of a waiting item, apart from what moves it on. */
+
+.queue-actions {
+  align-items: center;
+}
+
+.queue-actions .queue-cancel {
+  margin-left: auto;
+}
+
+/* The mark is always in the colour of the text. In blue, the open ring reads as another brand. */
+
+.queue-head .mark {
+  color: var(--fg);
+}
+
+/* The assets of a group of unlocks, each with its icon */
+
+.queue-lines {
+  padding-left: 0;
+  gap: 6px;
+}
+
+.queue-lines li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The names of the parts: each as wide as its text, the gaps between them take the rest */
+
+.mover-scale {
+  display: flex;
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mover-part,
+.mover-part-mid,
+.mover-part-end {
+  flex: 0 0 auto;
+  text-align: left;
+}
+
+.mover-gap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* The handle shows the focus, not a box around the whole bar. */
+
+.mover-range:focus {
+  outline: none;
+}
+
+.mover-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px var(--blue-light), 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px var(--blue-light), 0 2px 8px rgb(11 26 61 / 0.25);
+}
+
+.mover-note-quiet {
+  color: var(--muted);
+}
+
+/* The name of an asset is the button that opens its row. Beside it, on hover, the link to the token's page. */
+
+.funds-asset-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.funds-asset-button:disabled {
+  cursor: default;
+}
+
+.funds-ext {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted);
+  opacity: 0;
+}
+
+.funds-ext:hover {
+  color: var(--fg);
+  background: var(--panel);
+}
+
+.funds-row:hover .funds-ext,
+.funds-item-open .funds-ext,
+.funds-ext:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .funds-ext {
+    opacity: 0.7;
+  }
+}
+
+.mover-above {
+  min-height: 1.1em;
+  margin-bottom: -6px;
+}
+
+/* One fixed line, with or without its name: the bar under it must not move. */
+
+.mover-above {
+  height: 1rem;
+  min-height: 0;
+  align-items: center;
+  line-height: 1rem;
+  overflow: hidden;
+}
+
+/* Reading the funds for the first time */
+
+.funds-loading {
+  max-width: 420px;
+  margin: 0 auto;
+  justify-items: stretch;
+  text-align: center;
+}
+
+.funds-loading-slow {
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.by-zodiac {
+  text-decoration: none;
+}
+
+.by-zodiac:hover {
+  color: var(--fg);
+}
+
+/* The network picker draws its own arrow, a little in from the edge. The one of the browser sits too far right. */
+
+.funds-network .select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0 38px 0 16px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27M2.5 4.5L6 8l3.5-3.5%27 fill=%27none%27 stroke=%27%235d6577%27 stroke-width=%271.6%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 12px 12px;
+}
+
+/* The ring of a cancel: sunrise red while it snaps shut */
+
+.dial-cancel {
+  stroke: var(--sunrise);
+}
+
+/* The line of the time lock in the question about a cancel: what goes, and what stays */
+
+.cancel-line {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.cancel-row {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.cancel-row + .cancel-row {
+  border-top: 1px solid var(--line);
+}
+
+.cancel-row-out {
+  background: var(--bad-bg);
+  color: var(--fg);
+}
+
+.cancel-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.cancel-row-out .cancel-mark {
+  background: var(--sunrise);
+  color: #fff;
+}
+
+.cancel-what {
+  display: grid;
+  min-width: 0;
+}
+
+.cancel-row-out .cancel-what strong {
+  text-decoration: line-through;
+  text-decoration-color: var(--sunrise);
+}
+
+.cancel-what small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cancel-tag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cancel-tag-out {
+  background: var(--sunrise);
+  color: #fff;
+}
+
+/* The amount field, with "Max" inside it */
+
+.amount-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.amount-field {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.amount-field-max .amount-input {
+  padding-right: 64px;
+}
+
+.amount-max {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--blue-text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.amount-max:hover:not(:disabled) {
+  background: var(--blue-wash);
+}
+
+.amount-max:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Before an unlock starts: how long it takes, on a night sky with first light at the horizon, and what happens in which order */
+
+.delay-callout {
+  position: relative;
+  gap: 4px;
+  padding: 26px 20px 24px;
+  border-radius: 20px;
+  background:
+    radial-gradient(130% 95% at 50% 135%, rgba(70, 125, 255, 0.85) 0%, rgba(70, 125, 255, 0) 62%),
+    #0b1a3d;
+  color: #fff;
+  overflow: hidden;
+}
+
+.delay-callout-label {
+  opacity: 0.7;
+}
+
+.delay-callout-when {
+  margin-top: 6px;
+  font-size: 0.86rem;
+  opacity: 0.85;
+}
+
+.wait-plan {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.wait-plan li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.wait-plan li:last-child {
+  padding-bottom: 0;
+}
+
+/* The line that joins one step to the next */
+
+.wait-plan li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+
+.wait-plan-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--blue-wash);
+  color: var(--blue-text);
+}
+
+.wait-plan li > span:last-child {
+  display: grid;
+  gap: 2px;
+  padding-top: 5px;
+}
+
+.wait-plan strong {
+  font-weight: 600;
+}
+
+.wait-plan small {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+/* The name of the third-party host in the lead of its sheet: bold, and a link to it */
+
+.lead-link {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* The network of a contract wallet: its name stands on the line of the words before it, with a quiet reason under it */
+
+p.funds-network {
+  align-items: baseline;
+}
+
 /* The guardian on the page of a Chronobox. */
 .view-only.guardian-tag {
   background: var(--blue-wash);
@@ -2975,4 +4136,11 @@ button.row-strong:hover .row-hint {
 .swap-qr {
   width: 168px;
   margin-inline: auto;
+}
+
+/* Under the button of the first lock: the terms */
+
+.lock-terms {
+  margin: 0;
+  text-align: center;
 }

@@ -1,3 +1,4 @@
+import { X } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState, useRef } from "preact/hooks";
 import type { Chain, Token } from "../lib/chains.ts";
@@ -5,6 +6,7 @@ import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
 import { type Rpc, readBalances } from "../lib/chronobox.ts";
 import { customTokens } from "../lib/store.ts";
+import { tokenIcon } from "../lib/token-icons.ts";
 import { moreTokens } from "../lib/token-list.ts";
 import { type WalletOption, errorText } from "../lib/wallet.ts";
 
@@ -16,7 +18,7 @@ export type Session = {
 };
 
 /** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
-export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean };
+export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean; /** Found by the token index (third-party services). The app's own lists do not know it. */ found?: boolean; /** The icon file of a token of the app's own lists. */ icon?: string | null };
 
 /**
  * Every asset the app knows on a network: the coin, the main tokens, tokens
@@ -25,19 +27,65 @@ export type Asset = { token: Address | null; symbol: string; decimals: number; m
  */
 export function assetsOf(chain: Chain): Asset[] {
   const seen = new Set<string>();
-  const assets: Asset[] = [{ token: null, symbol: chain.native.symbol, decimals: 18, main: true }];
+  const assets: Asset[] = [{ token: null, symbol: chain.native.symbol, decimals: 18, main: true, icon: tokenIcon(chain.id, null) }];
   const add = (tokens: Token[], main: boolean) => {
     for (const t of tokens) {
       const key = t.address.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main });
+      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main, icon: tokenIcon(chain.id, t.address) });
     }
   };
   add(chain.tokens, true);
   add(customTokens(chain.id), true);
   add(moreTokens(chain.id), false);
   return assets;
+}
+
+/**
+ * The mark of an asset: its icon where the app has one, else the first letter of its symbol.
+ * The icon is a file of this page. Nothing is loaded from another site.
+ */
+export function TokenBadge(props: { asset: Asset }) {
+  const { asset } = props;
+  if (asset.icon) return <img class="token-badge token-icon" src={asset.icon} alt="" width="28" height="28" loading="lazy" decoding="async" />;
+  return (
+    <span class="token-badge" aria-hidden="true">
+      {asset.symbol.slice(0, 1)}
+    </span>
+  );
+}
+
+/** Moving stripes: something is in progress. Drawn with SVG, because the page allows no inline style. */
+export function Stripes(props: { x: number; width: number; height: number }) {
+  if (props.width <= 0) return null;
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <>
+      <defs>
+        <pattern id="cb-stripes" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="skewX(-30)">
+          <rect width="8" height="16" fill="currentColor" />
+          {still ? null : <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="16 0" dur="0.9s" repeatCount="indefinite" additive="sum" />}
+        </pattern>
+      </defs>
+      <rect class="mover-pending-back" x={props.x} y="0" width={props.width} height={props.height} />
+      <rect class="mover-pending" x={props.x} y="0" width={props.width} height={props.height} fill="url(#cb-stripes)" />
+    </>
+  );
+}
+
+/**
+ * How much of a wait has passed, as a bar. The part that has passed is striped and moving, like
+ * the unlocking part of the bar in the list: the same thing, shown in two places.
+ */
+export function WaitBar(props: { value: number; label?: string }) {
+  const done = Math.round(Math.max(0, Math.min(1, props.value)) * 1000);
+  return (
+    <svg class="wait-bar" viewBox="0 0 1000 8" preserveAspectRatio="none" role="img" aria-label={props.label ?? `${Math.round(done / 10)} percent of the wait has passed`}>
+      <rect class="wait-bar-track" x="0" y="0" width="1000" height="8" />
+      <Stripes x={0} width={done} height={8} />
+    </svg>
+  );
 }
 
 export function Button(props: {
@@ -67,7 +115,7 @@ export function Button(props: {
  * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing
  * would hide what becomes of it. A wait that gets long has its own way out ("Stop waiting").
  */
-export function Modal(props: { title: string; lead?: string; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
+export function Modal(props: { title: string; lead?: ComponentChildren; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
   const close = () => {
     if (!props.busy) props.onClose();
   };
@@ -88,9 +136,7 @@ export function Modal(props: { title: string; lead?: string; wide?: boolean; bus
         <div class="modal-head">
           <h2>{props.title}</h2>
           <button type="button" class="icon-button" aria-label="Close" disabled={props.busy} onClick={close}>
-            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-            </svg>
+            <X size={18} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
         {props.lead ? <p class="modal-lead">{props.lead}</p> : null}
@@ -289,9 +335,7 @@ export function TokenSelect(props: {
   return (
     <div class="token-select">
       <button type="button" class="token-button" aria-haspopup="listbox" aria-expanded={open} disabled={props.disabled} onClick={() => setOpen(!open)}>
-        <span class="token-badge" aria-hidden="true">
-          {current.symbol.slice(0, 1)}
-        </span>
+        <TokenBadge asset={current} />
         {current.symbol}
         <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
           <path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -312,9 +356,7 @@ export function TokenSelect(props: {
                     setOpen(false);
                   }}
                 >
-                  <span class="token-badge" aria-hidden="true">
-                    {asset.symbol.slice(0, 1)}
-                  </span>
+                  <TokenBadge asset={asset} />
                   <span class="token-name">
                     {asset.symbol}
                     <small>{asset.token ? shortAddress(asset.token) : "Native coin"}</small>
@@ -343,21 +385,24 @@ export function AssetAmount(props: {
 }) {
   return (
     <div class="amount-row">
-      <input
-        class="input amount-input"
-        inputMode="decimal"
-        autocomplete="off"
-        placeholder="0.0"
-        aria-label="Amount"
-        value={props.amount}
-        disabled={props.disabled}
-        onInput={(event) => props.onAmount((event.target as HTMLInputElement).value)}
-      />
-      {props.onMax ? (
-        <button type="button" class="link-button" onClick={props.onMax} disabled={props.disabled}>
-          Max
-        </button>
-      ) : null}
+      {/* The field and, inside it at the right, the button that fills in all there is. */}
+      <span class={props.onMax ? "amount-field amount-field-max" : "amount-field"}>
+        <input
+          class="input amount-input"
+          inputMode="decimal"
+          autocomplete="off"
+          placeholder="0.0"
+          aria-label="Amount"
+          value={props.amount}
+          disabled={props.disabled}
+          onInput={(event) => props.onAmount((event.target as HTMLInputElement).value)}
+        />
+        {props.onMax ? (
+          <button type="button" class="amount-max" onClick={props.onMax} disabled={props.disabled}>
+            Max
+          </button>
+        ) : null}
+      </span>
       <TokenSelect assets={props.assets} value={props.asset} balances={props.balances} onChange={props.onAsset} disabled={props.disabled} />
     </div>
   );

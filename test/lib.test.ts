@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { call, decode, encode, selector } from "../src/lib/abi.ts";
 import { calendarFile } from "../src/lib/ics.ts";
-import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
+import { formatAmount, formatDuration, formatUnits, parseUnits, shortAmount } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
 import { addGuardianTx, councilSwapTx, predictCouncil, removeGuardianTx, CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
 
@@ -57,6 +57,15 @@ test("amounts are exact", () => {
   assert.equal(formatAmount(1_234_567_890_000n, 6), "1,234,567.89");
   assert.equal(formatAmount(1n, 18), "< 0.000001");
   assert.equal(formatAmount(0n, 18), "0");
+  // A huge amount is shown short, and never as more than it is.
+  assert.equal(shortAmount(999_999_999_999n, 6), "999,999.999999");
+  assert.equal(shortAmount(1_000_000_000_000n, 6), "1.00M");
+  assert.equal(shortAmount(1_239_999_000_000n, 6), "1.23M");
+  assert.equal(shortAmount(45_678_000_000n * 10n ** 6n, 6), "45.6B");
+  assert.equal(shortAmount(789_999_000_000_000n * 10n ** 18n, 18), "789T");
+  assert.equal(shortAmount(1_000_000_000_000_000n * 10n ** 18n, 18), "1.00 × 10¹⁵");
+  assert.equal(shortAmount(2n ** 256n - 1n, 0), "1.15 × 10⁷⁷");
+  assert.equal(shortAmount(1n, 18), "< 0.000001");
 });
 
 test("durations read well", () => {
@@ -73,6 +82,12 @@ test("addresses are predicted as on the fork", () => {
   assert.equal(predictDelay(SAFE, WEEK, WEEK), "0x4Bc1F5bDd8ac14ffEc0e91441913E428579708f7");
   assert.notEqual(predictSafe(WALLET, 1), SAFE);
   assert.throws(() => lockTx(WALLET, SAFE, 0n));
+  // Coin that is locked in the same step rides along and stays: the batch passes on the contribution only.
+  const give = { to: "0x000000000000000000000000000000000000c0de" as const, amount: 5n };
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, give, 100n).value, 105n);
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, null, 100n).value, 100n);
+  assert.equal(lockTx(WALLET, SAFE, WEEK, undefined, give, 100n).data, lockTx(WALLET, SAFE, WEEK, undefined, give).data);
+  assert.throws(() => lockTx(WALLET, SAFE, WEEK, undefined, null, -1n));
 });
 
 test("only a transfer to the controller is a withdrawal", () => {
@@ -179,7 +194,7 @@ test("many balances come from one read, and a failed read is not a balance of ze
   const TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const assets = [{ token: null, main: true }, { token: TOKEN, main: true }, { token: SAFE }] as const;
   const good = await readBalances(async () => (requests++, answer), WALLET, assets);
-  assert.deepEqual(good, { balances: [5n, null, null], complete: true });
+  assert.deepEqual(good, { balances: [5n, null, null], complete: true, reduced: false });
   assert.equal(requests, 1);
 
   // The network has no Multicall3: the main assets are read one by one, the others stay unknown.
@@ -192,7 +207,28 @@ test("many balances come from one read, and a failed read is not a balance of ze
     WALLET,
     assets,
   );
-  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false, reduced: false });
+
+  // A network that takes only small requests: the long list is read in smaller pieces, and all of it is read.
+  const many = Array.from({ length: 120 }, (_, i) => ({ token: ("0x" + (i + 1).toString(16).padStart(40, "0")) as `0x${string}` }));
+  const sizes: number[] = [];
+  const tight = async (_method: string, params: any[] = []) => {
+    const calls = parseInt(params[0].data.slice(10 + 64, 10 + 128), 16);
+    sizes.push(calls);
+    if (calls > 20) throw new Error("request too large");
+    const each = Array.from({ length: calls }, () => w(1) + w(64) + w(32) + w(3));
+    return "0x" + w(32) + w(calls) + each.map((_, k) => w(calls * 32 + k * 128)).join("") + each.join("");
+  };
+  const pieces = await readBalances(tight, WALLET, many);
+  assert.equal(pieces.complete, true);
+  assert.equal(pieces.reduced, true, "the page can say that the network is slow");
+  assert.ok(pieces.balances.every((b) => b === 3n));
+  assert.ok(sizes.includes(50) && sizes.includes(20), "the large size is tried first, then the next smaller one");
+  assert.ok(!sizes.includes(8), "it does not go smaller than it has to");
+  // The next read on this connection starts at the size that worked.
+  sizes.length = 0;
+  await readBalances(tight, WALLET, many);
+  assert.ok(sizes.every((n) => n <= 20));
 });
 
 test("guardian changes are recognised, and nothing close to them is", () => {

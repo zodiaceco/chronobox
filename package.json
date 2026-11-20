@@ -14,16 +14,22 @@
     "test:fork": "node test/fork.ts",
     "test:fork:guardian": "node test/guardian-fork.ts",
     "test:tokens": "node test/tokens-live.ts",
-    "tokens:list": "node tools/token-list.ts"
+    "tokens:list": "node tools/token-list.ts",
+    "tokens:icons": "node tools/token-icons.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",
+    "lucide-preact": "1.77.0",
     "preact": "11.2.0",
     "qrcode-generator": "2.0.4"
   },
   "devDependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "@fontsource-variable/schibsted-grotesk": "5.3.0",
     "@foundry-rs/anvil": "1.7.1",
     "@types/node": "26.6.6",
+    "@web3icons/core": "4.0.61",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }

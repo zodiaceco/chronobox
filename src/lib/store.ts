@@ -142,6 +142,15 @@ export function setLastWallet(rdns: string | null): void {
   save("chronobox:wallet", rdns);
 }
 
+/** Did the person switch on third-party services (see lookup.ts)? Off unless they said yes in this browser. */
+export function lookupAllowed(): boolean {
+  return load<unknown>("chronobox:lookup", false) === true;
+}
+
+export function setLookupAllowed(allowed: boolean): void {
+  save("chronobox:lookup", allowed);
+}
+
 /**
  * A wallet change that the owner asked the guardian to agree to: the new wallet. It is kept so
  * that the owner can close the page while the guardian looks at it. The chain decides what is

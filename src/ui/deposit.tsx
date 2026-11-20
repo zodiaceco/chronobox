@@ -35,7 +35,7 @@ export function QrCode(props: { text: string; label: string }) {
   );
 }
 
-export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; quiet?: boolean }) {
+export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; quiet?: boolean; addressOnly?: boolean }) {
   const { session, chain, safe, assets } = props;
   const [copied, setCopied] = useState(false);
   const [fromWallet, setFromWallet] = useState(false);
@@ -120,7 +120,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
         Send on <b>{chain.name}</b> only. From any wallet or exchange, as often as you like.
       </p>
 
-      {fromWallet ? (
+      {props.addressOnly ? null : fromWallet ? (
         <div class="deposit-wallet">
           <AssetAmount
             assets={assets}

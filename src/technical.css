@@ -1,4 +1,4 @@
-/* "How it is built" (#/technical). The same shape as the rest of the app:
+/* "How it protects me and my funds" (#/technical). The same shape as the rest of the app:
  * a narrow column, one title, rounded groups. Uses the tokens from styles.css. */
 
 .tech {
@@ -356,6 +356,78 @@
   .tech-caption {
     margin-top: -16px;
   }
+}
+
+/* In depth: folded sections with lists and tables */
+
+.tech-more + .tech-more {
+  margin-top: 8px;
+}
+
+.tech-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.tech-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.tech-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.tech-table th,
+.tech-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tech-table th {
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tech-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.tech-table td:first-child {
+  font-weight: 600;
+}
+
+.tech-table small {
+  display: block;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.tech-ok {
+  color: var(--good-fg);
+  font-weight: 600;
+}
+
+.tech-amber {
+  color: var(--risk-fg);
+}
+
+.tech-theft,
+.tech-lost {
+  color: var(--bad-fg);
 }
 
 /* Privacy and imprint (#/privacy, #/imprint): the same column, plain text. */

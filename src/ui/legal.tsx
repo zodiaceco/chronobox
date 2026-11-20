@@ -71,13 +71,16 @@ export function PrivacyPage() {
       <Block title="What we do not do">
         <ul>
           <li>We do not ask for your name, email address or any other account data.</li>
-          <li>We do not run a server for this app. The page does not send data to us or to anybody else.</li>
+          <li>
+            We do not run a server for this app. The page does not send data to us. It sends data to somebody else only if you switch on
+            third-party services (see below).
+          </li>
           <li>We do not use cookies, analytics, tracking pixels or advertising.</li>
           <li>We do not load fonts, scripts or images from other websites.</li>
         </ul>
         <p class="tech-note">
-          The browser enforces this. The page has a Content Security Policy with <code>connect-src 'none'</code>, so it cannot open a
-          network connection of its own.
+          The browser enforces this. The Content Security Policy of the page allows a network connection to two addresses only,
+          both of Blockscout. The page uses them only after you switched on third-party services.
         </p>
       </Block>
 
@@ -100,6 +103,7 @@ export function PrivacyPage() {
           <li>the addresses and networks of the Chronoboxes you made or opened,</li>
           <li>the wallet and the account you connected last,</li>
           <li>the tokens you added,</li>
+          <li>whether you switched on third-party services,</li>
           <li>the transactions you sent, so that the app can find them again,</li>
           <li>a new wallet that you asked your guardian to agree to,</li>
           <li>the version of the app you saw last.</li>
@@ -130,6 +134,18 @@ export function PrivacyPage() {
           If you add a guardian, the address of the guardian is on the blockchain too. You send the link to your guardian yourself, by a
           way you choose. It does not pass through us.
         </p>
+      </Block>
+
+      <Block title="Third-party services, if you switch them on">
+        <p>
+          This is off until you switch it on, and you can switch it off again at any time. It works on Ethereum and Sepolia. When it is
+          on, the page asks Blockscout (eth.blockscout.com, eth-sepolia.blockscout.com) which tokens you hold and what they are worth.
+        </p>
+        <p>
+          Blockscout then receives your IP address, the address of your wallet and the address of your Chronobox. The privacy policy of
+          Blockscout applies to this. We do not control it. Your balances are still read through your wallet.
+        </p>
+        <p class="tech-note">Legal basis: Art. 6(1)(a) GDPR, your consent. You withdraw it by switching the services off.</p>
       </Block>
 
       <Block title="Contribution">

@@ -45,8 +45,10 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
-const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
+// The page talks to these hosts only after the person has switched on third-party services (src/lib/lookup.ts).
+// The list is the token index of each network that has one (src/lib/chains.ts); a test compares them.
+const PROD_CONNECT = "connect-src https://eth.blockscout.com https://eth-sepolia.blockscout.com";
+const DEV_CONNECT = `${PROD_CONNECT} http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546`;
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */

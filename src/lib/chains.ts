@@ -52,6 +52,13 @@ export type Chain = {
   explorer: string;
   /** Used only for wallet_addEthereumChain. The page itself never calls it. */
   publicRpc: string;
+  /**
+   * A Blockscout index that lists the tokens of an address and their prices,
+   * for the third-party service that the person can switch on (lookup.ts).
+   * Only where it answers a browser directly. Its origin must be in
+   * the connect-src of src/index.html.
+   */
+  indexer?: string;
   testnet?: boolean;
   /**
    * Chainlink price feed of the network's coin in US dollars (8 decimals).
@@ -80,6 +87,7 @@ export const CHAINS: Chain[] = [
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://etherscan.io",
     publicRpc: "https://ethereum-rpc.publicnode.com",
+    indexer: "https://eth.blockscout.com",
     usdFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
     tokens: [
       { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6 },
@@ -160,6 +168,7 @@ export const CHAINS: Chain[] = [
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://sepolia.etherscan.io",
     publicRpc: "https://ethereum-sepolia-rpc.publicnode.com",
+    indexer: "https://eth-sepolia.blockscout.com",
     testnet: true,
     usdFeed: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
     tokens: [],
