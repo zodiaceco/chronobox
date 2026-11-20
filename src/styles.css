@@ -3129,3 +3129,43 @@ h2,
   font-size: 1rem;
   letter-spacing: 0.08em;
 }
+
+/* The list is as wide as the header: from the logo to the wallet. */
+
+.funds {
+  max-width: none;
+}
+
+.funds-network-fixed {
+  display: grid;
+  gap: 12px;
+}
+
+p.funds-network b {
+  font-family: var(--display);
+  font-size: 1.05rem;
+}
+
+/* The lock sits after the locked amount, in room of its own, so that the amounts stay in line with their heading. */
+
+.funds-row > :nth-child(3) {
+  position: relative;
+  padding-right: 24px;
+}
+
+.funds-row > input:nth-child(3) {
+  padding-right: 10px;
+  margin-right: 24px;
+  width: calc(100% - 24px);
+}
+
+.funds-row .funds-lock-icon {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.funds-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+}

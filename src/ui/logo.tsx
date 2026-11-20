@@ -9,6 +9,16 @@
  * security policy allows no inline style.
  */
 
+/*
+ * Proportions, measured on the lockup of the brand's own film: with the outer edge of the ring at
+ * 26, the ring is 9.6 thick, and the knob has a radius of 8.4. So the space between knob and ring
+ * (8) is a little less than the ring is thick, and the mark reads as one solid shape when small.
+ */
+const RING_RADIUS = 21.2;
+const RING_WIDTH = 9.6;
+/** The knob is drawn with a radius of 8 and made this much larger around the centre. */
+const KNOB_SCALE = "translate(32 32) scale(1.05) translate(-32 -32)";
+
 /** The ring starts at the top right and drains clockwise. */
 const RING = "rotate(-40 32 32) translate(0 64) scale(1 -1)";
 /** The knob: a disc with a slot cut out to the right. */
@@ -46,10 +56,10 @@ export function Dial(props: {
         <circle
           cx="32"
           cy="32"
-          r="22"
+          r={RING_RADIUS}
           fill="none"
           stroke="currentColor"
-          stroke-width="8"
+          stroke-width={RING_WIDTH}
           pathLength="100"
           transform={RING}
           stroke-dasharray={full ? undefined : "100"}
@@ -59,7 +69,7 @@ export function Dial(props: {
           {play === "drain" ? <animate attributeName="stroke-dashoffset" from="0" to="14" begin="0.3s" dur="1.4s" {...ease} /> : null}
         </circle>
       ) : null}
-      <path d={KNOB} fill-rule="evenodd" fill="currentColor" transform={props.turned ? "rotate(-180 32 32)" : undefined} />
+      <path d={KNOB} fill-rule="evenodd" fill="currentColor" transform={props.turned ? `rotate(-180 32 32) ${KNOB_SCALE}` : KNOB_SCALE} />
     </svg>
   );
 }
@@ -75,7 +85,7 @@ export function Mark(props: { size?: number }) {
 export function Lockup() {
   return (
     <a class="lockup" href="#/" aria-label="Zodiac Chronobox, start page">
-      <Mark size={26} />
+      <Mark size={30} />
       <span class="lockup-word">CHRONOBOX</span>
     </a>
   );

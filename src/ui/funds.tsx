@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
-import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
+import { type Address, sameAddress } from "../lib/hex.ts";
 import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
 import { findCoinPrice, findTokens, lookupServices, publicRpc, withFallback } from "../lib/lookup.ts";
 import { call } from "../lib/abi.ts";
@@ -55,7 +55,7 @@ import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch
 import { Dial } from "./logo.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Tick, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
-import { OpenByAddress, vaultHref } from "./start.tsx";
+import { vaultHref } from "./start.tsx";
 import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
 
 /**
@@ -327,6 +327,21 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   }, [session.rpc]);
   const [batch, setBatch] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  // A wallet that is a contract, such as a Safe, exists on the network it was made on. On another network the same
+  // address is not that wallet, and so the address of its Chronobox is not its Chronobox there either.
+  const [contractWallet, setContractWallet] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    setContractWallet(false);
+    session.rpc("eth_getCode", [session.account, "latest"]).then(
+      // An account that has handed its code to a contract (EIP-7702) is still the same key on every network.
+      (code: string) => !stale && setContractWallet(typeof code === "string" && code.length > 2 && !code.toLowerCase().startsWith("0xef0100")),
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [session.rpc, session.account, chain]);
   const chooseLookup = (on: boolean) => {
     setLookupAllowed(on);
     setLookup(on);
@@ -343,7 +358,18 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
     };
   }, [session.wallet, session.account, chain]);
 
-  const network = (
+  const network = contractWallet ? (
+    <div class="funds-network-fixed">
+      <p class="funds-network">
+        <span class="eyebrow">Your funds on</span>
+        <b>{chain.name}</b>
+      </p>
+      <Notice kind="info" title={`Your wallet is a Safe or another contract wallet on ${chain.name}.`}>
+        It exists on this network only. Send money to your Chronobox on {chain.name} only: on any other network, this address is not
+        yours.
+      </Notice>
+    </div>
+  ) : (
     <label class="funds-network">
       <span class="eyebrow">Your funds on</span>
       <select
@@ -456,8 +482,6 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
     setOpenRow(null);
     refresh();
   };
-  // A large amount needs no long tail of decimals, and with one it does not fit its column.
-  const amount = (value: bigint | null, asset: Asset) => (value === null ? "–" : formatAmount(value, asset.decimals, value >= 10_000n * 10n ** BigInt(asset.decimals) ? 2 : 6));
 
   return (
     <section class="page vault funds">
@@ -606,7 +630,6 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <Row label="Third-party services" value={lookup ? "On" : "Off"} onClick={() => setSheet("lookup")} />
       </ul>
 
-      <OpenOther chain={chain} />
 
       {sheet === "lock" ? (
         <LockSheet session={session} chain={chain} safe={safe} inspection={inspection} assets={assets} wallet={wallet} loose={loose.length > 0} batch={batch} preset={preset ?? 0} presetAmount={presetAmount} onChanged={() => refresh()} onClose={close} />
@@ -618,7 +641,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={box} queue={queue} now={now} canCancel={canCancel} preset={presetAmount && preset !== null ? { asset: preset, amount: presetAmount } : null} onClose={close} />
       ) : null}
       {sheet === "receive" ? (
-        <Modal title="Lock from elsewhere" lead="Money that is sent to this address is locked when it arrives." onClose={close}>
+        <Modal title="Lock from elsewhere" lead={contractWallet ? `Money that is sent to this address on ${chain.name} is locked when it arrives. Only on ${chain.name}: on another network this address is not yours.` : "Money that is sent to this address is locked when it arrives."} onClose={close}>
           <DepositPanel session={session} chain={chain} safe={safe} assets={assets} addressOnly />
         </Modal>
       ) : null}
@@ -806,8 +829,8 @@ function FundRow(props: {
         <span class="funds-asset">{name}</span>
         <span class="funds-num">{show(known ? U : null)}</span>
         <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"}>
-          {L > 0n ? <LockIcon /> : null}
           {show(known ? L : null)}
+          {L > 0n ? <LockIcon /> : null}
         </span>
         <span class="funds-num funds-total">{show(known ? all : null)}</span>
       </button>
@@ -1712,25 +1735,5 @@ function LockSheet(props: {
       </div>
       {ready && count > 1 ? <p class="hint lock-count">Your wallet asks you to confirm {count} times, one step after the other.</p> : null}
     </Modal>
-  );
-}
-
-/**
- * A wallet has one Chronobox, and this page is it. One case needs an address all the same: a
- * wallet that was handed the Chronobox of another wallet does not find it at its own address.
- */
-function OpenOther(props: { chain: Chain }) {
-  const [opening, setOpening] = useState(false);
-  const [text, setText] = useState("");
-  const [openChain, setOpenChain] = useState(props.chain.id);
-  const target = chainById(openChain);
-  const address = parseAddress(text);
-  return (
-    <div class="funds-other">
-      <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
-        Open a Chronobox by its address
-      </button>
-      {opening ? <OpenByAddress chainId={openChain} onChain={setOpenChain} text={text} onText={setText} target={target && address ? vaultHref(target, address) : null} /> : null}
-    </div>
   );
 }
