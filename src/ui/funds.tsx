@@ -83,6 +83,11 @@ type Funds = {
   prices: Record<string, number>;
   /** False when the wallet's network refused the combined reads, so that only the main assets could be read. */
   allRead: boolean;
+  /**
+   * True while the first look at the Chronobox is still on its way. The balances are shown already. What is locked,
+   * and what can be done, is not known yet: `inspection` is an empty stand-in until then.
+   */
+  checking: boolean;
   /** True when the wallet's network took the balances only in small pieces. Everything was read, slowly. */
   slowReads: boolean;
   now: bigint;
@@ -158,14 +163,17 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
             return value;
           });
         setSteps([]);
-        const [quick, now, first] = await Promise.all([
-          step("checks", inspect(rpc, safe, hints, { historyLater: true })),
-          step("clock", chainTime(rpc)),
-          step("balances", readSome(some)),
-        ]);
+        // The balances do not wait for the checks. The page shows them as soon as they are in, and the checks follow.
+        // Nothing is sent on the strength of this: before the first transaction, the sheet reads the checks itself.
+        const looking = step("checks", inspect(rpc, safe, hints, { historyLater: true }));
+        let quick: Inspection | null = null;
+        let failed: unknown = null;
+        looking.then(
+          (value) => (quick = value),
+          (error) => (failed = error ?? new Error("The checks could not be read")),
+        );
+        const [now, first] = await Promise.all([step("clock", chainTime(rpc)), step("balances", readSome(some))]);
         const fetchedAt = Date.now();
-        let inspection = quick;
-        const queue = inspection.state === "locked" || inspection.state === "unverified" ? await readQueue(rpc, inspection, txCache(chain.id, inspection.delay!)) : [];
         if (stale) return;
         const wallet = assets.map((a) => before.get(keyOf(a))?.[0] ?? null);
         const box = assets.map((a) => before.get(keyOf(a))?.[1] ?? null);
@@ -173,12 +181,22 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           wallet[i] = first.mine[k];
           box[i] = first.boxed[k];
         });
+        // Until the checks are in: what the last read knew, or nothing at all on the first read.
+        const standIn: Inspection = { safe, state: "missing", checks: [], owners: [], delay: null, roles: null, controller: null, cooldown: 0n, expiration: 0n, txNonce: 0n, queueNonce: 0n };
+        let inspection: Inspection = quick ?? last.current?.inspection ?? standIn;
+        let queue: QueueItem[] = last.current?.queue ?? [];
+        let checking = quick === null && !last.current;
         const publish = () => {
-          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], prices: { ...prices.current }, allRead, slowReads, now, fetchedAt };
+          const next: Funds = { inspection, queue, assets, wallet: [...wallet], box: [...box], prices: { ...prices.current }, allRead, checking, slowReads, now, fetchedAt };
           last.current = next;
           setData(next);
           setError(null);
         };
+        if (quick === null && failed === null) publish();
+        inspection = await looking;
+        queue = inspection.state === "locked" || inspection.state === "unverified" ? await readQueue(rpc, inspection, txCache(chain.id, inspection.delay!)) : [];
+        if (stale) return;
+        checking = false;
         publish();
 
         const later: Promise<void>[] = [];
@@ -435,12 +453,11 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
     );
   }
   if (!data) {
-    // Three parts are read at once, then what is waiting. The bar shows how much of that is in: the checks are
-    // the largest part, then the balances. The hint about a slow network is for a read that is stuck early.
-    const weight: Record<string, number> = { checks: 0.5, balances: 0.3, clock: 0.1 };
+    // The page shows when the balances and the time of the network are in. The bar shows how much of that is.
+    // The safety checks follow on the page itself. The hint about a slow network is for a read that is stuck early.
+    const weight: Record<string, number> = { balances: 0.7, clock: 0.3 };
     const readSoFar = steps.reduce((sum, name) => sum + (weight[name] ?? 0), 0);
     const waitingFor = [
-      ["checks", "the safety checks"],
       ["balances", "your balances"],
       ["clock", "the time of the network"],
     ]
@@ -462,9 +479,11 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   }
 
   const { inspection, queue, assets, wallet, box, prices } = data;
+  // The balances are in, the first look at the Chronobox is not. Then nothing is said about what is locked, and nothing can be started.
+  const pending = data.checking;
   const mine = (inspection.state === "locked" || inspection.state === "unverified") && sameAddress(inspection.controller, session.account);
   // The lock is not on yet. It goes on with the first money that is locked.
-  const fresh = inspection.state === "missing" || (inspection.state === "open" && sameAddress(inspection.owners[0], session.account));
+  const fresh = !pending && (inspection.state === "missing" || (inspection.state === "open" && sameAddress(inspection.owners[0], session.account)));
   const verified = mine && inspection.state === "locked";
   const checking = mine && !verified && inspection.historyPending === true;
   // Another wallet holds the key now: this one handed it over.
@@ -492,7 +511,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const dollars = (usd: number) => (usd >= 1 ? `about $${Math.round(usd).toLocaleString("en-US")}` : usd >= 0.01 ? `about $${usd.toFixed(2)}` : "under $0.01");
   // Money at the address of the Chronobox while the time lock is off. It is not protected.
   // A token that only the lookup knows does not count: anybody can send such a token to any address.
-  const loose = assets.map((asset, i) => ({ asset, amount: mine || asset.found ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
+  const loose = assets.map((asset, i) => ({ asset, amount: pending || mine || asset.found ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
   const anyLocked = mine && box.some((b) => (b ?? 0n) > 0n);
   // What is on its way out, by asset: asked for and not collected yet.
   const pendingOf = new Map<string, Pending>();
@@ -583,14 +602,14 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
             asset={r.asset}
             note={[r.usd !== null ? dollars(r.usd) : "", r.asset.found && r.asset.token ? shortAddress(r.asset.token) : ""].filter(Boolean).join(" · ") || null}
             inWallet={r.unlocked}
-            inBox={mine ? box[r.index] : 0n}
+            inBox={pending ? null : mine ? box[r.index] : 0n}
             waiting={pendingOf.get(keyOf(r.asset))?.waiting ?? 0n}
             ready={pendingOf.get(keyOf(r.asset))?.ready ?? 0n}
             open={openRow === keyOf(r.asset)}
             onToggle={() => setOpenRow(openRow === keyOf(r.asset) ? null : keyOf(r.asset))}
             most={mostOf(r.index)}
             explorer={chain.explorer}
-            canLock={(fresh || verified) && !handedOver}
+            canLock={(fresh || verified || checking) && !handedOver}
             canUnlock={mine}
             delayText={mine ? formatDuration(inspection.cooldown) : ""}
             onLock={(value) => {
@@ -637,7 +656,8 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <div class="vault-actions">
           <Button
             kind="primary"
-            disabled={!(fresh || verified) || (!anyUnlocked && loose.length === 0)}
+            // While the last check runs, locking can be prepared: the sheet waits for the check before it sends anything.
+            disabled={!(fresh || verified || checking) || (!anyUnlocked && loose.length === 0)}
             onClick={() => {
               // Start with the first asset that the wallet holds.
               const held = wallet.findIndex((b) => (b ?? 0n) > 0n);
@@ -653,7 +673,9 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         </div>
       )}
       <p class="funds-note">
-        {mine ? (
+        {pending ? (
+          "Reading what is locked…"
+        ) : mine ? (
           <>
             Unlocking takes <b>{formatDuration(inspection.cooldown)}</b>. Nobody can make it faster.
             {checking ? " Running the last safety check…" : ""}
@@ -823,6 +845,8 @@ function FundRow(props: {
   const part = (value: bigint) => (all > 0n ? Number((value * 1000n) / all) : 0);
   const moved = `${shortAmount(delta < 0n ? -delta : delta, asset.decimals)} ${asset.symbol}`;
   const known = props.inWallet !== null && props.inBox !== null;
+  // What is at the address of the Chronobox is not sorted yet: only the wallet's own amount can be shown.
+  const walletOnly = props.inWallet !== null && props.inBox === null;
 
   const name = (
     <>
@@ -870,15 +894,15 @@ function FundRow(props: {
           </button>
           {link}
         </span>
-        <span class="funds-num" title={exact(known ? U : null)}>
-          {show(known ? U : null)}
+        <span class="funds-num" title={exact(known ? U : walletOnly ? W : null)}>
+          {show(known ? U : walletOnly ? W : null)}
         </span>
-        <span class={L > 0n ? "funds-num funds-locked" : "funds-num funds-none"} title={exact(known ? L : null)}>
-          {show(known ? L : null)}
-          {L > 0n ? <LockIcon /> : null}
+        <span class={known && L > 0n ? "funds-num funds-locked" : "funds-num funds-none"} title={exact(known ? L : null)}>
+          {walletOnly ? "…" : show(known ? L : null)}
+          {known && L > 0n ? <LockIcon /> : null}
         </span>
         <span class="funds-num funds-total" title={exact(known ? all : null)}>
-          {show(known ? all : null)}
+          {walletOnly ? "…" : show(known ? all : null)}
         </span>
       </div>
     );
