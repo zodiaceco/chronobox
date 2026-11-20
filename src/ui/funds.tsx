@@ -17,7 +17,7 @@ import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD 
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
 import { type Address, sameAddress } from "../lib/hex.ts";
 import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
-import { findCoinPrice, findTokens, lookupServices, publicRpc, withFallback } from "../lib/lookup.ts";
+import { findCoinPrice, findTokens, lookupHost } from "../lib/lookup.ts";
 import { call } from "../lib/abi.ts";
 import {
   EXPIRATION_SECONDS,
@@ -130,8 +130,8 @@ function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean
           found.current = [];
           prices.current = {};
         }
-        // Balances are for display. With the lookup on they come from a public node, and from the wallet when that fails.
-        const reader = lookup ? withFallback(publicRpc(chain), rpc) : rpc;
+        // Every balance is read through the wallet. The index only says which tokens to look at, and what they are worth.
+        const reader = rpc;
         const listed = assetsOf(chain);
         const merge = () => [...listed, ...found.current.filter((f) => !listed.some((a) => sameAddress(a.token, f.token)))];
         let assets = merge();
@@ -308,7 +308,11 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const safe = useMemo(() => predictSafe(session.account, 0), [session.account]);
   const [lookup, setLookup] = useState(lookupAllowed);
   const [showOther, setShowOther] = useState(false);
-  const { data, error, refresh } = useFunds(session, chain, safe, lookup);
+  // A network without an index has no third-party service to switch on.
+  const host = lookupHost(chain);
+  const [vpn, setVpn] = useState(false);
+  const [trusts, setTrusts] = useState(false);
+  const { data, error, refresh } = useFunds(session, chain, safe, lookup && host !== null);
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [preset, setPreset] = useState<number | null>(null);
@@ -577,7 +581,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         <button type="button" class="link-button funds-more" onClick={() => setShowOther(!showOther)}>
           {showOther ? "Hide the other tokens" : `Show ${other.length} other ${other.length === 1 ? "token" : "tokens"}`}
         </button>
-      ) : !lookup ? (
+      ) : !lookup && host ? (
         <button type="button" class="link-button funds-more" onClick={() => setSheet("lookup")}>
           A token is missing? Find all my tokens and their value
         </button>
@@ -627,7 +631,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
           />
         ) : null}
         <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
-        <Row label="Third-party services" value={lookup ? "On" : "Off"} onClick={() => setSheet("lookup")} />
+        {host ? <Row label="Third-party services" value={lookup ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
       </ul>
 
 
@@ -649,61 +653,37 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? <ChecksSheet inspection={inspection} onClose={() => setSheet(null)} /> : null}
-      {sheet === "lookup" ? (
-        <Modal title="Third-party services" onClose={() => setSheet(null)}>
-          <p>
-            <b>Off, the default:</b> everything is read through your wallet, and no other party learns which addresses you look at. The list
-            shows the tokens that Chronobox knows and those you add yourself.
-          </p>
-          <p>
-            <b>On, for convenience:</b> {chain.indexer ? "you see every token you hold, what each is worth in dollars, and the page loads faster." : "the page loads faster."} This page then
-            asks these services directly:
-          </p>
-          <ul class="plain-list">
-            {lookupServices(chain).map((service) => (
-              <li key={service.host}>
-                <b>{service.host}</b>, {service.what}
-              </li>
-            ))}
-          </ul>
-          <p>
-            Each of them sees your IP address together with the address of your wallet and of your Chronobox. Nothing else is sent, and no other
-            service is asked.
-          </p>
-          <Notice kind="info" title="Switch it on only behind a VPN.">
-            A VPN hides your IP address from these services, so they cannot tie your addresses to where you are. Without a VPN, leave this off.
-          </Notice>
-          <p class="hint">
-            {chain.indexer ? "" : `On ${chain.name} there is no explorer to ask, so this finds no new tokens and no prices. `}
-            This is for display only. The safety checks and every transaction always go through your wallet.
-          </p>
-          <p class="hint">
-            With it off, you can add the tokens you want to see by their address. They are kept in this browser.{" "}
-            <button type="button" class="link-button" onClick={() => setSheet("token")}>
-              Add a token
-            </button>
-          </p>
-          <div class="modal-actions">
-            {lookup ? (
-              <>
-                <Button kind="primary" onClick={() => chooseLookup(false)}>
-                  Switch it off
-                </Button>
-                <Button kind="quiet" onClick={() => setSheet(null)}>
-                  Keep it on
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button kind="primary" onClick={() => chooseLookup(true)}>
-                  I use a VPN. Switch it on
+      {sheet === "lookup" && host ? (
+        <Modal
+          title="Third-party services"
+          lead={`See every token you hold and what it is worth. For that, this page asks ${host}, which then sees your IP address with the address of your wallet and of your Chronobox.`}
+          onClose={() => setSheet(null)}
+        >
+          {lookup ? (
+            <div class="modal-actions">
+              <Button kind="primary" onClick={() => chooseLookup(false)}>
+                Switch it off
+              </Button>
+              <Button kind="quiet" onClick={() => setSheet(null)}>
+                Keep it on
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div class="wiz-list">
+                <Choice role="checkbox" on={vpn} title="I use a VPN." text="It hides my IP address from Blockscout." onClick={() => setVpn(!vpn)} />
+                <Choice role="checkbox" on={trusts} title="I trust Blockscout not to leak my IP address." onClick={() => setTrusts(!trusts)} />
+              </div>
+              <div class="modal-actions">
+                <Button kind="primary" disabled={!vpn && !trusts} onClick={() => chooseLookup(true)}>
+                  Switch it on
                 </Button>
                 <Button kind="quiet" onClick={() => setSheet(null)}>
                   Keep it off
                 </Button>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </Modal>
       ) : null}
     </section>

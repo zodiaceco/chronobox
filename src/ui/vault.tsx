@@ -757,9 +757,11 @@ export function QueueCard(props: {
           </button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
-          <button type="button" class="link-button" onClick={props.onCancel}>
-            Cancel
-          </button>
+          <span class="queue-cancel">
+            <Button small onClick={props.onCancel}>
+              Cancel
+            </Button>
+          </span>
         ) : null}
       </div>
     </li>
@@ -828,9 +830,11 @@ function GroupCard(props: {
           </button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
-          <button type="button" class="link-button" onClick={props.onCancel}>
-            Cancel all
-          </button>
+          <span class="queue-cancel">
+            <Button small onClick={props.onCancel}>
+              Cancel all
+            </Button>
+          </span>
         ) : null}
       </div>
     </li>

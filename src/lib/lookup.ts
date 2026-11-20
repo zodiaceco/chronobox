@@ -1,28 +1,23 @@
 /**
- * Balance lookup outside the wallet. Off until the person switches it on.
+ * The one third-party service: an explorer's index. Off until the person switches it on.
  *
  * By default every read goes through the connected wallet, so no extra party
- * learns which addresses this page looks at. That is private, and it has two
- * costs: a wallet's network can be slow, and nothing can list the tokens of an
- * address, so the app only finds the tokens it already knows.
+ * learns which addresses this page looks at. That is private, and it has a
+ * cost: nothing can list the tokens of an address, so the app only finds the
+ * tokens it already knows, and it has no prices.
  *
- * With the lookup on, the page asks two public services directly:
- *   - a public node of the network, for balances,
- *   - an explorer's index (where the network has one that answers a browser),
- *     for the list of tokens an address holds and their prices in dollars.
- * Both see the IP address of the browser and the addresses that are asked for.
+ * With the service on, the page asks a Blockscout index directly which tokens
+ * an address holds and what they are worth in dollars. Blockscout sees the IP
+ * address of the browser and the addresses that are asked for. Only networks
+ * whose index answers a browser have this.
  *
  * What comes back is used for display only. The index says which tokens to
- * look at; the balance of each is then read from the chain, and its decimals
- * too. Nothing here decides what is safe: the checks and every transaction
- * still go through the wallet.
+ * look at and what a price is. The balance of each token is read from the
+ * chain through the wallet, and its decimals too. Nothing here decides what is
+ * safe: the checks and every transaction go through the wallet.
  */
 import type { Chain } from "./chains.ts";
 import { type Address, parseAddress } from "./hex.ts";
-import type { Rpc } from "./chronobox.ts";
-
-/** The lookup only reads. A method that is not in this list is never sent to a public node. */
-const READS = new Set(["eth_call", "eth_getBalance", "eth_getCode", "eth_blockNumber", "eth_chainId"]);
 
 const OPTIONS = { credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store" } as const;
 
@@ -34,30 +29,6 @@ async function limited(url: string, init: RequestInit, ms: number): Promise<Resp
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** The public node of a network as an RPC, for reads only. */
-export function publicRpc(chain: Chain): Rpc {
-  let id = 0;
-  return async (method, params = []) => {
-    if (!READS.has(method)) throw new Error(`${method} is not a read`);
-    const res = await limited(chain.publicRpc, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }) }, 12_000);
-    if (!res.ok) throw new Error(`The public node answered ${res.status}`);
-    const answer = (await res.json()) as { result?: unknown; error?: { message?: string } };
-    if (answer.error || answer.result === undefined) throw new Error(answer.error?.message || "The public node gave no result");
-    return answer.result;
-  };
-}
-
-/** Reads through the public node, and through the wallet when that fails. */
-export function withFallback(first: Rpc, second: Rpc): Rpc {
-  return async (method, params) => {
-    try {
-      return await first(method, params);
-    } catch {
-      return second(method, params);
-    }
-  };
 }
 
 /** `usd` is the price of one whole token in US dollars, as the index has it. Null when it has none. */
@@ -127,10 +98,7 @@ export async function findCoinPrice(chain: Chain): Promise<number | null> {
   return plainPrice(((await res.json()) as { coin_price?: unknown } | null)?.coin_price);
 }
 
-/** The services that the lookup talks to on a network and what each is asked, for the question that asks for consent. */
-export function lookupServices(chain: Chain): { host: string; what: string }[] {
-  return [
-    { host: new URL(chain.publicRpc).host, what: "a public node of the network. It is asked for your balances." },
-    ...(chain.indexer ? [{ host: new URL(chain.indexer).host, what: "the Blockscout explorer. It is asked which tokens you hold and what they are worth in dollars." }] : []),
-  ];
+/** The host of the network's index, for the question that asks for consent. Null when the network has none. */
+export function lookupHost(chain: Chain): string | null {
+  return chain.indexer ? new URL(chain.indexer).host : null;
 }

@@ -50,15 +50,12 @@ export type Chain = {
   name: string;
   native: { symbol: string; decimals: 18 };
   explorer: string;
-  /**
-   * A public node. Used for wallet_addEthereumChain, and for reading balances
-   * when the person has switched on the balance lookup (see lookup.ts). Its
-   * origin must be in the connect-src of src/index.html.
-   */
+  /** Used only for wallet_addEthereumChain. The page itself never calls it. */
   publicRpc: string;
   /**
-   * A Blockscout index that lists the tokens of an address, for the balance
-   * lookup. Only where it answers a browser directly. Its origin must be in
+   * A Blockscout index that lists the tokens of an address and their prices,
+   * for the third-party service that the person can switch on (lookup.ts).
+   * Only where it answers a browser directly. Its origin must be in
    * the connect-src of src/index.html.
    */
   indexer?: string;

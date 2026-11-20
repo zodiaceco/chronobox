@@ -3221,3 +3221,13 @@ img.token-icon {
 .wait-bar-track {
   fill: var(--panel);
 }
+
+/* Cancel sits at the right end of a waiting item, apart from what moves it on. */
+
+.queue-actions {
+  align-items: center;
+}
+
+.queue-actions .queue-cancel {
+  margin-left: auto;
+}

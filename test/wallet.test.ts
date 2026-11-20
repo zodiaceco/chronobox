@@ -5,7 +5,7 @@ import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
 import { readFileSync } from "node:fs";
 import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
-import { parseTokenList, plainPrice, plainSymbol, publicRpc } from "../src/lib/lookup.ts";
+import { parseTokenList, plainPrice, plainSymbol } from "../src/lib/lookup.ts";
 import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, canBatch, sendBatch } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -249,15 +249,11 @@ test("a Chronobox cannot be handed to an address that nobody can sign with", () 
   }
 });
 
-test("the balance lookup reads only, and takes nothing from an index on trust", async () => {
-  // The page may talk to exactly the hosts of the lookup. The policy in index.html names each of them.
+test("the page may talk to the index only, and takes nothing from it on trust", async () => {
+  // The page may talk to exactly the hosts of the index. The policy in index.html names each of them.
   const policy = /connect-src ([^;]+);/.exec(readFileSync(new URL("../src/index.html", import.meta.url), "utf8"))![1].split(" ");
-  const wanted = CHAINS.flatMap((c) => [c.publicRpc, ...(c.indexer ? [c.indexer] : [])]).map((url) => new URL(url).origin);
+  const wanted = CHAINS.flatMap((c) => (c.indexer ? [c.indexer] : [])).map((url) => new URL(url).origin);
   assert.deepEqual([...policy].sort(), [...new Set(wanted)].sort());
-
-  // A public node is never asked to send anything.
-  await assert.rejects(publicRpc(CHAINS[0])("eth_sendTransaction", [{}]), /not a read/);
-  await assert.rejects(publicRpc(CHAINS[0])("eth_getLogs", [{}]), /not a read/);
 
   const token = (over: Record<string, unknown>, value: unknown = "5") => ({ token: { address_hash: B, type: "ERC-20", decimals: "6", symbol: "USDX", ...over }, value });
   assert.deepEqual(parseTokenList([token({})]), [{ address: B, symbol: "USDX", decimals: 6, usd: null }]);
