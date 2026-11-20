@@ -652,6 +652,15 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         <Button kind="primary" disabled={!canContinue} onClick={last ? run : () => setStep(step + 1)}>
           {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
         </Button>
+        {last ? (
+          <p class="wiz-note">
+            By creating a Chronobox, you agree to the{" "}
+            <a href="#/terms" target="_blank" rel="noopener">
+              terms
+            </a>
+            .
+          </p>
+        ) : null}
       </div>
     </section>
   );

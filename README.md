@@ -81,7 +81,7 @@ Read these. They are the honest edge of what a delay can do.
 
 - **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly.
 - **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. Frozen funds are better than lost funds.
-- **One wallet.** There is no second key, no guardian and no recovery.
+- **One wallet.** Only your wallet can withdraw. An optional guardian can cancel what waits and, together with your wallet, move the Chronobox to a new wallet. A guardian is not a backup.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** There is no recovery.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
@@ -149,7 +149,7 @@ The build hash is the sha256 over the sorted lines `<path> <sha256>` of every fi
 
 ## Host it
 
-`out/` is the whole site. `out/_headers` sets the response headers on Netlify and Cloudflare Pages. On another host, set the same headers yourself:
+`out/` is the whole site. The live site is on Vercel, which reads the response headers from `vercel.json`. `out/_headers` sets the same headers on Netlify and Cloudflare Pages. On another host, set them yourself:
 
 - `index.html` must not be cached (`Cache-Control: no-cache`), so that a fix reaches people on their next visit. The files in `assets/` have a content hash in the name and can be cached for ever.
 - `Content-Security-Policy: frame-ancestors 'none'` stops other sites from showing Chronobox in a frame. This one cannot be set from inside the page.
