@@ -71,7 +71,8 @@ export function Dial(props: {
         >
           {play === "cancel" ? <animate attributeName="stroke-dashoffset" from="55" to="0" begin="0.35s" dur="0.45s" {...ease} /> : null}
           {play === "close" ? <animate attributeName="stroke-dashoffset" from="60" to="0" dur="0.9s" {...ease} /> : null}
-          {play === "drain" ? <animate attributeName="stroke-dashoffset" from="0" to="14" begin="0.3s" dur="1.4s" {...ease} /> : null}
+          {/* The ring opens as far as it is open in the logo, and stops there: the C. */}
+          {play === "drain" ? <animate attributeName="stroke-dashoffset" from="0" to={String(100 * (1 - LOGO_RING))} begin="0.3s" dur="1.4s" {...ease} /> : null}
         </circle>
       ) : null}
       {/* A ring that was drawn shut still has a hairline where its two ends meet. When it is shut, a plain circle takes its place. */}
