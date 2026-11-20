@@ -3335,3 +3335,13 @@ img.token-icon {
   min-height: 1.1em;
   margin-bottom: -6px;
 }
+
+/* One fixed line, with or without its name: the bar under it must not move. */
+
+.mover-above {
+  height: 1rem;
+  min-height: 0;
+  align-items: center;
+  line-height: 1rem;
+  overflow: hidden;
+}

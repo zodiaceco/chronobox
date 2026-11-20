@@ -873,7 +873,7 @@ function FundRow(props: {
             shared out by where that part is. The row is always there, so that nothing jumps when the name comes and goes. */}
         <div class="mover-scale mover-above" aria-hidden="true">
           <span class="mover-gap" style={{ flexGrow: Math.max(midAt, 1) }} />
-          <span class="mover-part mover-part-mid">{stillWaiting > 0n || delta < 0n ? "Unlocking" : ""}</span>
+          <span class="mover-part mover-part-mid">{stillWaiting > 0n || delta < 0n ? "Unlocking" : "\u00a0"}</span>
           <span class="mover-gap" style={{ flexGrow: Math.max(1000 - midAt, 1) }} />
         </div>
         <div class="mover-bar">
