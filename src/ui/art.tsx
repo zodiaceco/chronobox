@@ -8,7 +8,7 @@
 import type { ComponentChildren } from "preact";
 
 const WHITE = "#fff";
-const BLUE = "#469CED";
+const BLUE = "#6292CF";
 
 /** The path of the sun: a circle around (32, 41) with radius 17. Both ends are behind the planet. */
 const CX = 32;
@@ -42,9 +42,9 @@ export function Tile(props: { size?: number; class?: string; planet?: boolean; b
           <rect x="2" y="2" width="60" height="60" rx="15.5" />
         </clipPath>
         <radialGradient id="cb-sky" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(31.83 96.21) scale(104.07 99.1)">
-          <stop offset="0.596" stop-color="#B1D3F2" />
-          <stop offset="0.803" stop-color={BLUE} />
-          <stop offset="1" stop-color="#286CB2" />
+          <stop offset="0.596" stop-color="#6292CF" />
+          <stop offset="0.803" stop-color="#2B4A86" />
+          <stop offset="1" stop-color="#0B1A3D" />
         </radialGradient>
       </defs>
       <g clip-path="url(#cb-tile)">

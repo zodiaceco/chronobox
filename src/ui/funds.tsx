@@ -16,7 +16,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { type Chain, CHAINS, chainById, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
-import { blockHints, txCache } from "../lib/store.ts";
+import { blockHints, lookupAllowed, setLookupAllowed, txCache } from "../lib/store.ts";
+import { findTokens, lookupHosts, publicRpc, withFallback } from "../lib/lookup.ts";
+import { call } from "../lib/abi.ts";
 import {
   EXPIRATION_SECONDS,
   MAX_COOLDOWN,
@@ -36,6 +38,7 @@ import {
   predictRoles,
   predictSafe,
   readBalances,
+  readMany,
   readQueue,
   safeFromReceipt,
   sendAndWait,
@@ -44,7 +47,7 @@ import {
   usdToCoin,
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
-import { SunPassArt } from "./art.tsx";
+import { Dial } from "./logo.tsx";
 import { type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, Tick } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { OpenByAddress, vaultHref } from "./start.tsx";
@@ -58,8 +61,8 @@ const RECEIVER: Address | null = CONTRIBUTION_RECEIVER ?? (__DEV__ ? "0x00000000
 
 /** How long unlocking takes, offered when the lock is switched on. The second one is selected. */
 const DELAYS: { label: string; seconds: bigint }[] = [
-  { label: "12 hours", seconds: 12n * 3600n },
   { label: "1 day", seconds: 24n * 3600n },
+  { label: "2 days", seconds: 48n * 3600n },
   { label: "1 week", seconds: 7n * 24n * 3600n },
 ];
 
@@ -75,7 +78,7 @@ type Funds = {
   fetchedAt: number;
 };
 
-type Sheet = "lock" | "unlock" | "receive" | "token" | "delay" | "wallet" | "checks" | null;
+type Sheet = "lock" | "unlock" | "receive" | "token" | "delay" | "wallet" | "checks" | "lookup" | null;
 
 const keyOf = (asset: Asset) => asset.token?.toLowerCase() ?? "native";
 
@@ -84,7 +87,7 @@ const keyOf = (asset: Asset) => asset.token?.toLowerCase() ?? "native";
  * balances of the main assets and of everything that was there last time. The page shows that at
  * once. Then what can take long: the history check, and the long list of tokens.
  */
-function useFunds(session: Session, chain: Chain, safe: Address) {
+function useFunds(session: Session, chain: Chain, safe: Address, lookup: boolean) {
   const [data, setData] = useState<Funds | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0);
@@ -94,6 +97,8 @@ function useFunds(session: Session, chain: Chain, safe: Address) {
   // The long list of tokens is read on the first look and after something was done, not on every tick.
   const deep = useRef(true);
   const last = useRef<Funds | null>(null);
+  // Tokens that the balance lookup found and the app's own lists do not have.
+  const found = useRef<Asset[]>([]);
   const refresh = useCallback((all = true) => {
     if (all) deep.current = true;
     if (reading.current) wanted.current = true;
@@ -107,9 +112,14 @@ function useFunds(session: Session, chain: Chain, safe: Address) {
       try {
         const rpc = session.rpc;
         const hints = blockHints(chain.id);
-        const assets = assetsOf(chain);
         const all = deep.current;
         deep.current = false;
+        if (!lookup) found.current = [];
+        // Balances are for display. With the lookup on they come from a public node, and from the wallet when that fails.
+        const reader = lookup ? withFallback(publicRpc(chain), rpc) : rpc;
+        const listed = assetsOf(chain);
+        const merge = () => [...listed, ...found.current.filter((f) => !listed.some((a) => sameAddress(a.token, f.token)))];
+        let assets = merge();
         const before = new Map((last.current?.assets ?? []).map((a, i) => [keyOf(a), [last.current!.wallet[i], last.current!.box[i]] as const]));
         const some = assets.map((_, i) => i).filter((i) => {
           const known = before.get(keyOf(assets[i]));
@@ -117,7 +127,7 @@ function useFunds(session: Session, chain: Chain, safe: Address) {
         });
         const readSome = async (indexes: number[]) => {
           const part = indexes.map((i) => assets[i]);
-          const [mine, boxed] = await Promise.all([readBalances(rpc, session.account, part), readBalances(rpc, safe, part)]);
+          const [mine, boxed] = await Promise.all([readBalances(reader, session.account, part), readBalances(reader, safe, part)]);
           return { mine: mine.balances, boxed: boxed.balances };
         };
 
@@ -162,8 +172,36 @@ function useFunds(session: Session, chain: Chain, safe: Address) {
             ),
           );
         }
+        if (lookup && all) {
+          // Which other tokens do the two addresses hold? The index names them. Decimals and balances are read from the chain.
+          later.push(
+            (async () => {
+              const lists = await Promise.all([findTokens(chain, session.account), findTokens(chain, safe)]);
+              const fresh = lists.flat().filter((t, i, list) => list.findIndex((o) => sameAddress(o.address, t.address)) === i && !listed.some((a) => sameAddress(a.token, t.address)));
+              if (fresh.length === 0 || stale) return;
+              const decimals = await readMany(reader, fresh.map((t) => ({ to: t.address, data: call("decimals()") })));
+              const good = fresh.filter((t, i) => {
+                const answer = decimals[i];
+                return answer !== null && answer.length >= 66 && BigInt(answer.slice(0, 66)) === BigInt(t.decimals);
+              });
+              const [mine, boxed] = await Promise.all([readBalances(reader, session.account, good.map((t) => ({ token: t.address }))), readBalances(reader, safe, good.map((t) => ({ token: t.address })))]);
+              if (stale) return;
+              found.current = good.map((t) => ({ token: t.address, symbol: t.symbol, decimals: t.decimals, found: true }));
+              const have = new Map(assets.map((a, i) => [keyOf(a), [wallet[i], box[i]] as const]));
+              good.forEach((t, i) => have.set(t.address.toLowerCase(), [mine.balances[i], boxed.balances[i]]));
+              assets = merge();
+              wallet.length = 0;
+              box.length = 0;
+              for (const a of assets) {
+                wallet.push(have.get(keyOf(a))?.[0] ?? null);
+                box.push(have.get(keyOf(a))?.[1] ?? null);
+              }
+              publish();
+            })().catch(() => undefined),
+          );
+        }
         const quickSet = new Set(some);
-        const rest = all ? assets.map((_, i) => i).filter((i) => !quickSet.has(i)) : [];
+        const rest = all ? listed.map((_, i) => i).filter((i) => !quickSet.has(i)) : [];
         if (rest.length > 0) {
           later.push(
             readSome(rest).then(
@@ -198,7 +236,7 @@ function useFunds(session: Session, chain: Chain, safe: Address) {
       reading.current = false;
       wanted.current = false;
     };
-  }, [session.rpc, session.account, chain, safe, round]);
+  }, [session.rpc, session.account, chain, safe, round, lookup]);
 
   useEffect(() => {
     const timer = setInterval(() => document.visibilityState === "visible" && !reading.current && refresh(false), 30_000);
@@ -232,12 +270,20 @@ function LockIcon() {
 export function FundsPage(props: { session: Session; chain: Chain }) {
   const { session, chain } = props;
   const safe = useMemo(() => predictSafe(session.account, 0), [session.account]);
-  const { data, error, refresh } = useFunds(session, chain, safe);
+  const [lookup, setLookup] = useState(lookupAllowed);
+  const [showOther, setShowOther] = useState(false);
+  const { data, error, refresh } = useFunds(session, chain, safe, lookup);
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
   const [preset, setPreset] = useState<number | null>(null);
   const [batch, setBatch] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const chooseLookup = (on: boolean) => {
+    setLookupAllowed(on);
+    setLookup(on);
+    setSheet(null);
+    refresh();
+  };
 
   useEffect(() => {
     let stale = false;
@@ -303,11 +349,15 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
   const canCancel = mine && !!inspection.roles;
   const passed = inspection.checks.filter((c) => c.ok).length;
 
-  const rows = assets
+  const held = assets
     .map((asset, i) => ({ asset, index: i, unlocked: wallet[i], locked: mine ? box[i] : 0n, loose: mine ? 0n : (box[i] ?? 0n) }))
     .filter((r) => r.index === 0 || (r.unlocked ?? 0n) > 0n || (r.locked ?? 0n) > 0n);
+  // Tokens that only the lookup knows can be anything, also something that was sent to the wallet unasked. They are shown on request.
+  const other = held.filter((r) => r.asset.found && !((r.locked ?? 0n) > 0n));
+  const rows = held.filter((r) => showOther || !other.includes(r));
   // Money at the address of the Chronobox while the time lock is off. It is not protected.
-  const loose = assets.map((asset, i) => ({ asset, amount: mine ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
+  // A token that only the lookup knows does not count: anybody can send such a token to any address.
+  const loose = assets.map((asset, i) => ({ asset, amount: mine || asset.found ? 0n : (box[i] ?? 0n) })).filter((l) => l.amount > 0n);
   const anyLocked = mine && box.some((b) => (b ?? 0n) > 0n);
   const anyUnlocked = wallet.some((b) => (b ?? 0n) > 0n);
   const unread = assets.filter((a, i) => a.main && (wallet[i] === null || box[i] === null)).map((a) => a.symbol);
@@ -368,7 +418,10 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
               <span class="token-badge" aria-hidden="true">
                 {r.asset.symbol.slice(0, 1)}
               </span>
-              {r.asset.symbol}
+              <span class="funds-symbol">
+                {r.asset.symbol}
+                {r.asset.found && r.asset.token ? <small>{shortAddress(r.asset.token)} · unlisted</small> : null}
+              </span>
             </span>
             <span class="funds-num" role="cell">
               {amount(r.unlocked, r.asset)}
@@ -381,6 +434,15 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
         ))}
       </div>
       {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
+      {other.length > 0 ? (
+        <button type="button" class="link-button funds-more" onClick={() => setShowOther(!showOther)}>
+          {showOther ? "Hide the other tokens" : `Show ${other.length} other ${other.length === 1 ? "token" : "tokens"}`}
+        </button>
+      ) : !lookup ? (
+        <button type="button" class="link-button funds-more" onClick={() => setSheet("lookup")}>
+          A token is missing? Find all my tokens
+        </button>
+      ) : null}
 
       {handedOver || inspection.state === "invalid" ? null : (
         <div class="vault-actions">
@@ -426,6 +488,7 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
           />
         ) : null}
         <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
+        <Row label="Balance lookup" value={lookup ? "On" : "Through your wallet"} onClick={() => setSheet("lookup")} />
       </ul>
 
       <OpenOther chain={chain} />
@@ -445,6 +508,42 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
       {sheet === "checks" ? <ChecksSheet inspection={inspection} onClose={() => setSheet(null)} /> : null}
+      {sheet === "lookup" ? (
+        <Modal title="Balance lookup" onClose={() => setSheet(null)}>
+          <p>
+            Chronobox reads everything through your wallet. That is private, but it can be slow, and it shows only the tokens that Chronobox knows.
+          </p>
+          <p>
+            With the lookup on, this page asks public services directly for your balances{chain.indexer ? " and for the list of tokens you hold" : ""}:{" "}
+            <b>{lookupHosts(chain).join(", ")}</b>. They see your IP address, your wallet address and the address of your Chronobox.
+          </p>
+          <p class="hint">
+            {chain.indexer ? "" : `On ${chain.name} there is no token list to ask, so this makes balances faster and finds no new tokens. `}
+            The lookup is for display only. The safety checks and every transaction still go through your wallet.
+          </p>
+          <div class="modal-actions">
+            {lookup ? (
+              <>
+                <Button kind="primary" onClick={() => chooseLookup(false)}>
+                  Switch it off
+                </Button>
+                <Button kind="quiet" onClick={() => setSheet(null)}>
+                  Keep it on
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button kind="primary" onClick={() => chooseLookup(true)}>
+                  Switch it on
+                </Button>
+                <Button kind="quiet" onClick={() => setSheet(null)}>
+                  Keep everything in my wallet
+                </Button>
+              </>
+            )}
+          </div>
+        </Modal>
+      ) : null}
     </section>
   );
 }
@@ -806,7 +905,7 @@ function LockSheet(props: {
     return (
       <Modal title={result.lines.length > 0 ? "Locked." : "The time lock is on."} onClose={props.onClose}>
         <div class="sun-pass">
-          <SunPassArt size={96} />
+          <Dial size={96} play="close" />
         </div>
         {result.lines.length > 0 ? <p class="big-line">{listText(result.lines)}</p> : null}
         <p>

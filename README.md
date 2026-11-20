@@ -2,7 +2,7 @@
 
 A vault that nobody can empty quickly.
 
-You connect a wallet and see its funds as one list: unlocked (in the wallet) and locked (in the wallet's Chronobox). You lock what should not leave in a hurry. Unlocking waits the full delay on chain (12 hours, 1 day, 1 week or your own). Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
+You connect a wallet and see its funds as one list: unlocked (in the wallet) and locked (in the wallet's Chronobox). You lock what should not leave in a hurry. Unlocking waits the full delay on chain (1 day, 2 days, 1 week or your own; 2 days is preselected). Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
 
 Behind this, a Chronobox is a Safe that has no owner. The only way out is a time lock that your wallet controls. Each wallet has one, at an address that follows from the wallet's address alone. There is no setup: the first lock creates it.
 
@@ -101,7 +101,8 @@ Read these. They are the honest edge of what a delay can do.
 ## Privacy
 
 - No server, no account, no analytics.
-- The production page makes no network requests. The Content Security Policy is `connect-src 'none'`. All chain data comes through your wallet, so no extra party learns which vault you look at.
+- By default the page makes no network requests of its own. All chain data comes through your wallet, so no extra party learns which addresses you look at.
+- One exception, off until you switch it on ("Balance lookup"): the page then reads balances from a public node of the network, and on Ethereum and Sepolia it asks a Blockscout index which tokens your wallet and your Chronobox hold. Those services see your IP address and the two addresses. The lookup is for display only: the index only names tokens, their decimals and balances are read from the chain, and the safety checks and every transaction still go through the wallet. The Content Security Policy lists exactly these hosts in `connect-src` (`src/index.html`), and a unit test compares the list with `src/lib/chains.ts`.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
 
@@ -121,7 +122,7 @@ npm run dev          # http://localhost:3130, with a test wallet for a local for
 npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :8545
 ```
 
-The dev build injects a test wallet ("Anvil test wallet") that signs with anvil's unlocked accounts. Add `?account=1` for another account, or `?safe=1` to make it act as a Safe that can batch. It does not exist in the production build. In the browser console, `__anvil.warp(seconds)` moves the fork's clock.
+The dev build injects a test wallet ("Anvil test wallet") that signs with anvil's unlocked accounts. Add `?account=1` (up to 9) for another account, or `?safe=1` to make it act as a Safe that can batch. It does not exist in the production build. In the browser console, `__anvil.warp(seconds)` moves the fork's clock.
 
 ```bash
 npm test             # unit tests

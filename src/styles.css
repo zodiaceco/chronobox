@@ -2559,3 +2559,149 @@ button.row-strong:hover .row-hint {
 .lock-count {
   text-align: center;
 }
+
+.funds-symbol {
+  display: grid;
+  min-width: 0;
+}
+
+.funds-symbol small {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.funds-more {
+  justify-self: center;
+}
+
+/*
+ * Brand. Midnight and white, a sky blue for the lock and for time, sunrise red for a cancel
+ * and for what went wrong. Schibsted Grotesk for headlines, Inter for text, JetBrains Mono for
+ * labels and addresses. The font files are not part of the page yet: until they are, a device
+ * that has the fonts shows them and every other device shows its own system font.
+ */
+:root {
+  --bg: #ffffff;
+  --fg: #0b1a3d;
+  --muted: #5d6577;
+  --line: #e3e6ec;
+  --line-strong: #c5cbd8;
+  --panel: #f1f3f6;
+  --blue: #467dff;
+  --blue-dark: #2f5fd6;
+  --blue-light: #b9ccff;
+  --blue-wash: #eef3ff;
+  --blue-text: #2a56c6;
+  --gold: #467dff;
+  --sunrise: #e25647;
+  --bad-bg: #fdeeec;
+  --bad-fg: #a8321f;
+  --bad-line: #f3c5be;
+  --display: "Schibsted Grotesk", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1a3d;
+    --fg: #eef2fb;
+    --muted: #a7b1c9;
+    --line: #263a66;
+    --line-strong: #3a5088;
+    --panel: #13254f;
+    --blue: #7ea3ff;
+    --blue-dark: #467dff;
+    --blue-light: #263a66;
+    --blue-wash: #13254f;
+    --blue-text: #a9c1ff;
+    --gold: #7ea3ff;
+    --sunrise: #ff8a7d;
+    --bad-bg: #3a1c26;
+    --bad-fg: #ff8a7d;
+    --bad-line: #6b2f36;
+    --risk-bg: #2c2620;
+    --risk-fg: #ffb454;
+    --risk-line: #5c4420;
+    --good-bg: #12304a;
+    --good-fg: #5fd39b;
+    --good-line: #1f5a4a;
+  }
+}
+
+h1,
+h2,
+.wiz-title,
+.big-line,
+.balance-amount,
+.delay-callout-value,
+.hiw-title {
+  font-family: var(--display);
+  letter-spacing: -0.015em;
+}
+
+.lockup {
+  gap: 8px;
+}
+
+.lockup-word {
+  font-family: var(--display);
+  font-size: 1.12rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Small labels: mono, upper case, a little air between the letters. */
+.eyebrow,
+.funds-header,
+.vault .section h2,
+.delay-callout-label,
+.experimental-tag {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+/* The sky behind the foot of the page: the dome of the brand, on the page's own colour. */
+.horizon {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 300px;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: radial-gradient(120% 100% at 50% 118%, rgb(98 146 207 / 0.62) 0%, rgb(98 146 207 / 0.42) 30%, rgb(98 146 207 / 0.2) 55%, rgb(98 146 207 / 0.07) 78%, rgb(98 146 207 / 0) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .horizon {
+    box-shadow: none;
+    background: radial-gradient(120% 100% at 50% 118%, rgb(98 146 207 / 0.95) 0%, rgb(98 146 207 / 0.72) 30%, rgb(98 146 207 / 0.4) 55%, rgb(98 146 207 / 0.14) 78%, rgb(98 146 207 / 0) 100%);
+  }
+}
+
+.funds-locked {
+  color: var(--blue-text);
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.queue-head .mark {
+  color: var(--blue);
+}
+
+.queue-ready .queue-head .mark {
+  color: var(--fg);
+}
+
+.sun-pass .mark {
+  color: var(--fg);
+}

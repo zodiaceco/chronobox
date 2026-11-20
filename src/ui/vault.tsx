@@ -42,7 +42,7 @@ import {
 } from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
-import { SunPassArt } from "./art.tsx";
+import { Dial } from "./logo.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
 type VaultData = {
@@ -645,7 +645,10 @@ export function QueueCard(props: {
   return (
     <li class={`queue-item queue-${status.phase}${warning ? " queue-warning" : ""}`}>
       <div class="queue-main">
-        <strong class="queue-title">{title}</strong>
+        <span class="queue-head">
+          <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />
+          <strong class="queue-title">{title}</strong>
+        </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
         {status.phase === "waiting" ? (
           <>
@@ -800,7 +803,7 @@ export function WithdrawSheet(props: {
     return (
       <Modal title="The wait has started." onClose={props.onClose}>
         <div class="sun-pass">
-          <SunPassArt size={96} />
+          <Dial size={96} play="drain" />
         </div>
         <p class="big-line">{amountLine}</p>
         <p>

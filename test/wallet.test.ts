@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
-import { CONTRACTS } from "../src/lib/chains.ts";
+import { readFileSync } from "node:fs";
+import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
+import { parseTokenList, plainSymbol, publicRpc } from "../src/lib/lookup.ts";
 import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, canBatch, sendBatch } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
@@ -245,4 +247,29 @@ test("a Chronobox cannot be handed to an address that nobody can sign with", () 
   for (const dead of [safe, delay, roles, CONTRACTS.burn, A, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000001"]) {
     assert.equal(changeWalletTx(delay, A as any, dead as any, roles, safe), null, dead);
   }
+});
+
+test("the balance lookup reads only, and takes nothing from an index on trust", async () => {
+  // The page may talk to exactly the hosts of the lookup. The policy in index.html names each of them.
+  const policy = /connect-src ([^;]+);/.exec(readFileSync(new URL("../src/index.html", import.meta.url), "utf8"))![1].split(" ");
+  const wanted = CHAINS.flatMap((c) => [c.publicRpc, ...(c.indexer ? [c.indexer] : [])]).map((url) => new URL(url).origin);
+  assert.deepEqual([...policy].sort(), [...new Set(wanted)].sort());
+
+  // A public node is never asked to send anything.
+  await assert.rejects(publicRpc(CHAINS[0])("eth_sendTransaction", [{}]), /not a read/);
+  await assert.rejects(publicRpc(CHAINS[0])("eth_getLogs", [{}]), /not a read/);
+
+  const token = (over: Record<string, unknown>, value: unknown = "5") => ({ token: { address_hash: B, type: "ERC-20", decimals: "6", symbol: "USDX", ...over }, value });
+  assert.deepEqual(parseTokenList([token({})]), [{ address: B, symbol: "USDX", decimals: 6 }]);
+  // An older index names the field "address".
+  assert.equal(parseTokenList([{ token: { address: B, type: "ERC-20", decimals: "18", symbol: "T" }, value: "1" }]).length, 1);
+  // Not a token with a balance, marked as a scam, the same address twice, or not a list at all.
+  assert.deepEqual(parseTokenList([token({ type: "ERC-721" }), token({ reputation: "scam" }), token({}, "0"), token({ decimals: "99" }), token({ address_hash: "0x12" }), token({}, "x")]), []);
+  assert.equal(parseTokenList([token({}), token({})]).length, 1);
+  assert.deepEqual(parseTokenList({ items: [] }), []);
+  assert.deepEqual(parseTokenList(null), []);
+  // A name is somebody else's text.
+  assert.equal(plainSymbol("US DC\u200b<b>"), "USDC<b>");
+  assert.equal(plainSymbol("A".repeat(40)).length, 12);
+  assert.equal(plainSymbol(7), "?");
 });

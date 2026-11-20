@@ -42,8 +42,10 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
-const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
+// The page talks to these hosts only after the person has switched on the balance lookup (src/lib/lookup.ts).
+// The list is the public node of every network and the token index where there is one (src/lib/chains.ts); a test compares them.
+const PROD_CONNECT = "connect-src https://ethereum-rpc.publicnode.com https://base-rpc.publicnode.com https://arbitrum-one-rpc.publicnode.com https://rpc.gnosischain.com https://ethereum-sepolia-rpc.publicnode.com https://eth.blockscout.com https://eth-sepolia.blockscout.com";
+const DEV_CONNECT = `${PROD_CONNECT} http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546`;
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */
