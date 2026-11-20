@@ -53,7 +53,7 @@ import {
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { Dial } from "./logo.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Tick, TokenBadge, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Stripes, Tick, TokenBadge, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { vaultHref } from "./start.tsx";
 import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
@@ -717,24 +717,6 @@ type Pending = { waiting: bigint; ready: bigint };
 /** Where the handle catches when snapping is on: nothing, a quarter, half, three quarters, everything. In thousandths. */
 const SNAPS = [0, 250, 500, 750, 1000];
 const SNAP_WITHIN = 22;
-
-/** Moving stripes: something is in progress. Drawn with SVG, because the page allows no inline style. */
-function Stripes(props: { x: number; width: number; height: number }) {
-  if (props.width <= 0) return null;
-  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  return (
-    <>
-      <defs>
-        <pattern id="cb-stripes" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="skewX(-30)">
-          <rect width="8" height="16" fill="currentColor" />
-          {still ? null : <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="16 0" dur="0.9s" repeatCount="indefinite" additive="sum" />}
-        </pattern>
-      </defs>
-      <rect class="mover-pending-back" x={props.x} y="0" width={props.width} height={props.height} />
-      <rect class="mover-pending" x={props.x} y="0" width={props.width} height={props.height} fill="url(#cb-stripes)" />
-    </>
-  );
-}
 
 /** A number in a cell that can be typed over. While it has the focus it shows what was typed, not what was understood. */
 function EditCell(props: { label: string; value: bigint; decimals: number; locked?: boolean; onValue: (value: bigint) => void }) {

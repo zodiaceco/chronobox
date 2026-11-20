@@ -55,6 +55,38 @@ export function TokenBadge(props: { asset: Asset }) {
   );
 }
 
+/** Moving stripes: something is in progress. Drawn with SVG, because the page allows no inline style. */
+export function Stripes(props: { x: number; width: number; height: number }) {
+  if (props.width <= 0) return null;
+  const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return (
+    <>
+      <defs>
+        <pattern id="cb-stripes" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="skewX(-30)">
+          <rect width="8" height="16" fill="currentColor" />
+          {still ? null : <animateTransform attributeName="patternTransform" type="translate" from="0 0" to="16 0" dur="0.9s" repeatCount="indefinite" additive="sum" />}
+        </pattern>
+      </defs>
+      <rect class="mover-pending-back" x={props.x} y="0" width={props.width} height={props.height} />
+      <rect class="mover-pending" x={props.x} y="0" width={props.width} height={props.height} fill="url(#cb-stripes)" />
+    </>
+  );
+}
+
+/**
+ * How much of a wait has passed, as a bar. The part that has passed is striped and moving, like
+ * the unlocking part of the bar in the list: the same thing, shown in two places.
+ */
+export function WaitBar(props: { value: number }) {
+  const done = Math.round(Math.max(0, Math.min(1, props.value)) * 1000);
+  return (
+    <svg class="wait-bar" viewBox="0 0 1000 8" preserveAspectRatio="none" role="img" aria-label={`${Math.round(done / 10)} percent of the wait has passed`}>
+      <rect class="wait-bar-track" x="0" y="0" width="1000" height="8" />
+      <Stripes x={0} width={done} height={8} />
+    </svg>
+  );
+}
+
 export function Button(props: {
   children: ComponentChildren;
   onClick?: () => void;

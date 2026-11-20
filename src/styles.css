@@ -3206,3 +3206,18 @@ img.token-icon {
 .mover-part-end {
   text-align: right;
 }
+
+/* The wait of an unlock, in the stripes of the unlocking part of the bar */
+
+.wait-bar {
+  display: block;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  color: var(--blue);
+}
+
+.wait-bar-track {
+  fill: var(--panel);
+}

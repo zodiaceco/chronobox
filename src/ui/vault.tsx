@@ -41,7 +41,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { assertWallet, errorText, sendBatch } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, type Waiting, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, WaitBar, type Waiting, useAction } from "./common.tsx";
 import { Dial } from "./logo.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
@@ -728,7 +728,7 @@ export function QueueCard(props: {
             <span class="queue-when">
               Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
             </span>
-            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
+            <WaitBar value={progress} />
           </>
         ) : status.phase === "ready" ? (
           <span class="queue-when">
@@ -799,7 +799,7 @@ function GroupCard(props: {
             <span class="queue-when">
               Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
             </span>
-            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
+            <WaitBar value={progress} />
           </>
         ) : status.phase === "ready" ? (
           <span class="queue-when">
