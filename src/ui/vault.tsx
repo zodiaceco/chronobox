@@ -43,7 +43,7 @@ import {
 } from "../lib/chronobox.ts";
 import { assertWallet, errorText, sendBatch } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, TokenBadge, WaitBar, type Waiting, useAction } from "./common.tsx";
-import { Dial } from "./logo.tsx";
+import { Dial, Mark } from "./logo.tsx";
 import { DepositPanel } from "./deposit.tsx";
 
 type VaultData = {
@@ -721,7 +721,7 @@ export function QueueCard(props: {
     <li class={`queue-item queue-${status.phase}${warning ? " queue-warning" : ""}`}>
       <div class="queue-main">
         <span class="queue-head">
-          {asset ? <TokenBadge asset={asset} /> : <Dial size={30} left={status.phase === "waiting" ? 1 - progress : status.phase === "ready" ? 0 : 1} turned={status.phase === "ready"} />}
+          {asset ? <TokenBadge asset={asset} /> : <Mark size={30} />}
           <strong class="queue-title">{title}</strong>
         </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
