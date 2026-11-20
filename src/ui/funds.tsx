@@ -742,6 +742,10 @@ export function FundsPage(props: { session: Session; chain: Chain }) {
                 <Button kind="primary" disabled={!vpn && !trusts} onClick={() => chooseLookup(true)}>
                   Switch it on
                 </Button>
+                {/* The way that asks nobody: name the token yourself. */}
+                <Button kind="plain" onClick={() => setSheet("token")}>
+                  Add a token by its address instead
+                </Button>
                 <Button kind="quiet" onClick={() => setSheet(null)}>
                   Keep it off
                 </Button>
