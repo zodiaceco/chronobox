@@ -53,7 +53,7 @@ import {
 } from "../lib/chronobox.ts";
 import { BatchUnknown, assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
 import { Dial } from "./logo.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Tick, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Modal, Notice, type Session, SlowNote, Tick, TokenBadge, useAction } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { vaultHref } from "./start.tsx";
 import { ChangeDelaySheet, ChangeWalletSheet, ChecksSheet, QueueSection, Row, TokenSheet, UnknownSheet, type VaultRef, WithdrawSheet, saveReminders, useChainClock } from "./vault.tsx";
@@ -813,9 +813,7 @@ function FundRow(props: {
 
   const name = (
     <>
-      <span class="token-badge" aria-hidden="true">
-        {asset.symbol.slice(0, 1)}
-      </span>
+      <TokenBadge asset={asset} />
       <span class="funds-symbol">
         {asset.symbol}
         {props.note ? <small>{props.note}</small> : null}
@@ -949,6 +947,7 @@ function Picker(props: { assets: Asset[]; available: (bigint | null)[]; entries:
           <li key={keyOf(asset)} class={entry ? "picker-row picker-on" : "picker-row"}>
             <button type="button" class="picker-toggle" role="checkbox" aria-checked={!!entry} disabled={props.disabled} onClick={toggle}>
               <Tick on={!!entry} />
+              <TokenBadge asset={asset} />
               <span class="picker-name">
                 <strong>{asset.symbol}</strong>
                 <small>{available[index] === null ? "" : `${formatAmount(available[index]!, asset.decimals, 6)} available`}</small>

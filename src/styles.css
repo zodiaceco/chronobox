@@ -3169,3 +3169,13 @@ p.funds-network b {
 .funds-row {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
 }
+
+/* An icon in place of the letter badge */
+
+img.token-icon {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  object-fit: contain;
+}

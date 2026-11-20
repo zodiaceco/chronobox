@@ -13,7 +13,8 @@
     "fork": "anvil --fork-url https://mainnet.gateway.tenderly.co --chain-id 1 --port 8545 --silent",
     "test:fork": "node test/fork.ts",
     "test:tokens": "node test/tokens-live.ts",
-    "tokens:list": "node tools/token-list.ts"
+    "tokens:list": "node tools/token-list.ts",
+    "tokens:icons": "node tools/token-icons.ts"
   },
   "dependencies": {
     "@noble/hashes": "2.4.0",
@@ -26,6 +27,7 @@
     "@fontsource-variable/schibsted-grotesk": "5.3.0",
     "@foundry-rs/anvil": "1.7.1",
     "@types/node": "26.6.6",
+    "@web3icons/core": "4.0.61",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }

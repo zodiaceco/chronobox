@@ -181,13 +181,15 @@ A Chronobox can hold any ERC-20 token. The app shows the ones it knows:
 
 The app reads all balances in a few requests through your wallet, with the Multicall3 contract. It does not ask a token service, so nobody learns which address you look at. A token that is in none of the lists is not shown until you add it. It is still in your Chronobox.
 
+Icons: `npm run tokens:icons` copies an icon for each token of these lists from the `@web3icons` packages into `static/tokens` and writes `src/lib/token-icons.ts`, first by the token's address and then by its symbol. The page serves the icons itself. A token without an icon, and every token that only the balance lookup found, shows the first letter of its symbol.
+
 `npm run tokens:list -- <tokens.json>` writes the long list again from a ranked list of tokens and checks each one against the real chain. `npm run test:tokens` checks the main tokens.
 
 ## Dependencies
 
 Runtime: `preact` (UI), `@noble/hashes` (keccak-256) and `qrcode-generator` (the QR code of the deposit address). None has dependencies of its own, and all are pinned to exact versions.
 
-Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`, and three `@fontsource-variable` packages (Inter, Schibsted Grotesk, JetBrains Mono). The build copies one font file from each into `out/assets`, so the page serves its own fonts and asks no font service.
+Development: `esbuild`, `typescript`, `@types/node`, `@foundry-rs/anvil`, three `@fontsource-variable` packages (Inter, Schibsted Grotesk, JetBrains Mono), and `@web3icons/core` for the token icons. The build copies one font file from each into `out/assets`, so the page serves its own fonts and asks no font service.
 
 The ABI encoder, the wallet connection and the dev server are small files in this repository, written for exactly what Chronobox needs.
 
