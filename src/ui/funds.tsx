@@ -916,6 +916,11 @@ function FundRow(props: {
   const stillWaiting = keeping ? 0n : waiting;
   // The middle of what is unlocking, or about to: from the end of the unlocked part to the handle or the end of the stripes.
   const midAt = pU + ((delta < 0n ? pos : pU + pW) - pU) / 2;
+  // The names above the bar, from left to right: what is being locked now (the blue part), and what is on its way out.
+  const above: { at: number; text: string }[] = [];
+  if (delta > 0n) above.push({ at: (pos + pU) / 2, text: "Locking" });
+  if (keeping) above.push({ at: pU + pW / 2, text: "Locking" });
+  else if (stillWaiting > 0n || delta < 0n) above.push({ at: midAt, text: "Unlocking" });
   return (
     <div class="funds-item-open">
       <div class="funds-row">
@@ -935,9 +940,14 @@ function FundRow(props: {
         {/* The name of the part in the middle stands above the bar, about over its part: the space on either side of it is
             shared out by where that part is. The row is always there, so that nothing jumps when the name comes and goes. */}
         <div class="mover-scale mover-above" aria-hidden="true">
-          <span class="mover-gap" style={{ flexGrow: Math.max(midAt, 1) }} />
-          <span class="mover-part mover-part-mid">{stillWaiting > 0n || delta < 0n ? "Unlocking" : "\u00a0"}</span>
-          <span class="mover-gap" style={{ flexGrow: Math.max(1000 - midAt, 1) }} />
+          {above.length === 0 ? <span class="mover-part mover-part-mid">{"\u00a0"}</span> : null}
+          {above.map((name, index) => (
+            <>
+              <span class="mover-gap" style={{ flexGrow: Math.max(name.at - (index > 0 ? above[index - 1]!.at : 0), 1) }} />
+              <span class="mover-part mover-part-mid">{name.text}</span>
+            </>
+          ))}
+          {above.length > 0 ? <span class="mover-gap" style={{ flexGrow: Math.max(1000 - above[above.length - 1]!.at, 1) }} /> : null}
         </div>
         <div class="mover-bar">
           <svg class="mover-svg" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true">
