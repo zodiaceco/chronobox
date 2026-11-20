@@ -370,6 +370,8 @@ export function QueueSection(props: {
 }) {
   const { session, chain, vault, inspection, queue, assets, now, canCancel, refresh } = props;
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  // What was cancelled a moment ago, for the sheet that says so.
+  const [cancelled, setCancelled] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<QueueItem | null>(null);
   // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
   // nothing else that is pending may block it.
@@ -395,8 +397,10 @@ export function QueueSection(props: {
   const cancel = (item: QueueItem) =>
     cancelAction.run("cancel", async (waiting) => {
       try {
+        const what = describe(item.tx ? classify(item.tx, vault) : null, assets, {}).title;
         await sendAndWait(session.rpc, session.account, cancelTx(vault.roles!, vault.delay, item.nonce), { ...sending, ...waiting });
         setCancelling(null);
+        setCancelled(what);
       } finally {
         refresh();
       }
@@ -516,6 +520,20 @@ export function QueueSection(props: {
           <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         </>
+      ) : null}
+      {cancelled ? (
+        <Modal title="Cancelled." onClose={() => setCancelled(null)}>
+          <div class="sun-pass">
+            <Dial size={96} play="cancel" />
+          </div>
+          <p class="big-line">{cancelled}</p>
+          <p>Nothing moved. It is locked as before.</p>
+          <div class="modal-actions">
+            <Button kind="primary" onClick={() => setCancelled(null)}>
+              Done
+            </Button>
+          </div>
+        </Modal>
       ) : null}
       {cancelling ? (
         <Modal title="Cancel this?" busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>

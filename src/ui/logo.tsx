@@ -30,8 +30,11 @@ export function Dial(props: {
   left?: number;
   /** The knob is turned: the wait is over. */
   turned?: boolean;
-  /** Plays once: "close" shuts an open ring (locked), "drain" opens a full ring a little (the wait has started). */
-  play?: "close" | "drain";
+  /**
+   * Plays once: "close" shuts an open ring (locked), "drain" opens a full ring a little (the wait has started),
+   * "cancel" snaps a half-drained ring shut in red, which then settles into the colour of the text (cancelled, locked as before).
+   */
+  play?: "close" | "drain" | "cancel";
   class?: string;
   label?: string;
 }) {
@@ -63,8 +66,10 @@ export function Dial(props: {
           pathLength="100"
           transform={RING}
           stroke-dasharray={full ? undefined : "100"}
-          stroke-dashoffset={full ? undefined : String(100 * (1 - (play === "drain" ? 1 : left)))}
+          stroke-dashoffset={full ? undefined : String(100 * (1 - (play === "drain" ? 1 : play === "cancel" ? 0.45 : left)))}
+          class={play === "cancel" ? "dial-cancel" : undefined}
         >
+          {play === "cancel" ? <animate attributeName="stroke-dashoffset" from="55" to="0" begin="0.35s" dur="0.45s" {...ease} /> : null}
           {play === "close" ? <animate attributeName="stroke-dashoffset" from="60" to="0" dur="0.9s" {...ease} /> : null}
           {play === "drain" ? <animate attributeName="stroke-dashoffset" from="0" to="14" begin="0.3s" dur="1.4s" {...ease} /> : null}
         </circle>
@@ -73,6 +78,12 @@ export function Dial(props: {
       {play === "close" ? (
         <circle cx="32" cy="32" r={RING_RADIUS} fill="none" stroke="currentColor" stroke-width={RING_WIDTH} opacity="0">
           <set attributeName="opacity" to="1" begin="0.9s" fill="freeze" />
+        </circle>
+      ) : null}
+      {/* After a cancel, the red ring gives way to a plain one in the colour of the text: locked as before. */}
+      {play === "cancel" ? (
+        <circle cx="32" cy="32" r={RING_RADIUS} fill="none" stroke="currentColor" stroke-width={RING_WIDTH} opacity="0">
+          <animate attributeName="opacity" from="0" to="1" begin="1.2s" dur="0.7s" fill="freeze" />
         </circle>
       ) : null}
       <path d={KNOB} fill-rule="evenodd" fill="currentColor" transform={props.turned ? `rotate(-180 32 32) ${KNOB_SCALE}` : KNOB_SCALE} />

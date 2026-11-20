@@ -3381,3 +3381,9 @@ img.token-icon {
   background-position: right 14px center;
   background-size: 12px 12px;
 }
+
+/* The ring of a cancel: sunrise red while it snaps shut */
+
+.dial-cancel {
+  stroke: var(--sunrise);
+}
