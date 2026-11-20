@@ -30,10 +30,13 @@ const SRC = path.join(ROOT, "src");
 const STATIC = path.join(ROOT, "static");
 const args = new Set(process.argv.slice(2));
 const DEV = args.has("--dev");
-/** A short tag of the film's content. It goes into the film's address, so that a new film is never taken from a cache. */
+/** A short tag of the film's content, in both of its sizes. It goes into the film's address, so that a new film is never taken from a cache. */
 function filmTag() {
-  const file = path.join(STATIC, "chronobox-film.mp4");
-  return existsSync(file) ? createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 10) : "none";
+  const files = ["chronobox-film.mp4", "chronobox-film-1440.mp4"].map((name) => path.join(STATIC, name)).filter((file) => existsSync(file));
+  if (files.length === 0) return "none";
+  const hash = createHash("sha256");
+  for (const file of files) hash.update(readFileSync(file));
+  return hash.digest("hex").slice(0, 10);
 }
 
 // The dev server writes to its own folder, so a production build never mixes with it.
