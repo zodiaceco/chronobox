@@ -200,6 +200,16 @@ export async function switchChain(provider: Provider, chain: Chain): Promise<voi
 }
 
 /**
+ * Asks the wallet to sign a typed message (EIP-712). It costs nothing and sends nothing.
+ * The answer is the signature as the wallet gave it. A refusal is thrown.
+ */
+export async function signTyped(provider: Provider, account: Address, data: object): Promise<string> {
+  const signature = await provider.request({ method: "eth_signTypedData_v4", params: [account, JSON.stringify(data)] });
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]*$/.test(signature)) throw new Error("The wallet did not give a signature");
+  return signature;
+}
+
+/**
  * Can this wallet send several calls as one atomic transaction (EIP-5792) today?
  * True for smart contract wallets such as a Safe, and for accounts that already
  * have EIP-7702 code. A wallet that does not know the method is a plain wallet.

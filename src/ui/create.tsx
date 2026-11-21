@@ -1,16 +1,24 @@
 /**
  * Creating a Chronobox, one question per screen: network, delay, two promises,
- * (for a wallet that can batch: money to put in), review, then the result
- * with the address to send money to. Every answer stays when you go back.
+ * money to put in, review, then the result. Every answer stays when you go back.
+ *
+ * Money can go in during the setup (see lib/deposit.ts). A wallet that can
+ * batch does all of it with one confirmation. Any other wallet sends the coin
+ * with the second setup transaction, signs for the tokens that take a signed
+ * message, and sends the other tokens one by one after the safety checks.
  */
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_USD } from "../lib/chains.ts";
+import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_STEPS } from "../lib/chains.ts";
+import { type Pick, type Pull, type Reserves, type Split, type Way, coinMax, feeReserves, chosenGive, formatUsd, freshPulls, giveChoices, holdingOrder, keptCoin, laterCoin, readPrices, signPull, splitContribution, suggestedGive, tokenPayment, usdValue, waysIn } from "../lib/deposit.ts";
 import { formatAmount, formatDuration, parseUnits } from "../lib/format.ts";
-import type { Address } from "../lib/hex.ts";
+import { type Address, sameAddress, toQuantity } from "../lib/hex.ts";
 import { blockHints, rememberVault } from "../lib/store.ts";
 import {
   EXPIRATION_SECONDS,
+  type TxRequest,
+  arrivedInReceipt,
+  depositTx,
   coinPriceUsd,
   usdToCoin,
   MAX_COOLDOWN,
@@ -28,9 +36,11 @@ import {
   slowAfterMs,
   tokenBalance,
 } from "../lib/chronobox.ts";
-import { assertWallet, canBatch, errorText, isRejection, sendBatch, switchChain } from "../lib/wallet.ts";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
+import { assertWallet, canBatch, errorText, isRejection, sendBatch, signTyped, switchChain } from "../lib/wallet.ts";
+import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
+import { FundList } from "./fund.tsx";
+import { OnUs, Support } from "./give.tsx";
 import { Mark } from "./logo.tsx";
 
 const PRESETS: { label: string; hint: string; seconds: bigint }[] = [
@@ -47,7 +57,25 @@ const RECEIVER: Address | null = CONTRIBUTION_RECEIVER ?? (__DEV__ ? "0x00000000
 
 type Plan = { index: number; safe: Address; created: boolean };
 type StepId = "network" | "delay" | "promises" | "fund" | "review";
-type Progress = "create" | "lock" | "batch" | "waiting" | "check";
+/**
+ * Where the setup stands: the id of a row on the working screen ("sign:3",
+ * "create", "lock", "check", "send:3", "batch"), or "waiting" for a batch
+ * that the wallet holds.
+ */
+type Progress = string;
+/** One asset that the owner chose: where it is in the list of assets, the amount as typed and as a number. */
+type Chosen = { index: number; asset: Asset; text: string; amount: bigint | null };
+/** An amount for the result screen. */
+type Line = { symbol: string; text: string };
+
+const COUNT = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const times = (n: number): string => (n === 1 ? "once" : n === 2 ? "twice" : `${COUNT[n] ?? n} times`);
+/** "a", "a and b", "a, b and c". */
+const listOf = (parts: string[]): string => (parts.length <= 1 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`);
+/** The same for parts that can have an "and" inside: "a, b and c, and d". */
+const stepsOf = (parts: string[]): string => (parts.length <= 2 ? parts.join(" and ") : `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`);
+/** ?fund=one shows the slider on the row in use only. A way to compare the two layouts. */
+const CALM = new URLSearchParams(location.search).get("fund") === "one";
 
 function Screen(props: { title: string; lead?: string; children: ComponentChildren }) {
   return (
@@ -79,17 +107,26 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [customUnit, setCustomUnit] = useState<"hours" | "days">("days");
   const [keepSafe, setKeepSafe] = useState(false);
   const [gladToWait, setGladToWait] = useState(false);
-  const [deposits, setDeposits] = useState<{ asset: number; amount: string }[]>([{ asset: 0, amount: "" }]);
-  // Another network has other assets. A choice made for the old one does not carry over.
-  useEffect(() => setDeposits([{ asset: 0, amount: "" }]), [chain?.id]);
+  // What goes in, as typed: one text for each asset, by its place in the list of assets.
+  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  // Another network or wallet has other assets. A choice made for the old one does not carry over.
+  useEffect(() => setAmounts({}), [chain?.id, session.account]);
+  const [prices, setPrices] = useState<(bigint | null)[]>([]);
+  // Coin that the wallet keeps: for the fees of the setup, and for the fees of a withdrawal or a cancel later.
+  const [reserve, setReserve] = useState<Reserves | null>(null);
+  // How each chosen token can go in. `key` names the tokens that the answer is for.
+  const [ways, setWays] = useState<{ key: string; byToken: Map<string, Way> } | null>(null);
+  // Tokens whose signed message did not work in this run. They go in with a transfer of their own.
+  const [demoted, setDemoted] = useState<number[]>([]);
+  // Did this run have to create the Chronobox? The working screen keeps that row.
+  const makes = useRef(true);
   // The contribution: a suggested amount in dollars, lower choices behind "Donate less", or any amount including 0.
-  const [giveUsd, setGiveUsd] = useState<number>(CONTRIBUTION_USD.suggested);
-  const [giveOwn, setGiveOwn] = useState("");
-  const [giveLess, setGiveLess] = useState(false);
+  // The owner's own choice in dollars, and whether it was more than the suggestion at that moment. Null: the amount that the app suggests.
+  const [givePick, setGivePick] = useState<{ usd: number; more: boolean } | null>(null);
   const [price, setPrice] = useState<bigint | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ chain: Chain; safe: Address; funded: boolean; unverified: boolean } | null>(null);
+  const [done, setDone] = useState<{ chain: Chain; safe: Address; unverified: boolean; inside: Line[] | null; stayed: Line[]; gave: string | null } | null>(null);
   const [reload, setReload] = useState(0);
   const [switchError, setSwitchError] = useState<string | null>(null);
   // A confirmation that takes long gets a way out. Stopping the wait does not undo what was sent.
@@ -141,7 +178,35 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   }, [progress]);
 
   const assets: Asset[] = useMemo(() => (chain ? assetsOf(chain) : []), [chain]);
-  const walletBalances = useBalances(session.rpc, batch ? session.account : null, assets);
+  const walletBalances = useBalances(session.rpc, chain ? session.account : null, assets);
+
+  useEffect(() => {
+    setPrices([]);
+    setReserve(null);
+    if (!chain) return;
+    let stale = false;
+    readPrices(session.rpc, chain, assets).then(
+      (read) => !stale && setPrices(read),
+      () => undefined,
+    );
+    feeReserves(session.rpc, chain.keep).then((r) => !stale && setReserve(r));
+    return () => {
+      stale = true;
+    };
+  }, [session.rpc, chain, assets]);
+
+  // What the wallet holds, most important first. Null while the balances load.
+  const order = useMemo(() => {
+    if (assets.length === 0 || walletBalances.length !== assets.length) return null;
+    const values = assets.map((a, i) => usdValue(walletBalances[i] ?? 0n, a.decimals, prices[i] ?? null));
+    return holdingOrder(assets, walletBalances, values);
+  }, [assets, walletBalances, prices]);
+  // The most that can go in. A wallet with no coin left could not withdraw or cancel, so the coin never goes in whole.
+  const kept = keptCoin(reserve ?? { setup: 10n ** 16n, later: chain?.keep ?? 0n }, walletBalances[0] ?? 0n);
+  const maxOf = (index: number): bigint => {
+    const held = walletBalances[index] ?? 0n;
+    return assets[index]?.token ? held : coinMax(held, kept);
+  };
 
   const cooldown: bigint | null =
     preset === "custom"
@@ -159,11 +224,46 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           : null;
   const delayText = cooldown !== null && !cooldownProblem ? formatDuration(cooldown) : "";
 
-  // A line with no amount is ignored.
-  const parsedDeposits = deposits
-    .filter((d) => d.amount.trim() !== "" && assets[d.asset])
-    .map((d) => ({ asset: assets[d.asset], text: d.amount.trim(), amount: parseUnits(d.amount, assets[d.asset].decimals) }));
-  const depositProblem = parsedDeposits.some((d) => d.amount === null || d.amount === 0n) ? "An amount is not a number above zero." : null;
+  // A row with no amount, or with zero, is not chosen.
+  const chosen: Chosen[] = (order ?? [])
+    .map((index) => ({ index, asset: assets[index], text: (amounts[index] ?? "").trim(), amount: parseUnits(amounts[index] ?? "", assets[index].decimals) }))
+    .filter((d) => d.text !== "" && d.amount !== 0n);
+  const depositProblem = chosen.some((d) => d.amount === null || d.amount > maxOf(d.index));
+  const amountOf = (d: Chosen, amount: bigint = d.amount ?? 0n): string => `${formatAmount(amount, d.asset.decimals)} ${d.asset.symbol}`;
+
+  // A plain wallet: ask each chosen token how it can go in. The answer says how often the wallet will ask.
+  const tokenKey = chosen
+    .filter((d) => d.asset.token)
+    .map((d) => d.asset.token!.toLowerCase())
+    .sort()
+    .join(",");
+  useEffect(() => {
+    if (!chain || batch || tokenKey === "") return;
+    let stale = false;
+    const tokens = tokenKey.split(",") as Address[];
+    waysIn(session.rpc, chain.id, session.account, tokens).then((found) => !stale && setWays({ key: tokenKey, byToken: new Map(tokens.map((t, i) => [t, found[i]])) }));
+    return () => {
+      stale = true;
+    };
+  }, [session.rpc, session.account, chain, batch, tokenKey]);
+  const waysKnown = batch || tokenKey === "" || ways?.key === tokenKey;
+  const wayOf = (d: Chosen): Way | undefined => (d.asset.token && !batch && ways?.key === tokenKey ? ways.byToken.get(d.asset.token.toLowerCase()) : undefined);
+  /** Does this asset go in with a signed message? Not when the signature failed in this run. */
+  const isSigned = (d: Chosen): boolean => {
+    const kind = wayOf(d)?.kind;
+    return (kind === "authorization" || kind === "permit") && !demoted.includes(d.index);
+  };
+  /** Does it move inside the setup itself: the coin, a signed token, or anything from a wallet that can batch? */
+  const inSetup = (d: Chosen): boolean => batch || !d.asset.token || isSigned(d);
+  const signs = chosen.filter((d) => !batch && isSigned(d)).length;
+  const sends = chosen.filter((d) => !inSetup(d)).length;
+  const confirms = batch ? 1 : (plan?.created ? 0 : 1) + 1 + sends;
+  const toPick = (d: Chosen, inside: boolean): Pick => ({ token: d.asset.token, amount: d.amount ?? 0n, decimals: d.asset.decimals, dollar: d.asset.usd === "one", inSetup: inside });
+  // All chosen amounts in dollars, when every one of them has a price.
+  const total = chosen.length > 0 && !depositProblem ? chosen.reduce<bigint | null>((sum, d) => {
+    const value = usdValue(d.amount ?? 0n, d.asset.decimals, prices[d.index] ?? null);
+    return sum === null || value === null ? null : sum + value;
+  }, 0n) : null;
 
   useEffect(() => {
     setPrice(null);
@@ -176,15 +276,49 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     };
   }, [session.rpc, chain]);
 
-  const ownText = giveOwn.trim().replace(",", ".");
-  const ownCents = /^[0-9]{1,5}([.][0-9]{1,2})?$/.test(ownText) ? Math.round(Number(ownText) * 100) : null;
-  const giveProblem = ownText !== "" && ownCents === null ? "Enter an amount in dollars, for example 5. Enter 0 to give nothing." : null;
-  const giveCents = ownText !== "" ? (ownCents ?? 0) : giveUsd * 100;
-  const contribution =
-    RECEIVER && chain && price !== null && giveCents > 0 && !giveProblem ? { to: RECEIVER, amount: usdToCoin(BigInt(giveCents), price) } : null;
-  const giveText = `$${giveCents % 100 === 0 ? giveCents / 100 : (giveCents / 100).toFixed(2)}`;
+  // The contribution follows the money: what goes in, or what the wallet holds when nothing goes in yet. Money without a price does not count.
+  const dollars = (amount: bigint, index: number): bigint => usdValue(amount, assets[index].decimals, prices[index] ?? null) ?? 0n;
+  const moneyIn = depositProblem ? 0n : chosen.reduce((sum, d) => sum + dollars(d.amount ?? 0n, d.index), 0n);
+  const moneyHeld = (order ?? []).reduce((sum, index) => sum + dollars(walletBalances[index] ?? 0n, index), 0n);
+  // No receiver, a test network or no price: nothing is asked.
+  const asks = !!RECEIVER && !!chain && price !== null;
+  const suggested = asks ? suggestedGive(chosen.length > 0 ? moneyIn : moneyHeld, CONTRIBUTION_STEPS) : 0;
+  const choices = giveChoices(suggested, CONTRIBUTION_STEPS);
+  // The owner can change it. The suggestion moves under that choice when other amounts go in.
+  const giveUsd = chosenGive(givePick, suggested, choices);
+  const pickGive = (usd: number) => setGivePick({ usd, more: usd > suggested });
+  const giveCents = giveUsd * 100;
+  const giveText = `$${giveUsd}`;
+  const contribution = RECEIVER && price !== null && giveCents > 0 ? { to: RECEIVER, amount: usdToCoin(BigInt(giveCents), price) } : null;
+  const give = contribution ? { cents: BigInt(giveCents), coin: contribution.amount } : null;
+  // Who pays the contribution. Null: nothing can pay it, and the setup goes on without one. While the balance is not known, the wallet pays.
+  const coinHeld = walletBalances[0] ?? null;
+  const toSplit = (g: typeof give): Split | null =>
+    coinHeld === null || reserve === null
+      ? { from: g ? "wallet" : "none", stays: chosen.map((d) => d.amount ?? 0n) }
+      : splitContribution(chosen.map((d) => toPick(d, inSetup(d))), g, coinHeld, batch ? 0n : kept);
+  const split = toSplit(give);
+  // Could the suggestion be paid at all? If not, the card does not show.
+  const payable = suggested > 0 && price !== null && toSplit({ cents: BigInt(suggested * 100), coin: usdToCoin(BigInt(suggested * 100), price) }) !== null;
+  // Is a contribution really paid in this setup?
+  const gives = !!contribution && split !== null && split.from !== "none";
+  // What the card says. "Of it" is true only when the contribution is a part of the money that goes in.
+  const giveTitle = (of: string): string => (!gives ? "No contribution this time." : split?.from === "wallet" ? `${giveText} keeps Chronobox free.` : `${giveText} ${of} keeps Chronobox free.`);
+  const giveDetail =
+    gives && split?.from === "wallet"
+      ? `Your wallet pays it ${batch ? "in the same confirmation" : "when it switches on the time delay"}. Chronobox is free software, and this pays for the work that keeps it safe.`
+      : undefined;
+  // In which money it is paid, for the summary and the card.
+  const givePaid = (): string => {
+    if (!contribution || !split || !chain) return "";
+    if (split.from === "token") {
+      const d = chosen.find((c) => sameAddress(c.asset.token, split.token))!;
+      return amountOf(d, split.fee);
+    }
+    return `about ${formatAmount(contribution.amount, 18, 5)} ${chain.native.symbol}`;
+  };
 
-  const steps: StepId[] = ["network", "delay", "promises", ...(batch ? (["fund"] as StepId[]) : []), "review"];
+  const steps: StepId[] = ["network", "delay", "promises", "fund", "review"];
   const current = steps[Math.min(step, steps.length - 1)];
   const canContinue =
     current === "network"
@@ -195,7 +329,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           ? keepSafe && gladToWait
           : current === "fund"
             ? !depositProblem
-            : !!plan && !giveProblem;
+            : !!plan && !depositProblem && waysKnown;
 
   /**
    * Is the Chronobox at this address finished? A wallet's network can be a few blocks behind
@@ -220,11 +354,17 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     running.current = true;
     stop.current = false;
     setError(null);
-    setProgress(batch ? "batch" : plan.created ? "lock" : "create");
+    setDemoted([]);
+    makes.current = !plan.created;
+    setProgress(batch ? "batch" : "start");
     const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current };
-    const finish = (safe: Address, state: "locked" | "unverified") => {
+    const money = chosen.filter((d) => d.amount !== null && d.amount > 0n);
+    const line = (d: Chosen, amount: bigint): Line => ({ symbol: d.asset.symbol, text: formatAmount(amount, d.asset.decimals) });
+    // Set once a contribution is part of what the wallet sends.
+    let gave: string | null = null;
+    const finish = (safe: Address, state: "locked" | "unverified", inside: Line[] | null = null, stayed: Line[] = []) => {
       rememberVault({ chainId: chain.id, safe, wallet: session.account });
-      setDone({ chain, safe, funded: batch && parsedDeposits.length > 0, unverified: state === "unverified" });
+      setDone({ chain, safe, unverified: state === "unverified", inside, stayed, gave: inside ? gave : null });
     };
     let target = plan.safe;
     // True from the moment a request goes to the wallet. After that, the chain says what happened, not an error.
@@ -232,33 +372,49 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     try {
       let now = await findPlan();
       setPlan(now);
+      makes.current = !now.created;
       target = now.safe;
-      if (contribution && !batch) {
-        const held = await nativeBalance(session.rpc, session.account);
-        if (held <= contribution.amount) {
-          throw new Error(`Your wallet does not have enough ${chain.native.symbol} for the contribution and the network fee. Choose a lower contribution, or 0.`);
-        }
+      await assertWallet(session.rpc, session.account, chain.id, chain.name);
+      for (const d of money) {
+        const held = d.asset.token ? await tokenBalance(session.rpc, d.asset.token, session.account) : await nativeBalance(session.rpc, session.account);
+        if (d.amount! > held) throw new Error(`Your wallet has only ${formatAmount(held, d.asset.decimals)} ${d.asset.symbol}.`);
       }
+      let inside: Line[] = [];
+      const stayed: Line[] = [];
+      let later: Chosen[] = [];
+
       if (batch) {
-        const totals = new Map<Asset, bigint>();
-        for (const d of parsedDeposits) totals.set(d.asset, (totals.get(d.asset) ?? 0n) + d.amount!);
-        if (contribution) totals.set(assets[0], (totals.get(assets[0]) ?? 0n) + contribution.amount);
-        for (const [asset, total] of totals) {
-          const held = asset.token ? await tokenBalance(session.rpc, asset.token, session.account) : await nativeBalance(session.rpc, session.account);
-          if (total > held) throw new Error(`Your wallet has only ${formatAmount(held, asset.decimals)} ${asset.symbol}.`);
-        }
+        const held = await nativeBalance(session.rpc, session.account);
+        // A contribution that nothing can pay is left out. It never stops the setup.
+        const parts = splitContribution(money.map((d) => toPick(d, true)), give, held, 0n) ?? splitContribution(money.map((d) => toPick(d, true)), null, held, 0n)!;
         const calls = setupCalls(
           session.account,
           now.index,
           now.created,
           cooldown,
-          parsedDeposits.map((d) => ({ token: d.asset.token, amount: d.amount! })),
-          contribution,
+          money.map((d, i) => ({ token: d.asset.token, amount: parts.stays[i] })),
+          parts.from === "wallet" || parts.from === "coin" ? contribution : null,
+          parts.from === "token" ? [tokenPayment(parts.token, contribution!.to, parts.fee, now.safe)] : [],
         );
-        await assertWallet(session.rpc, session.account, chain.id, chain.name);
+        inside = money.map((d, i) => line(d, parts.stays[i]));
+        if (parts.from !== "none") gave = giveText;
         asked = true;
         await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"), () => stop.current);
       } else {
+        // Signatures first. They cost nothing, and a refusal here leaves nothing half done.
+        const pulls: Pull[] = [];
+        const failed: number[] = [];
+        for (const d of money) {
+          const way = wayOf(d);
+          if (!d.asset.token || !way || way.kind === "transfer") continue;
+          setProgress(`sign:${d.index}`);
+          const pull = await signPull(session.rpc, (data) => signTyped(session.wallet.provider, session.account, data), way, d.asset.token, session.account, now.safe, d.amount!);
+          if (pull) pulls.push(pull);
+          else {
+            failed.push(d.index);
+            setDemoted([...failed]);
+          }
+        }
         if (!now.created) {
           setProgress("create");
           asked = true;
@@ -269,14 +425,70 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           setPlan(now);
         }
         setProgress("lock");
+        const safe = now.safe;
+        const held = await nativeBalance(session.rpc, session.account);
+        // The second setup transaction, with the money that can ride on it: the coin, and the tokens in `use`.
+        const build = (use: Pull[]) => {
+          const rides = (d: Chosen) => !d.asset.token || use.some((p) => sameAddress(p.token, d.asset.token));
+          // The fees of the setup are being paid now. What must still be there afterwards is the coin for later.
+          const picks = money.map((d) => toPick(d, rides(d)));
+          const parts = splitContribution(picks, give, held, reserve ? laterCoin(reserve, held) : 0n) ?? splitContribution(picks, null, held, 0n)!;
+          const coinAt = money.findIndex((d) => !d.asset.token);
+          const calls = use.flatMap((p) => p.calls);
+          if (parts.from === "token") calls.push(tokenPayment(parts.token, contribution!.to, parts.fee, safe));
+          const pays = parts.from === "wallet" || parts.from === "coin" ? contribution : null;
+          return { parts, rides, tx: lockTx(session.account, safe, cooldown, EXPIRATION_SECONDS, pays, { coin: coinAt >= 0 ? parts.stays[coinAt] : 0n, calls }) };
+        };
+        const passes = async (tx: TxRequest): Promise<boolean> => {
+          try {
+            await session.rpc("eth_call", [{ from: session.account, to: tx.to, data: tx.data, ...(tx.value ? { value: toQuantity(tx.value) } : {}) }, "latest"]);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        let use = await freshPulls(session.rpc, session.account, safe, pulls);
+        let built = build(use);
+        if (use.length > 0 && !(await passes(built.tx))) {
+          // A signed message that a token refuses must not stop the setup. Those tokens go in with a transfer of their own.
+          use = [];
+          setDemoted(money.filter((d) => d.asset.token && wayOf(d) && wayOf(d)!.kind !== "transfer").map((d) => d.index));
+          built = build(use);
+        }
+        const { parts, rides } = built;
+        if (parts.from !== "none") gave = giveText;
         asked = true;
-        await sendAndWait(session.rpc, session.account, lockTx(session.account, now.safe, cooldown, EXPIRATION_SECONDS, contribution), send);
+        await sendAndWait(session.rpc, session.account, built.tx, send);
+        money.forEach((d, i) => rides(d) && inside.push(line(d, parts.stays[i])));
+        later = money.filter((d) => !rides(d));
       }
+
       setProgress("check");
       const state = await verify(target, 5);
-      if (state === "locked" || state === "unverified") return finish(target, state);
       if (state === "invalid") throw new Error("Your Chronobox did not pass the safety checks. Do not send money to it.");
-      throw new Error("Your wallet's network does not show the result yet. Wait a minute, then go to the start page: your Chronobox appears there when it is ready.");
+      if (state !== "locked" && state !== "unverified") {
+        throw new Error("Your wallet's network does not show the result yet. Wait a minute, then go to the start page: your Chronobox appears there when it is ready.");
+      }
+      // The tokens that take no signed message: one transfer each, and only into a Chronobox that passed every check.
+      let open = state === "locked";
+      for (const d of later) {
+        if (!open) {
+          stayed.push(line(d, d.amount!));
+          continue;
+        }
+        setProgress(`send:${d.index}`);
+        try {
+          const receipt = await sendAndWait(session.rpc, session.account, depositTx(target, d.asset.token, d.amount!), send);
+          const arrived = arrivedInReceipt(receipt, d.asset.token!, target);
+          if (arrived > 0n) inside.push(line(d, arrived));
+          else stayed.push(line(d, d.amount!));
+        } catch {
+          // The Chronobox is ready. What did not go in stays in the wallet, and the owner can add it later.
+          stayed.push(line(d, d.amount!));
+          open = false;
+        }
+      }
+      return finish(target, state, inside, stayed);
     } catch (e) {
       if (asked && !isRejection(e)) {
         // Something may have reached the chain all the same. Look before saying that it failed.
@@ -302,25 +514,45 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   // --- The result ----------------------------------------------------------
   if (done) {
     return (
-      <section class="wiz wiz-done" key="done">
+      <section class={done.gave ? "wiz wiz-done wiz-gave" : "wiz wiz-done"} key="done">
         <div class="wiz-hero-mark">
           <Mark size={72} />
         </div>
         <Screen
           title="Your Chronobox is ready."
-          lead={done.funded ? `Your money is inside. From now on, every withdrawal waits ${delayText}.` : `From now on, every withdrawal waits ${delayText}.`}
+          lead={done.inside?.length ? `Your money is inside. From now on, every withdrawal waits ${delayText}.` : `From now on, every withdrawal waits ${delayText}.`}
         >
           {done.unverified ? (
             <Notice kind="risk" title="One safety check could not run here.">
               Nothing looks wrong. Your wallet's network did not give the old records that the check needs. Open your Chronobox and wait with
               deposits until the check passes.
             </Notice>
-          ) : done.funded ? null : (
+          ) : null}
+          {done.inside?.length ? (
+            <ul class="rows wiz-inside">
+              {done.inside.map((l) => (
+                <li class="row" key={l.symbol}>
+                  <span class="token-badge" aria-hidden="true">
+                    {l.symbol.slice(0, 1)}
+                  </span>
+                  <span class="row-label">{l.symbol}</span>
+                  <span class="row-value">{l.text}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {done.gave ? <p class="wiz-thanks">Thank you. Your {done.gave} helps to keep Chronobox free for the next person.</p> : null}
+          {done.stayed.length > 0 ? (
+            <Notice kind="info">
+              {listOf(done.stayed.map((l) => `${l.text} ${l.symbol}`))} stayed in your wallet. You can add it from your Chronobox.
+            </Notice>
+          ) : null}
+          {!done.unverified && !done.inside?.length && done.stayed.length === 0 ? (
             <>
               <p class="wiz-label">Put money in whenever you like</p>
               <DepositPanel session={session} chain={done.chain} safe={done.safe} assets={assets} quiet />
             </>
-          )}
+          ) : null}
         </Screen>
         <div class="wiz-foot">
           <Button kind="primary" onClick={() => props.onDone(done.chain, done.safe)}>
@@ -333,21 +565,30 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
   // --- The work in progress ------------------------------------------------
   if (progress) {
-    const rows: { id: Progress[]; text: string }[] = batch
+    const rides = chosen.filter(inSetup);
+    const lockText = stepsOf([
+      "Switch on the time delay",
+      ...(rides.length > 0 && !batch ? [`put ${listOf(rides.map((d) => amountOf(d)))} in`] : []),
+      ...(gives ? [`send your contribution of ${giveText}`] : []),
+    ]);
+    const rows: { id: string; text: string }[] = batch
       ? [
           {
-            id: ["batch", "waiting"],
-            text: (parsedDeposits.length > 0 ? "Create your Chronobox, switch on the time delay and put money in" : "Create your Chronobox and switch on the time delay") +
-              (contribution ? `, and send your contribution of ${giveText}` : ""),
+            id: "batch",
+            text:
+              (chosen.length > 0 ? "Create your Chronobox, switch on the time delay and put money in" : "Create your Chronobox and switch on the time delay") +
+              (gives ? `, and send your contribution of ${giveText}` : ""),
           },
-          { id: ["check"], text: "Run the safety checks" },
+          { id: "check", text: "Run the safety checks" },
         ]
       : [
-          { id: ["create"], text: "Create your Chronobox" },
-          { id: ["lock"], text: contribution ? `Switch on the time delay and send your contribution of ${giveText}` : "Switch on the time delay" },
-          { id: ["check"], text: "Run the safety checks" },
+          ...chosen.filter(isSigned).map((d) => ({ id: `sign:${d.index}`, text: `Allow ${amountOf(d)} to go in` })),
+          ...(makes.current ? [{ id: "create", text: "Create your Chronobox" }] : []),
+          { id: "lock", text: lockText },
+          { id: "check", text: "Run the safety checks" },
+          ...chosen.filter((d) => !inSetup(d)).map((d) => ({ id: `send:${d.index}`, text: `Put ${amountOf(d)} in` })),
         ];
-    const at = rows.findIndex((r) => r.id.includes(progress));
+    const at = rows.findIndex((r) => r.id === (progress === "waiting" ? "batch" : progress));
     return (
       <section class="wiz" key="work">
         <Screen
@@ -357,12 +598,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               ? "Almost there."
               : progress === "waiting"
                 ? "Your wallet has it. If it needs more signatures, collect them there. This page waits for you."
-                : "Your wallet is asking you to confirm."
+                : progress.startsWith("sign:")
+                  ? "Your wallet is asking you to sign. A signature costs nothing."
+                  : progress.startsWith("send:")
+                    ? "Your Chronobox is ready. Your wallet is asking you to confirm the next amount."
+                    : "Your wallet is asking you to confirm."
           }
         >
           <ol class="wiz-work">
             {rows.map((row, i) => {
-              const finished = i < at || (!!plan?.created && row.id[0] === "create");
+              const finished = i < at;
               return (
                 <li key={row.text} class={finished ? "wiz-work-done" : i === at ? "wiz-work-now" : ""}>
                   <span class="wiz-work-dot" aria-hidden="true">
@@ -487,32 +732,34 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     screen = (
       <Screen
         title="Put money in now?"
-        lead="Your wallet can create your Chronobox, switch on the time delay and put money in, all in one go. Or skip this and add money later."
+        lead={batch ? "Choose what goes in. Your wallet does it in the same confirmation as the setup." : "Choose what goes in. The rest stays in your wallet."}
       >
         <div class="wiz-fund">
-          {deposits.map((d, i) => (
-            <div class="deposit-row" key={i}>
-              <AssetAmount
-                assets={assets}
-                asset={d.asset}
-                amount={d.amount}
-                balances={walletBalances}
-                onAsset={(asset) => setDeposits((all) => all.map((x, k) => (k === i ? { ...x, asset } : x)))}
-                onAmount={(amount) => setDeposits((all) => all.map((x, k) => (k === i ? { ...x, amount } : x)))}
-              />
-              {deposits.length > 1 ? (
-                <button type="button" class="icon-button" aria-label="Remove this asset" onClick={() => setDeposits((all) => all.filter((_, k) => k !== i))}>
-                  <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-                    <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
-                  </svg>
-                </button>
-              ) : null}
-            </div>
-          ))}
-          <button type="button" class="link-button" onClick={() => setDeposits((all) => [...all, { asset: 0, amount: "" }])}>
-            Add another asset
-          </button>
-          {depositProblem ? <p class="field-error">{depositProblem}</p> : null}
+          <FundList
+            assets={assets}
+            order={order}
+            balances={walletBalances}
+            prices={prices}
+            maxOf={maxOf}
+            limitOf={maxOf}
+            amounts={amounts}
+            onAmount={(index, text) => setAmounts((all) => ({ ...all, [index]: text }))}
+            networkName={chain?.name ?? "this network"}
+            calm={CALM}
+          />
+          {total !== null ? <p class="fund-total">About {formatUsd(total)} goes in.</p> : null}
+          {asks && chosen.length > 0 && !depositProblem && moneyIn > 0n ? (
+            suggested === 0 ? (
+              <OnUs from={CONTRIBUTION_STEPS[CONTRIBUTION_STEPS.length - 1][0]} />
+            ) : payable ? (
+              <Support usd={gives ? giveUsd : 0} choices={choices} onPick={pickGive} title={giveTitle("of it")} detail={giveDetail} />
+            ) : null
+          ) : null}
+          {!batch && !depositProblem && signs + sends > 0 ? (
+            <p class="fund-sorry">
+              Your wallet is a bit old. It cannot do all of this in one go, so it will ask you {waysKnown ? `${COUNT[signs + confirms] ?? signs + confirms} times` : "several times"}. We are sorry.
+            </p>
+          ) : null}
         </div>
       </Screen>
     );
@@ -520,10 +767,12 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     screen = (
       <Screen title="Ready?" lead={
           batch
-            ? `Your wallet asks you to confirm once.${contribution ? ` Your contribution of ${giveText} goes with it.` : ""} If any part fails, nothing happens.`
-            : contribution
-              ? `Your wallet asks you to confirm twice: first to create your Chronobox, then to switch on the time delay and send your contribution of ${giveText}.`
-              : "Your wallet asks you to confirm twice: once to create your Chronobox, once to switch on the time delay."
+            ? `Your wallet asks you to confirm once.${gives ? ` Your contribution of ${giveText} goes with it.` : ""} If any part fails, nothing happens.`
+            : chosen.length > 0
+              ? `Your wallet asks you ${signs > 0 ? `to sign ${times(signs)} and ` : ""}to confirm ${times(confirms)}. If the setup fails, no money moves.`
+              : gives
+                ? `Your wallet asks you to confirm twice: first to create your Chronobox, then to switch on the time delay and send your contribution of ${giveText}.`
+                : "Your wallet asks you to confirm twice: once to create your Chronobox, once to switch on the time delay."
         }>
         <dl class="wiz-summary">
           <div>
@@ -540,63 +789,25 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               <AddressText address={session.account} full />
             </dd>
           </div>
-          {batch ? (
+          <div>
+            <dt>Goes in now</dt>
+            <dd>{chosen.length > 0 ? listOf(chosen.map((d, i) => amountOf(d, split?.stays[i]))) : "Nothing yet"}</dd>
+          </div>
+          {gives ? (
             <div>
-              <dt>Goes in now</dt>
-              <dd>{parsedDeposits.length > 0 ? parsedDeposits.map((d) => `${d.text} ${d.asset.symbol}`).join(", ") : "Nothing yet"}</dd>
+              <dt>Your contribution</dt>
+              <dd>{givePaid()}</dd>
             </div>
           ) : null}
         </dl>
-        {RECEIVER && chain && price !== null ? (
-          <div class="wiz-give">
-            <strong>{giveCents > 0 ? `Contribute ${giveText}` : "No contribution"}</strong>
-            {contribution ? (
-              <span class="wiz-give-coin">
-                about {formatAmount(contribution.amount, 18, 5)} {chain.native.symbol}. Your wallet shows this amount {batch ? "in the same confirmation" : "when you switch on the time delay"}.
-              </span>
-            ) : null}
-            <p>
-              Chronobox is free software. You can always run it yourself at no cost. Your contribution pays for the work that keeps this
-              app safe and maintained.
-            </p>
-            {giveLess ? (
-              <div class="wiz-give-less">
-                <div class="pills" role="radiogroup" aria-label="Contribution">
-                  {[CONTRIBUTION_USD.suggested, ...CONTRIBUTION_USD.less].map((usd) => (
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={ownText === "" && giveUsd === usd}
-                      class={ownText === "" && giveUsd === usd ? "pill pill-on" : "pill"}
-                      key={usd}
-                      onClick={() => {
-                        setGiveUsd(usd);
-                        setGiveOwn("");
-                      }}
-                    >
-                      ${usd}
-                    </button>
-                  ))}
-                  <label class="wiz-give-own">
-                    <span aria-hidden="true">$</span>
-                    <input
-                      class="input"
-                      inputMode="decimal"
-                      aria-label="Another amount in dollars"
-                      placeholder={String(CONTRIBUTION_USD.hint)}
-                      value={giveOwn}
-                      onInput={(event) => setGiveOwn((event.target as HTMLInputElement).value)}
-                    />
-                  </label>
-                </div>
-                {giveProblem ? <p class="field-error">{giveProblem}</p> : null}
-              </div>
-            ) : (
-              <button type="button" class="link-button" onClick={() => setGiveLess(true)}>
-                Donate less
-              </button>
-            )}
-          </div>
+        {asks && payable ? (
+          <Support
+            usd={gives ? giveUsd : 0}
+            choices={choices}
+            onPick={pickGive}
+            title={giveTitle("of what goes in")}
+            detail={giveDetail}
+          />
         ) : null}
         {plan?.created ? <Notice kind="info">Your Chronobox is created already. Only the time delay is not on yet.</Notice> : null}
         {loadError ? (
@@ -608,6 +819,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           </Notice>
         ) : !plan ? (
           <p class="wiz-note">Looking at what your wallet has already…</p>
+        ) : !waysKnown ? (
+          <p class="wiz-note">Looking at how your tokens can go in…</p>
         ) : null}
         {error ? <Notice kind="bad">{error}</Notice> : null}
       </Screen>
@@ -651,8 +864,20 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
       <div class="wiz-foot">
         <Button kind="primary" disabled={!canContinue} onClick={last ? run : () => setStep(step + 1)}>
-          {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && parsedDeposits.length === 0 ? "Skip for now" : "Continue"}
+          {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && chosen.length === 0 ? "Deposit later" : "Continue"}
         </Button>
+        {current === "fund" && chosen.length > 0 ? (
+          <button
+            type="button"
+            class="link-button wiz-later"
+            onClick={() => {
+              setAmounts({});
+              setStep(step + 1);
+            }}
+          >
+            Deposit later
+          </button>
+        ) : null}
         {last ? (
           <p class="wiz-note">
             By creating a Chronobox, you agree to the{" "}

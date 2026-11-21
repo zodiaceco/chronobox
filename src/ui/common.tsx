@@ -16,7 +16,7 @@ export type Session = {
 };
 
 /** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
-export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean };
+export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean; usd?: Token["usd"] };
 
 /**
  * Every asset the app knows on a network: the coin, the main tokens, tokens
@@ -31,7 +31,7 @@ export function assetsOf(chain: Chain): Asset[] {
       const key = t.address.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main });
+      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main, usd: t.usd });
     }
   };
   add(chain.tokens, true);

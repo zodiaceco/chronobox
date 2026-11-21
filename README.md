@@ -65,6 +65,24 @@ The Delay lets the setup wallet queue any transaction. The app builds three, and
 - **Change the delay**: the Safe calls `setTxCooldown` on the Delay.
 - **Change the wallet**: the Safe enables the new wallet on the Delay and disables the old one, and moves the right to cancel the same way, in one step. After it executes, only the new wallet controls the vault. The new wallet does not find the vault by itself, so keep its address.
 
+### Money in the setup
+
+The setup has a step "Put money in now?". It lists what the wallet holds, by dollar value where the app has a price (Chainlink feeds, read through the wallet), with five rows first and ten more for each "See more". Each row has a field and a slider with stops at 25%, 50%, 75% and everything. The slider gives round amounts. The step can be skipped ("Deposit later").
+
+A token moves only when its holder calls it, or when a spender that the holder approved calls it. During the setup the vault still belongs to the wallet and runs the setup batch, so it can collect tokens in that batch. After the lock it can act only through the delay. So for a plain wallet the setup is the one moment when money goes in without a transaction of its own:
+
+- **The coin** rides on the lock transaction and stays in the vault.
+- **A token that takes a signed message** (EIP-3009 `receiveWithAuthorization`, or an EIP-2612 `permit`) costs one free signature. The lock batch collects it. The app reads the way in from the token itself and offers a signature only when the token's own domain separator is the one it would sign for. It tries each signature against the token before it sends anything.
+- **Every other token** (USDT, WETH, WBTC and DAI on Ethereum, for example) is a plain transfer after the safety checks, one confirmation each.
+
+If the lock fails, no money moves. A token that refuses its signature falls back to a plain transfer. A permit that somebody else has used first does not stop the setup: the approval is in place, so the batch goes on without the permit call.
+
+The coin never goes in whole. The wallet is the only way to withdraw or to cancel, and both cost a network fee, so a wallet with no coin could do neither. "Max" of the coin leaves two things in the wallet: the fees of the setup (about half as much again as it really costs), and coin for a few transactions later (`keep` for each network in `src/lib/chains.ts`, more when fees are high, and never more than a quarter of what the wallet holds, so that a wallet with a few dollars can still try the app).
+
+The contribution follows the money. The app suggests an amount by how many dollars go in (`CONTRIBUTION_STEPS` in `src/lib/chains.ts`: nothing below $100, $1 from $100, up to $50 from $5,000 and never more). When nothing goes in yet, it counts what the wallet holds. The suggestion shows on the same screen as the amounts, under the total, and "Change" opens the choices: nothing, two smaller amounts, the suggestion, and one larger amount. So "Max" hides nothing. The contribution is a part of the money that goes in: it is taken from a dollar token (ten dollars are ten tokens), or from the coin. When neither goes in during the setup, the wallet pays it on top in coin. If nothing can pay it, the setup goes on without a contribution. It never stops the setup.
+
+`npm run test:fork:deposit` proves this against the real tokens: which tokens on the Ethereum list take a signature, a setup with coin, USDC and USDS, the contribution out of a dollar token, a used permit, and a failing pull that moves nothing.
+
 ### One transaction for wallets that can batch
 
 Some wallets can send several calls as one transaction: a Safe, or an account with EIP-7702 code. The app asks the wallet (`wallet_getCapabilities`, EIP-5792). If the answer is yes, the create screen sends create, lock and any number of deposits as one atomic batch (`wallet_sendCalls`). If one part fails, nothing happens. About 1,000,000 gas with two deposits. Other wallets keep the two-transaction setup. That includes a plain account that the wallet offers to upgrade to a smart account (status `ready`): the app does not start that upgrade.

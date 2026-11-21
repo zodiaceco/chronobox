@@ -41,6 +41,14 @@ export type Token = {
   address: Address;
   symbol: string;
   decimals: number;
+  /**
+   * What one token is worth in US dollars: "one" for a dollar token, "coin"
+   * for a wrapped coin of the network (the network's own price feed), or the
+   * address of a Chainlink feed in US dollars. Without it the app shows no
+   * dollar value. The value only sorts and labels. It never sets an amount,
+   * except for a contribution paid in a dollar token.
+   */
+  usd?: "one" | "coin" | Address;
 };
 
 export type Chain = {
@@ -59,6 +67,12 @@ export type Chain = {
    * the wallet, only to turn a contribution in dollars into the coin.
    */
   usdFeed: Address | null;
+  /**
+   * The least coin that stays in a wallet when it puts "everything" in a
+   * Chronobox. The wallet is the only way to withdraw or to cancel, and it
+   * pays the network fee for that. Enough for a few transactions on a busy day.
+   */
+  keep: bigint;
   tokens: Token[];
 };
 
@@ -69,8 +83,21 @@ export type Chain = {
  */
 export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da81505d736Efd61c8d";
 
-/** The suggested contribution in US dollars, the lower choices, and the hint in the free field. */
-export const CONTRIBUTION_USD = { suggested: 10, less: [5, 2], hint: 1 } as const;
+/**
+ * The suggested contribution in US dollars, by how much money is in play:
+ * what goes into the Chronobox during the setup, or what the wallet holds
+ * when nothing goes in yet. Each entry is [from this many dollars, suggest
+ * this many]. About one part in a hundred, never more than the first entry,
+ * and nothing below the last one: somebody who tries the app with a few
+ * dollars is not asked.
+ */
+export const CONTRIBUTION_STEPS: readonly (readonly [from: number, give: number])[] = [
+  [5000, 50],
+  [2500, 25],
+  [1000, 10],
+  [500, 5],
+  [100, 1],
+];
 
 export const CHAINS: Chain[] = [
   {
@@ -81,20 +108,21 @@ export const CHAINS: Chain[] = [
     explorer: "https://etherscan.io",
     publicRpc: "https://ethereum-rpc.publicnode.com",
     usdFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    keep: 5_000_000_000_000_000n,
     tokens: [
-      { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6 },
-      { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", decimals: 6 },
-      { address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", symbol: "DAI", decimals: 18 },
-      { address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F", symbol: "USDS", decimals: 18 },
+      { address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6, usd: "one" },
+      { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", decimals: 6, usd: "one" },
+      { address: "0x6B175474E89094C44Da98b954EedeAC495271d0F", symbol: "DAI", decimals: 18, usd: "one" },
+      { address: "0xdC035D45d973E3EC169d2276DDab16f1e407384F", symbol: "USDS", decimals: 18, usd: "one" },
       { address: "0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD", symbol: "sUSDS", decimals: 18 },
-      { address: "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c", symbol: "EURC", decimals: 6 },
-      { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", decimals: 18 },
+      { address: "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c", symbol: "EURC", decimals: 6, usd: "0xb49f677943BC038e9857d61E7d053CaA2C1734C1" },
+      { address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", symbol: "WETH", decimals: 18, usd: "coin" },
       { address: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0", symbol: "wstETH", decimals: 18 },
-      { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", symbol: "WBTC", decimals: 8 },
-      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8 },
-      { address: "0x45804880De22913dAFE09f4980848ECE6EcbAf78", symbol: "PAXG", decimals: 18 },
-      { address: "0x68749665FF8D2d112Fa859AA293F07A622782F38", symbol: "XAUt", decimals: 6 },
-      { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", symbol: "LINK", decimals: 18 },
+      { address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", symbol: "WBTC", decimals: 8, usd: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c" },
+      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, usd: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c" },
+      { address: "0x45804880De22913dAFE09f4980848ECE6EcbAf78", symbol: "PAXG", decimals: 18, usd: "0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6" },
+      { address: "0x68749665FF8D2d112Fa859AA293F07A622782F38", symbol: "XAUt", decimals: 6, usd: "0x214eD9Da11D2fbe465a6fc601a91E62EbEc1a0D6" },
+      { address: "0x514910771AF9Ca656af840dff83E8264EcF986CA", symbol: "LINK", decimals: 18, usd: "0x2c1d072e956AFFC0D435Cb7AC38EF18d24d9127c" },
     ],
   },
   {
@@ -105,14 +133,15 @@ export const CHAINS: Chain[] = [
     explorer: "https://basescan.org",
     publicRpc: "https://base-rpc.publicnode.com",
     usdFeed: "0x71041dddad3595F9CEd3DcCFBe3D1F4b0a16Bb70",
+    keep: 300_000_000_000_000n,
     tokens: [
-      { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
-      { address: "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc", symbol: "USDS", decimals: 18 },
-      { address: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", symbol: "EURC", decimals: 6 },
-      { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", decimals: 18 },
+      { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6, usd: "one" },
+      { address: "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc", symbol: "USDS", decimals: 18, usd: "one" },
+      { address: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42", symbol: "EURC", decimals: 6, usd: "0xc91D87E81faB8f93699ECf7Ee9B44D11e1D53F0F" },
+      { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", decimals: 18, usd: "coin" },
       { address: "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452", symbol: "wstETH", decimals: 18 },
-      { address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22", symbol: "cbETH", decimals: 18 },
-      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8 },
+      { address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22", symbol: "cbETH", decimals: 18, usd: "0xd7818272B9e248357d13057AAb0B417aF31E817d" },
+      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, usd: "0x64c911996D3c6aC71f9b455B1E8E7266BcbD848F" },
     ],
   },
   {
@@ -123,15 +152,16 @@ export const CHAINS: Chain[] = [
     explorer: "https://arbiscan.io",
     publicRpc: "https://arbitrum-one-rpc.publicnode.com",
     usdFeed: "0x639Fe6ab55C921f74e7fac1ee960C0B6293ba612",
+    keep: 300_000_000_000_000n,
     tokens: [
-      { address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", symbol: "USDC", decimals: 6 },
-      { address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", symbol: "USD₮0", decimals: 6 },
-      { address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", symbol: "DAI", decimals: 18 },
-      { address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", symbol: "WETH", decimals: 18 },
+      { address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", symbol: "USDC", decimals: 6, usd: "one" },
+      { address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", symbol: "USD₮0", decimals: 6, usd: "one" },
+      { address: "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1", symbol: "DAI", decimals: 18, usd: "one" },
+      { address: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", symbol: "WETH", decimals: 18, usd: "coin" },
       { address: "0x5979D7b546E38E414F7E9822514be443A4800529", symbol: "wstETH", decimals: 18 },
-      { address: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", symbol: "WBTC", decimals: 8 },
-      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8 },
-      { address: "0x912CE59144191C1204E64559FE8253a0e49E6548", symbol: "ARB", decimals: 18 },
+      { address: "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f", symbol: "WBTC", decimals: 8, usd: "0x6ce185860a4963106506C203335A2910413708e9" },
+      { address: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf", symbol: "cbBTC", decimals: 8, usd: "0x6ce185860a4963106506C203335A2910413708e9" },
+      { address: "0x912CE59144191C1204E64559FE8253a0e49E6548", symbol: "ARB", decimals: 18, usd: "0xb2A824043730FE05F3DA2efaFa1CBbe83fa548D6" },
     ],
   },
   {
@@ -142,15 +172,16 @@ export const CHAINS: Chain[] = [
     explorer: "https://gnosisscan.io",
     publicRpc: "https://rpc.gnosischain.com",
     usdFeed: null,
+    keep: 50_000_000_000_000_000n,
     tokens: [
-      { address: "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0", symbol: "USDC.e", decimals: 6 },
-      { address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d", symbol: "WXDAI", decimals: 18 },
+      { address: "0x2a22f9c3b484c3629090FeED35F17Ff8F88f76F0", symbol: "USDC.e", decimals: 6, usd: "one" },
+      { address: "0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d", symbol: "WXDAI", decimals: 18, usd: "coin" },
       { address: "0xaf204776c7245bF4147c2612BF6e5972Ee483701", symbol: "sDAI", decimals: 18 },
-      { address: "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430", symbol: "EURe", decimals: 18 },
-      { address: "0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1", symbol: "WETH", decimals: 18 },
+      { address: "0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430", symbol: "EURe", decimals: 18, usd: "0xab70BCB260073d036d1660201e9d5405F5829b7a" },
+      { address: "0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1", symbol: "WETH", decimals: 18, usd: "0xa767f745331D267c7751297D982b050c93985627" },
       { address: "0x6C76971f98945AE98dD7d4DFcA8711ebea946eA6", symbol: "wstETH", decimals: 18 },
-      { address: "0x8e5bBbb09Ed1ebdE8674Cda39A0c169401db4252", symbol: "WBTC", decimals: 8 },
-      { address: "0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb", symbol: "GNO", decimals: 18 },
+      { address: "0x8e5bBbb09Ed1ebdE8674Cda39A0c169401db4252", symbol: "WBTC", decimals: 8, usd: "0x6C1d7e76EF7304a40e8456ce883BC56d3dEA3F7d" },
+      { address: "0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdb", symbol: "GNO", decimals: 18, usd: "0x22441d81416430A54336aB28765abd31a792Ad37" },
     ],
   },
   {
@@ -162,6 +193,7 @@ export const CHAINS: Chain[] = [
     publicRpc: "https://ethereum-sepolia-rpc.publicnode.com",
     testnet: true,
     usdFeed: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    keep: 5_000_000_000_000_000n,
     tokens: [],
   },
 ];
