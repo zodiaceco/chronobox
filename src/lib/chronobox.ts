@@ -257,6 +257,15 @@ export function usdToCoin(cents: bigint, price: bigint): bigint {
 export type Contribution = { to: Address; amount: bigint };
 
 /**
+ * Money that goes in with step 2. `coin` is sent along and stays in the
+ * Chronobox. `calls` are made by the Chronobox itself: it collects tokens
+ * that the owner signed for (see deposit.ts). All of it happens with the
+ * setup or not at all.
+ */
+export type Money = { coin: bigint; calls: Call[] };
+const NO_MONEY: Money = { coin: 0n, calls: [] };
+
+/**
  * Step 2: one Safe transaction, sent by the owner wallet, that
  *   1. deploys the Delay (owner, avatar and target are the Safe),
  *   2. deploys the Roles modifier (owner, avatar and target are the Safe) and
@@ -264,7 +273,9 @@ export type Contribution = { to: Address; amount: bigint };
  *   3. enables the Delay and the Roles modifier as the modules of the Safe,
  *   4. enables the wallet as the only module of the Delay,
  *   5. replaces the wallet as Safe owner with the burn address,
- *   6. if the user chose to contribute: passes the contribution, which the
+ *   6. if money goes in now: collects the tokens that the owner signed for
+ *      (the coin came with the transaction and stays),
+ *   7. if the user chose to contribute: passes the contribution, which the
  *      wallet sends along with this transaction, on to its receiver.
  * All of it happens together or not at all.
  */
@@ -274,10 +285,12 @@ export function lockTx(
   cooldown: bigint,
   expiration: bigint = EXPIRATION_SECONDS,
   contribution: Contribution | null = null,
+  money: Money = NO_MONEY,
 ): TxRequest {
   if (contribution && (contribution.amount <= 0n || sameAddress(contribution.to, safe) || sameAddress(contribution.to, ZERO))) {
     throw new Error("The contribution is not valid");
   }
+  if (money.coin < 0n) throw new Error("The amount must not be less than zero");
   if (cooldown < 1n) throw new Error("The delay must be longer than zero");
   if (expiration !== 0n && expiration < 60n) throw new Error("The execution window must be at least 60 seconds");
   const delay = predictDelay(safe, cooldown, expiration);
@@ -299,8 +312,9 @@ export function lockTx(
     { to: safe, data: call("enableModule(address)", [roles]) },
     { to: delay, data: call("enableModule(address)", [wallet]) },
     { to: safe, data: call("swapOwner(address,address,address)", [SENTINEL, wallet, CONTRACTS.burn]) },
+    ...money.calls,
     ...(contribution ? [{ to: contribution.to, data: "0x" as Hex, value: contribution.amount }] : []),
-  ], contribution?.amount ?? 0n);
+  ], (contribution?.amount ?? 0n) + money.coin);
 }
 
 export type Deposit = { token: Address | null; amount: bigint };
@@ -319,12 +333,15 @@ export function setupCalls(
   cooldown: bigint,
   deposits: Deposit[],
   contribution: Contribution | null = null,
+  more: TxRequest[] = [],
 ): TxRequest[] {
   const safe = predictSafe(wallet, index);
   return [
     ...(created ? [] : [createTx(wallet, index)]),
     lockTx(wallet, safe, cooldown, EXPIRATION_SECONDS, contribution),
     ...deposits.map((d) => depositTx(safe, d.token, d.amount)),
+    // A contribution in a token: one more transfer by the wallet, in the same batch.
+    ...more,
   ];
 }
 

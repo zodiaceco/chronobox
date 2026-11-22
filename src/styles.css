@@ -2976,3 +2976,355 @@ button.row-strong:hover .row-hint {
   width: 168px;
   margin-inline: auto;
 }
+
+/* Put money in: what the wallet holds, each with an amount and a slider ----- */
+
+.fund {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.fund-row {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px 12px;
+}
+
+.fund-row + .fund-row {
+  border-top: 1px solid var(--line);
+}
+
+.fund-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.fund-name {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.fund-name strong {
+  font-weight: 600;
+}
+
+.fund-name span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.fund-name .fund-usd {
+  margin-left: 8px;
+  font-size: 0.85rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.fund-amount {
+  width: 116px;
+  text-align: right;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fund-row.is-on .fund-amount {
+  border-color: var(--blue);
+  font-weight: 600;
+}
+
+.fund-row.is-on .token-badge {
+  border-color: var(--blue);
+  background: var(--blue-wash);
+  color: var(--blue-text);
+}
+
+.fund-slide {
+  --part: 0;
+  --thumb: 26px;
+  position: relative;
+  height: 36px;
+}
+
+.fund-range {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  /* A drag along the slider is the slider's. A drag up or down scrolls the page. */
+  touch-action: pan-y;
+}
+
+.fund-range:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fund-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--blue) calc(var(--part) * 100%), var(--line) calc(var(--part) * 100%));
+}
+
+.fund-range::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.fund-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--blue);
+}
+
+.fund-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: -10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.12s ease;
+}
+
+.fund-range::-moz-range-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.fund-range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.fund-range:focus-visible {
+  outline: none;
+}
+
+.fund-range:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.fund-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Small marks under the track, where the slider stops by itself. */
+.fund-ticks {
+  position: absolute;
+  left: calc(var(--thumb) / 2);
+  right: calc(var(--thumb) / 2);
+  top: 25px;
+  height: 5px;
+  pointer-events: none;
+}
+
+.fund-ticks i {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 5px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--line-strong);
+}
+
+.fund-ticks i:nth-child(1) {
+  left: 25%;
+}
+
+.fund-ticks i:nth-child(2) {
+  left: 50%;
+}
+
+.fund-ticks i:nth-child(3) {
+  left: 75%;
+}
+
+.fund-ticks i:nth-child(4) {
+  left: 100%;
+}
+
+/* The quick amounts show on the row in use only, so that five rows stay calm. */
+.fund-stops {
+  display: none;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.fund-row.is-active .fund-stops {
+  display: grid;
+}
+
+.fund-stop {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.fund-stop:hover:not(:disabled) {
+  border-color: var(--line-strong);
+}
+
+.fund-stop-on {
+  border-color: var(--fg);
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.fund-stop:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fund-stop:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.fund-calm .fund-row:not(.is-active) .fund-slide {
+  display: none;
+}
+
+.fund-total {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.fund-sorry {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.92rem;
+  text-wrap: pretty;
+}
+
+.wiz-foot .wiz-later {
+  justify-self: center;
+}
+
+.wiz-inside {
+  width: 100%;
+}
+
+.wiz-inside .row {
+  grid-template-columns: auto 1fr auto;
+}
+
+.wiz-inside .row-value {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* The contribution card ----------------------------------------------------- */
+
+.support {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  align-items: center;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--blue-light);
+  border-radius: 16px;
+  background: var(--blue-wash);
+  text-align: left;
+}
+
+/* A small gold sun: the one place outside the welcome page where gold stands for a promise kept. */
+.support-sun {
+  grid-row: span 2;
+  width: 30px;
+  height: 30px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--gold) 22%, transparent);
+}
+
+.support strong {
+  font-weight: 600;
+}
+
+.support-text {
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-wrap: pretty;
+}
+
+.support-text .link-button {
+  font-size: inherit;
+}
+
+.support-pills {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  padding-top: 10px;
+}
+
+/* Up to five choices in one line, on a narrow phone too. "Nothing" is the longest word and gets the room it needs. */
+.support-pills .fund-stop {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.support-pills .fund-stop:first-child {
+  flex: 1.5 1 0;
+}
+
+.support-plain {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.support-plain .support-sun {
+  background: var(--line-strong);
+  box-shadow: none;
+}
+
+.wiz-thanks {
+  color: var(--muted);
+  font-size: 0.95rem;
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.wiz-gave .wiz-hero-mark .mark {
+  border-radius: 19px;
+  box-shadow: 0 0 0 3px var(--gold);
+}
