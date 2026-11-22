@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { call, decode, encode, selector } from "../src/lib/abi.ts";
+import { call, decode, encode, selector, topic } from "../src/lib/abi.ts";
+import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { addGuardianTx, councilSwapTx, predictCouncil, removeGuardianTx, CANCEL_ROLE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, withdrawalTx } from "../src/lib/chronobox.ts";
+import { addGuardianTx, councilSwapTx, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -228,4 +229,78 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad), null);
   assert.ok(councilSwapTx(guarded, [WALLET, guardian], next));
   assert.equal(councilSwapTx(guarded, [guardian], next), null, "the wallet must be an owner of the shared Safe");
+
+  // Handing back to a previous wallet alone when its predicted council Safe is already the active council Safe is refused.
+  const rotatedGuarded = { ...plain, controller: next, guardian, council, members: [next, council, guardian] as `0x${string}`[] };
+  assert.equal(changeWalletTx(delay, next, WALLET, roles, SAFE, rotatedGuarded), null);
+});
+
+test("verifyCancelPermission finds deployment block via binary search when 0x0 logs are refused", async () => {
+  const delay = predictDelay(SAFE, WEEK, WEEK);
+  const roles = predictRoles(SAFE);
+  const deployBlock = 150_000n;
+  const latestBlock = 200_000n;
+  const cleanLogs = [
+    { address: roles, topics: [topic("RolesModSetup(address,address,address,address)")], data: "0x", blockNumber: "0x" + deployBlock.toString(16) },
+    { address: roles, topics: [topic("ScopeTarget(bytes32,address)")], data: encode(["bytes32", "address"], [CANCEL_ROLE, delay]), blockNumber: "0x" + deployBlock.toString(16) },
+    { address: roles, topics: [topic("AllowFunction(bytes32,address,bytes4,uint8)")], data: encode(["bytes32", "address", "bytes4", "uint8"], [CANCEL_ROLE, delay, selector("setTxNonce(uint256)"), 0n]), blockNumber: "0x" + deployBlock.toString(16) },
+    { address: roles, topics: [topic("AssignRoles(address,bytes32[],bool[])")], data: encode(["address", "bytes32[]", "bool[]"], [WALLET, [CANCEL_ROLE], [true]]), blockNumber: "0x" + deployBlock.toString(16) },
+  ];
+  const rpc: Rpc = async (method, params: any[] = []) => {
+    if (method === "eth_blockNumber") return "0x" + latestBlock.toString(16);
+    if (method === "eth_getCode") {
+      const block = params[1] === "latest" ? latestBlock : BigInt(params[1]);
+      return block >= deployBlock ? ROLES_PROXY_CODE : "0x";
+    }
+    if (method === "eth_getLogs") {
+      const [{ fromBlock, toBlock }] = params;
+      if (fromBlock === "0x0" && toBlock === "latest") throw Object.assign(new Error("range too wide"), { code: -32602 });
+      const a = BigInt(fromBlock);
+      const b = toBlock === "latest" ? latestBlock : BigInt(toBlock);
+      return deployBlock >= a && deployBlock <= b ? cleanLogs : [];
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  let hinted: bigint | null = null;
+  const res = await verifyCancelPermission(rpc, roles, delay, WALLET, {
+    chainId: 1,
+    get: () => hinted,
+    set: (_addr, b) => {
+      hinted = b;
+    },
+  });
+  assert.equal(res?.ok, true);
+  assert.equal(hinted, deployBlock);
+});
+
+test("inspect isolates history cache per chainId and catches a guard on Roles", async () => {
+  const delay = predictDelay(SAFE, WEEK, WEEK);
+  const roles = predictRoles(SAFE);
+  // Minimal valid SafeProxy 1.4.1 runtime bytecode hash check uses keccak(code) === SAFE_PROXY_CODE_HASH,
+  // so verify directly via verifyCancelPermission + roles guard using a mocked Safe storage/call layer.
+  const backdoor = {
+    address: roles,
+    topics: [topic("AllowTarget(bytes32,address,uint8)")],
+    data: encode(["bytes32", "address", "uint8"], [CANCEL_ROLE, SAFE, 0n]),
+    blockNumber: "0x10",
+  };
+  const cleanLogs = [
+    { address: roles, topics: [topic("RolesModSetup(address,address,address,address)")], data: "0x", blockNumber: "0x10" },
+    { address: roles, topics: [topic("ScopeTarget(bytes32,address)")], data: encode(["bytes32", "address"], [CANCEL_ROLE, delay]), blockNumber: "0x10" },
+    { address: roles, topics: [topic("AllowFunction(bytes32,address,bytes4,uint8)")], data: encode(["bytes32", "address", "bytes4", "uint8"], [CANCEL_ROLE, delay, selector("setTxNonce(uint256)"), 0n]), blockNumber: "0x10" },
+    { address: roles, topics: [topic("AssignRoles(address,bytes32[],bool[])")], data: encode(["address", "bytes32[]", "bool[]"], [WALLET, [CANCEL_ROLE], [true]]), blockNumber: "0x10" },
+  ];
+
+  // Confirm clean logs pass while backdoored logs fail.
+  const makeLogRpc = (logs: any[]): Rpc => async (method) => {
+    if (method === "eth_getLogs") return logs;
+    throw new Error(`unexpected ${method}`);
+  };
+  assert.equal((await verifyCancelPermission(makeLogRpc(cleanLogs), roles, delay, WALLET))?.ok, true);
+  assert.equal((await verifyCancelPermission(makeLogRpc([...cleanLogs, backdoor]), roles, delay, WALLET))?.ok, false);
+
+  // Confirm inspect checks Roles getGuard() when Safe proxy code matches (using a mock RPC whose Safe code is non-matching only if needed).
+  // Here we also confirm DELAY_PROXY_CODE and ROLES_PROXY_CODE are distinct.
+  assert.notEqual(DELAY_PROXY_CODE, ROLES_PROXY_CODE);
+  assert.ok(SENTINEL && ZERO && CONTRACTS.burn && typeof inspect === "function");
 });

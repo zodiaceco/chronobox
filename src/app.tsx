@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { type Chain, CHAINS, chainById, chainByShort } from "./lib/chains.ts";
 import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
-import { buildChanged, lastAccount, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
+import { buildChanged, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
@@ -54,9 +54,12 @@ export function App() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const detach = useRef<(() => void) | null>(null);
+  const walletChip = useRef<HTMLDetailsElement>(null);
+  const prevAccount = useRef<Address | null>(null);
 
   useEffect(() => {
     const onHash = () => {
+      if (walletChip.current) walletChip.current.open = false;
       setRoute(parseRoute(location.hash));
       // "#how" is an anchor on the start page, not a route.
       if (location.hash.startsWith("#/")) window.scrollTo(0, 0);
@@ -65,11 +68,27 @@ export function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  useEffect(() => {
+    const closeMenu = (event: Event) => {
+      if (!walletChip.current?.open) return;
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !walletChip.current.contains(event.target as Node)) {
+        walletChip.current.open = false;
+      }
+    };
+    document.addEventListener("pointerdown", closeMenu);
+    document.addEventListener("keydown", closeMenu);
+    return () => {
+      document.removeEventListener("pointerdown", closeMenu);
+      document.removeEventListener("keydown", closeMenu);
+    };
+  }, []);
+
   useEffect(() => watchWallets(setWallets), []);
 
   const disconnect = useCallback(() => {
     detach.current?.();
     detach.current = null;
+    prevAccount.current = null;
     setSession(null);
     setLastWallet(null);
   }, []);
@@ -81,9 +100,17 @@ export function App() {
       return;
     }
     const chainId = await chainIdOf(wallet.provider);
+    const applyChain = (next: number) =>
+      setSession((s) => (s && s.chainId !== next ? { ...s, chainId: next, rpc: rpcOf(wallet.provider) } : s));
+    const switchTo = async (target: Chain) => {
+      await switchChain(wallet.provider, target);
+      // Some wallets resolve without emitting chainChanged. Read the active chain directly to stay in sync.
+      const actual = await chainIdOf(wallet.provider).catch(() => target.id);
+      applyChain(actual);
+    };
     const rpc = rpcOf(wallet.provider);
     detach.current?.();
-    setSession({ wallet, account: accounts[0], chainId, rpc });
+    setSession({ wallet, account: accounts[0], chainId, rpc, switchChain: switchTo });
     setLastWallet(wallet.id);
 
     const onAccounts = (list: string[]) => {
@@ -91,6 +118,7 @@ export function App() {
       if (!next) {
         detach.current?.();
         detach.current = null;
+        prevAccount.current = null;
         setSession(null);
       } else {
         setSession((s) => (s ? { ...s, account: next } : s));
@@ -102,13 +130,10 @@ export function App() {
       try {
         next = Number(BigInt(id));
       } catch {
-        chainIdOf(wallet.provider).then(
-          (value) => setSession((s) => (s ? { ...s, chainId: value } : s)),
-          () => undefined,
-        );
+        chainIdOf(wallet.provider).then(applyChain, () => undefined);
         return;
       }
-      setSession((s) => (s ? { ...s, chainId: next! } : s));
+      applyChain(next);
     };
     wallet.provider.on?.("accountsChanged", onAccounts);
     wallet.provider.on?.("chainChanged", onChain);
@@ -141,13 +166,13 @@ export function App() {
     }
   };
 
-  // Another account in the wallet is another person, as far as the app can tell. It gets its own
-  // list, and not the Chronobox of the account before it in a view that can do nothing.
+  // A live account switch inside the wallet while looking at a Chronobox goes back to the start,
+  // so the new account sees its own list. Freshly connecting on a deep link (e.g. a guardian link) stays.
   useEffect(() => {
     if (!session) return;
-    const before = lastAccount();
+    const before = prevAccount.current;
+    prevAccount.current = session.account;
     setLastAccount(session.account);
-    // A link that asks a guardian to agree is for the account that opens it. It stays.
     if (before && !sameAddress(before, session.account) && route.page === "vault" && !route.swapTo) location.hash = "#/";
   }, [session?.account]);
 
@@ -155,7 +180,7 @@ export function App() {
 
   let body;
   if (route.page === "start") {
-    body = <StartPage session={session} chain={chain} onConnect={() => setConnectOpen(true)} />;
+    body = <StartPage session={session} chain={chain} connectOpen={connectOpen} onConnect={() => setConnectOpen(true)} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
   } else if (route.page === "privacy") {
@@ -211,7 +236,7 @@ export function App() {
             kind="primary"
             onClick={() => {
               setSwitchError(null);
-              switchChain(session.wallet.provider, target).catch((e) => {
+              session.switchChain(target).catch((e) => {
                 if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${target.name} in your wallet itself.`);
               });
             }}
@@ -231,14 +256,16 @@ export function App() {
       <header class="top">
         <Lockup />
         {session ? (
-          <details class="wallet-chip">
+          <details class="wallet-chip" ref={walletChip}>
             <summary>
               <span class="dot" aria-hidden="true" />
               {shortAddress(session.account)}
               <span class="muted">{chain?.name ?? `Chain ${session.chainId}`}</span>
             </summary>
             <div class="wallet-menu">
-              <p class="muted">{session.wallet.name}</p>
+              <p class="muted">
+                {session.wallet.name} · {chain?.name ?? `Chain ${session.chainId}`}
+              </p>
               <p class="mono">
                 <AddressText address={session.account} full />
               </p>

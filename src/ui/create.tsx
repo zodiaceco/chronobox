@@ -36,8 +36,8 @@ import {
   slowAfterMs,
   tokenBalance,
 } from "../lib/chronobox.ts";
-import { assertWallet, canBatch, errorText, isRejection, sendBatch, signTyped, switchChain } from "../lib/wallet.ts";
-import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalances } from "./common.tsx";
+import { assertWallet, canBatch, errorText, isRejection, isTemporary, sendBatch, signTyped } from "../lib/wallet.ts";
+import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalancesState } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
 import { OnUs, Support } from "./give.tsx";
@@ -126,8 +126,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [price, setPrice] = useState<bigint | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ chain: Chain; safe: Address; unverified: boolean; inside: Line[] | null; stayed: Line[]; gave: string | null } | null>(null);
+  const [done, setDone] = useState<{ chain: Chain; safe: Address; unverified: boolean; inside: Line[] | null; stayed: Line[]; gave: string | null; uncertain?: boolean } | null>(null);
   const [reload, setReload] = useState(0);
+  const [balancesRound, setBalancesRound] = useState(0);
   const [switchError, setSwitchError] = useState<string | null>(null);
   // A confirmation that takes long gets a way out. Stopping the wait does not undo what was sent.
   const [slow, setSlow] = useState(false);
@@ -178,7 +179,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   }, [progress]);
 
   const assets: Asset[] = useMemo(() => (chain ? assetsOf(chain) : []), [chain]);
-  const walletBalances = useBalances(session.rpc, chain ? session.account : null, assets);
+  const balanceState = useBalancesState(session.rpc, chain ? session.account : null, assets, balancesRound);
+  const walletBalances = balanceState.balances;
+  const balancesFailed = !balanceState.loading && !balanceState.complete && walletBalances.length === assets.length && walletBalances.every((b) => b === null);
 
   useEffect(() => {
     setPrices([]);
@@ -197,10 +200,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
   // What the wallet holds, most important first. Null while the balances load.
   const order = useMemo(() => {
-    if (assets.length === 0 || walletBalances.length !== assets.length) return null;
+    if (assets.length === 0 || balanceState.loading || walletBalances.length !== assets.length) return null;
     const values = assets.map((a, i) => usdValue(walletBalances[i] ?? 0n, a.decimals, prices[i] ?? null));
     return holdingOrder(assets, walletBalances, values);
-  }, [assets, walletBalances, prices]);
+  }, [assets, balanceState.loading, walletBalances, prices]);
   // The most that can go in. A wallet with no coin left could not withdraw or cancel, so the coin never goes in whole.
   const kept = keptCoin(reserve ?? { setup: 10n ** 16n, later: chain?.keep ?? 0n }, walletBalances[0] ?? 0n);
   const maxOf = (index: number): bigint => {
@@ -337,12 +340,17 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
    * right after a transaction, so "not there yet" is asked again before it counts.
    */
   const verify = async (safe: Address, tries: number): Promise<"locked" | "unverified" | "invalid" | null> => {
+    let invalids = 0;
     for (let attempt = 0; attempt < tries; attempt++) {
       if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
       try {
         const result = await inspect(session.rpc, safe, chain ? blockHints(chain.id) : undefined);
         if ((result.state === "locked" || result.state === "unverified") && result.cooldown === cooldown) return result.state;
-        if (result.state === "invalid" || result.state === "locked" || result.state === "unverified") return "invalid";
+        // Right after mining, load-balanced RPCs can briefly serve mixed blocks across parallel reads.
+        // Require two readings (or the final try) before calling a Chronobox invalid.
+        if (result.state === "invalid" || result.state === "locked" || result.state === "unverified") {
+          if (++invalids >= 2 || attempt === tries - 1) return "invalid";
+        }
       } catch {
         // Ask again.
       }
@@ -361,11 +369,14 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current };
     const money = chosen.filter((d) => d.amount !== null && d.amount > 0n);
     const line = (d: Chosen, amount: bigint): Line => ({ symbol: d.asset.symbol, text: formatAmount(amount, d.asset.decimals) });
+    // Snapshot the confirmed contribution from the review screen so a hidden contribution is never sent quietly.
+    const confirmedGive = gives ? give : null;
+    const confirmedContribution = gives ? contribution : null;
     // Set once a contribution is part of what the wallet sends.
     let gave: string | null = null;
-    const finish = (safe: Address, state: "locked" | "unverified", inside: Line[] | null = null, stayed: Line[] = []) => {
+    const finish = (safe: Address, state: "locked" | "unverified", inside: Line[] | null = null, stayed: Line[] = [], uncertain = false) => {
       rememberVault({ chainId: chain.id, safe, wallet: session.account });
-      setDone({ chain, safe, unverified: state === "unverified", inside, stayed, gave: inside ? gave : null });
+      setDone({ chain, safe, unverified: state === "unverified", inside, stayed, gave: inside ? gave : null, uncertain });
     };
     let target = plan.safe;
     // True from the moment a request goes to the wallet. After that, the chain says what happened, not an error.
@@ -387,15 +398,15 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       if (batch) {
         const held = await nativeBalance(session.rpc, session.account);
         // A contribution that nothing can pay is left out. It never stops the setup.
-        const parts = splitContribution(money.map((d) => toPick(d, true)), give, held, 0n) ?? splitContribution(money.map((d) => toPick(d, true)), null, held, 0n)!;
+        const parts = splitContribution(money.map((d) => toPick(d, true)), confirmedGive, held, 0n) ?? splitContribution(money.map((d) => toPick(d, true)), null, held, 0n)!;
         const calls = setupCalls(
           session.account,
           now.index,
           now.created,
           cooldown,
           money.map((d, i) => ({ token: d.asset.token, amount: parts.stays[i] })),
-          parts.from === "wallet" || parts.from === "coin" ? contribution : null,
-          parts.from === "token" ? [tokenPayment(parts.token, contribution!.to, parts.fee, now.safe)] : [],
+          parts.from === "wallet" || parts.from === "coin" ? confirmedContribution : null,
+          parts.from === "token" ? [tokenPayment(parts.token, confirmedContribution!.to, parts.fee, now.safe)] : [],
         );
         inside = money.map((d, i) => line(d, parts.stays[i]));
         if (parts.from !== "none") gave = giveText;
@@ -432,21 +443,23 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         // The second setup transaction, with the money that can ride on it: the coin, and the tokens in `use`.
         const build = (use: Pull[]) => {
           const rides = (d: Chosen) => !d.asset.token || use.some((p) => sameAddress(p.token, d.asset.token));
-          // The fees of the setup are being paid now. What must still be there afterwards is the coin for later.
+          // Keep enough coin for the lock transaction, any plain transfers after it, and future withdraw/cancel fees.
           const picks = money.map((d) => toPick(d, rides(d)));
-          const parts = splitContribution(picks, give, held, reserve ? laterCoin(reserve, held) : 0n) ?? splitContribution(picks, null, held, 0n)!;
+          const remainingReserve = reserve ? laterCoin(reserve, held) + reserve.setup / 2n : 0n;
+          const parts = splitContribution(picks, confirmedGive, held, remainingReserve) ?? splitContribution(picks, null, held, 0n)!;
           const coinAt = money.findIndex((d) => !d.asset.token);
           const calls = use.flatMap((p) => p.calls);
-          if (parts.from === "token") calls.push(tokenPayment(parts.token, contribution!.to, parts.fee, safe));
-          const pays = parts.from === "wallet" || parts.from === "coin" ? contribution : null;
+          if (parts.from === "token") calls.push(tokenPayment(parts.token, confirmedContribution!.to, parts.fee, safe));
+          const pays = parts.from === "wallet" || parts.from === "coin" ? confirmedContribution : null;
           return { parts, rides, tx: lockTx(session.account, safe, cooldown, EXPIRATION_SECONDS, pays, { coin: coinAt >= 0 ? parts.stays[coinAt] : 0n, calls }) };
         };
         const passes = async (tx: TxRequest): Promise<boolean> => {
           try {
             await session.rpc("eth_call", [{ from: session.account, to: tx.to, data: tx.data, ...(tx.value ? { value: toQuantity(tx.value) } : {}) }, "latest"]);
             return true;
-          } catch {
-            return false;
+          } catch (err) {
+            // Only a contract revert demotes the signed pulls. A temporary RPC error is left to estimateGas.
+            return isTemporary(err);
           }
         };
         let use = await freshPulls(session.rpc, session.account, safe, pulls);
@@ -496,7 +509,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         // Something may have reached the chain all the same. Look before saying that it failed.
         setProgress("check");
         const state = await verify(target, 2);
-        if (state === "locked" || state === "unverified") return finish(target, state);
+        if (state === "locked" || state === "unverified") return finish(target, state, null, [], money.length > 0);
         try {
           const next = await findPlan();
           setPlan(next);
@@ -532,8 +545,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           ) : null}
           {done.inside?.length ? (
             <ul class="rows wiz-inside">
-              {done.inside.map((l) => (
-                <li class="row" key={l.symbol}>
+              {done.inside.map((l, i) => (
+                <li class="row" key={`${l.symbol}-${i}`}>
                   <span class="token-badge" aria-hidden="true">
                     {l.symbol.slice(0, 1)}
                   </span>
@@ -544,12 +557,17 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             </ul>
           ) : null}
           {done.gave ? <p class="wiz-thanks">Thank you for the {done.gave}. You made our day.</p> : null}
+          {done.uncertain ? (
+            <Notice kind="info">
+              Open your Chronobox to see which amounts went in. Anything that did not go in stayed in your wallet, and you can add it from your Chronobox.
+            </Notice>
+          ) : null}
           {done.stayed.length > 0 ? (
             <Notice kind="info">
               {listOf(done.stayed.map((l) => `${l.text} ${l.symbol}`))} stayed in your wallet. You can add it from your Chronobox.
             </Notice>
           ) : null}
-          {!done.unverified && !done.inside?.length && done.stayed.length === 0 ? (
+          {!done.unverified && !done.uncertain && !done.inside?.length && done.stayed.length === 0 ? (
             <>
               <p class="wiz-label">Put money in whenever you like</p>
               <DepositPanel session={session} chain={done.chain} safe={done.safe} assets={assets} quiet />
@@ -567,10 +585,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
   // --- The work in progress ------------------------------------------------
   if (progress) {
-    const rides = chosen.filter(inSetup);
+    const rides = chosen.map((d, i) => ({ d, stay: split?.stays[i] ?? d.amount ?? 0n })).filter(({ d }) => inSetup(d));
     const lockText = stepsOf([
       "Switch on the time delay",
-      ...(rides.length > 0 && !batch ? [`put ${listOf(rides.map((d) => amountOf(d)))} in`] : []),
+      ...(rides.length > 0 && !batch ? [`put ${listOf(rides.map(({ d, stay }) => amountOf(d, stay)))} in`] : []),
       ...(gives ? [`send your contribution of ${giveText}`] : []),
     ]);
     const rows: { id: string; text: string }[] = batch
@@ -646,7 +664,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     screen = (
       <Screen title="Where should it live?" lead="Choose the network where your money is.">
         <div class="wiz-list" role="radiogroup" aria-label="Network">
-          {CHAINS.filter((c) => !c.testnet || __DEV__ || c.id === session.chainId).map((c) => (
+          {CHAINS.filter((c) => (__DEV__ ? true : !c.testnet || c.id === session.chainId)).map((c) => (
             <Choice
               key={c.id}
               role="radio"
@@ -657,7 +675,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
                 // Show the choice at once. The wallet needs a moment, and sometimes a confirmation, to follow.
                 setPickedChain(c.id);
                 setSwitchError(null);
-                switchChain(session.wallet.provider, c).catch((e) => {
+                session.switchChain(c).catch((e) => {
                   setPickedChain(null);
                   if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${c.name} in your wallet itself.`);
                 });
@@ -747,6 +765,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             amounts={amounts}
             onAmount={(index, text) => setAmounts((all) => ({ ...all, [index]: text }))}
             networkName={chain?.name ?? "this network"}
+            failed={balancesFailed}
+            onRetry={() => setBalancesRound((r) => r + 1)}
             calm={CALM}
           />
           {total !== null ? <p class="fund-total">About {formatUsd(total)} goes in.</p> : null}

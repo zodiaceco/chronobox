@@ -175,7 +175,7 @@ export async function feeReserves(rpc: Rpc, keep: bigint): Promise<Reserves> {
   } catch {
     // Fall through.
   }
-  return { setup: 10_000_000_000_000_000n, later: keep };
+  return { setup: keep > 0n ? keep * 2n : 10_000_000_000_000_000n, later: keep };
 }
 
 /**
@@ -465,7 +465,12 @@ export async function signPull(
 export async function freshPulls(rpc: Rpc, wallet: Address, safe: Address, pulls: readonly Pull[]): Promise<Pull[]> {
   const permits = pulls.filter((p) => p.kind === "permit" && p.calls.length === 2);
   if (permits.length === 0) return [...pulls];
-  const allowances = await readMany(rpc, permits.map((p) => ({ to: p.token, data: call("allowance(address,address)", [wallet, safe]) })));
+  let allowances: (Hex | null)[];
+  try {
+    allowances = await readMany(rpc, permits.map((p) => ({ to: p.token, data: call("allowance(address,address)", [wallet, safe]) })));
+  } catch {
+    return [...pulls];
+  }
   return pulls.map((pull) => {
     const at = permits.indexOf(pull);
     const allowance = at >= 0 ? allowances[at] : null;

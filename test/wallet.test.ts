@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
-import { CONTRACTS } from "../src/lib/chains.ts";
-import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isTemporary, rpcOf, sendBatch } from "../src/lib/wallet.ts";
+import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
+import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isRejection, isTemporary, rpcOf, sendBatch, switchChain } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const B = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -227,4 +227,38 @@ test("a Chronobox cannot be handed to an address that nobody can sign with", () 
   for (const dead of [safe, delay, roles, CONTRACTS.burn, A, "0x0000000000000000000000000000000000000000", "0x0000000000000000000000000000000000000001"]) {
     assert.equal(changeWalletTx(delay, A as any, dead as any, roles, safe), null, dead);
   }
+});
+
+test("wrapped wallet errors (4902 and 4001) are recognised", async () => {
+  const wrapped4902 = Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: { originalError: { code: 4902, message: "Unrecognized chain ID" } } });
+  let added = false;
+  const p = provider({
+    wallet_switchEthereumChain: () => {
+      throw wrapped4902;
+    },
+    wallet_addEthereumChain: () => {
+      added = true;
+      return null;
+    },
+  });
+  await switchChain(p, CHAINS[1]);
+  assert.equal(added, true);
+
+  const wrapped4001 = Object.assign(new Error("Request failed"), { cause: { code: 4001, message: "Rejected" } });
+  assert.equal(isRejection(wrapped4001), true);
+  assert.match(errorText(wrapped4001), /You rejected/);
+});
+
+test("a plain coin transfer omits empty data in sendAndWait", async () => {
+  let sentTx: Record<string, string> | null = null;
+  const p = provider({
+    eth_estimateGas: () => "0x5208",
+    eth_sendTransaction: ([tx]) => {
+      sentTx = tx;
+      return HASH;
+    },
+    eth_getTransactionReceipt: () => ({ transactionHash: HASH, blockNumber: "0x10", status: "0x1", logs: [] }),
+  });
+  await sendAndWait(rpcOf(p), A, { to: B, data: "0x", value: 1n });
+  assert.equal("data" in sentTx!, false);
 });

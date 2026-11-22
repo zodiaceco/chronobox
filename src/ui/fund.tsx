@@ -142,6 +142,9 @@ export function FundList(props: {
   amounts: Record<number, string>;
   onAmount: (index: number, text: string) => void;
   networkName: string;
+  /** True when the wallet's network did not answer and no balances could be read. */
+  failed?: boolean;
+  onRetry?: () => void;
   /** Show the slider only on the row in use. The other rows stay one line high. */
   calm?: boolean;
   disabled?: boolean;
@@ -150,6 +153,18 @@ export function FundList(props: {
   const [shown, setShown] = useState(FIRST_ROWS);
   const [active, setActive] = useState<number | null>(null);
   if (order === null) return <p class="wiz-note">Looking at what your wallet holds…</p>;
+  if (props.failed && order.length === 0) {
+    return (
+      <p class="read-failed" role="status">
+        Your wallet's network did not answer, so your balances could not be read.{" "}
+        {props.onRetry ? (
+          <button type="button" class="link-button" onClick={props.onRetry}>
+            Try again
+          </button>
+        ) : null}
+      </p>
+    );
+  }
   if (order.length === 0) return <p class="wiz-note">This wallet holds nothing on {props.networkName} that Chronobox knows. You can send money to your Chronobox at any time.</p>;
   const rest = order.length - shown;
   const current = active ?? order[0];

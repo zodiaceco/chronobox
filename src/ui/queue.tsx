@@ -4,7 +4,8 @@
 import type { Chain } from "../lib/chains.ts";
 import { shortAddress } from "../lib/format.ts";
 import { sameAddress } from "../lib/hex.ts";
-import { type DelayTx, type Receipt, type VaultParts, Replaced, StoppedWaiting, queueTx, sendAndWait } from "../lib/chronobox.ts";
+import { type DelayTx, type Receipt, type VaultParts, Replaced, StoppedWaiting, delayTxHash, queueTx, queuedInReceipt, sendAndWait } from "../lib/chronobox.ts";
+import { txCache } from "../lib/store.ts";
 import { Button, Modal, type Session, type Waiting } from "./common.tsx";
 
 /** The parts of the Chronobox on the page. With a guardian: who it is, and the Safe that the guardian shares with the wallet. */
@@ -20,7 +21,11 @@ export async function queueItem(session: Session, chain: Chain, vault: VaultRef,
     throw new Error(`Your wallet is on another account now. Only the wallet ${shortAddress(vault.controller)} can do this.`);
   }
   try {
-    return await sendAndWait(session.rpc, session.account, queueTx(vault.delay, tx), { chainId: chain.id, chainName: chain.name, ...waiting });
+    const receipt = await sendAndWait(session.rpc, session.account, queueTx(vault.delay, tx), { chainId: chain.id, chainName: chain.name, ...waiting });
+    // Remember what just went into the line, so the vault page does not have to scan logs for it.
+    const cache = txCache(chain.id, vault.delay);
+    for (const one of queuedInReceipt(receipt, vault.delay)) cache.set(one.nonce, delayTxHash(one.tx), one.tx);
+    return receipt;
   } catch (e) {
     if (e instanceof Replaced || e instanceof StoppedWaiting) return null;
     throw e;

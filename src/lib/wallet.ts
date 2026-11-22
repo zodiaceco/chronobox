@@ -92,14 +92,22 @@ const READS = new Set([
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function messageOf(error: unknown): string {
-  const e = error as { message?: string; shortMessage?: string; data?: { message?: string } } | null;
-  return String(e?.data?.message || e?.shortMessage || e?.message || error || "");
+  const e = error as { message?: string; shortMessage?: string; data?: { message?: string; originalError?: { message?: string } }; cause?: { message?: string } } | null;
+  return String(e?.data?.originalError?.message || e?.data?.message || e?.shortMessage || e?.cause?.message || e?.message || error || "");
+}
+
+function errorCode(error: unknown): number | undefined {
+  const e = error as { code?: unknown; cause?: { code?: unknown }; data?: { code?: unknown; originalError?: { code?: unknown } } } | null;
+  for (const candidate of [e?.data?.originalError?.code, e?.cause?.code, e?.code, e?.data?.code]) {
+    if (typeof candidate === "number") return candidate;
+  }
+  return undefined;
 }
 
 /** Would the same request probably work a moment later? */
 export function isTemporary(error: unknown, method = ""): boolean {
   if (error instanceof RpcTimeout) return true;
-  const code = (error as { code?: number } | null)?.code;
+  const code = errorCode(error);
   const text = messageOf(error).toLowerCase();
   if (code === 4001 || code === 4100 || code === -32601 || code === -32602) return false;
   if (/revert|user rejected|user denied|insufficient funds|invalid opcode|out of gas/.test(text)) return false;
@@ -183,7 +191,8 @@ export async function switchChain(provider: Provider, chain: Chain): Promise<voi
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
   } catch (error) {
-    if ((error as { code?: number }).code !== 4902) throw error;
+    const missing = errorCode(error) === 4902 || /unrecognized chain|unknown chain|not been added/i.test(messageOf(error));
+    if (!missing) throw error;
     await provider.request({
       method: "wallet_addEthereumChain",
       params: [
@@ -251,14 +260,13 @@ export async function sendBatch(
   } catch (error) {
     // Only a wallet that does not know version 2 of the standard gets the first draft. Any other
     // failure may come after the owner approved, and a second request could send the batch twice.
-    const code = (error as { code?: number }).code;
+    const code = errorCode(error);
     const unknownVersion = code === -32602 || code === 5700 || /version|atomicrequired|unsupported|not supported/i.test(messageOf(error));
     if (!unknownVersion) throw error;
     try {
       result = await provider.request({ method: "wallet_sendCalls", params: [{ version: "1.0", ...base }] });
     } catch (second) {
-      const again = (second as { code?: number }).code;
-      throw again === 4001 ? second : error;
+      throw isRejection(second) ? second : error;
     }
   }
   const id = typeof result === "string" ? result : (result as { id?: string })?.id;
@@ -303,7 +311,7 @@ export class BatchUnknown extends Error {
 
 /** Did the person say no in the wallet? Then nothing was sent. */
 export function isRejection(error: unknown): boolean {
-  const code = (error as { code?: number } | null)?.code;
+  const code = errorCode(error);
   return code === 4001 || /user rejected|user denied|rejected the request|user cancel/.test(messageOf(error).toLowerCase());
 }
 
@@ -324,7 +332,7 @@ const REASONS: [RegExp, string][] = [
 /** A short, plain message for an error that came from a wallet or an RPC. */
 export function errorText(error: unknown): string {
   const e = error as { code?: number; name?: string; message?: string } | null;
-  const code = e?.code;
+  const code = errorCode(error);
   const text = messageOf(error);
   const lower = text.toLowerCase();
 

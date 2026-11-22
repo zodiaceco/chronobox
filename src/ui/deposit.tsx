@@ -3,7 +3,7 @@
  * receive from any wallet or exchange, any token, any number of times.
  * Sending from the connected wallet is the second way, one asset at a time.
  */
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
 import type { Chain } from "../lib/chains.ts";
 import { formatAmount, formatUnits, parseUnits } from "../lib/format.ts";
@@ -35,7 +35,7 @@ export function QrCode(props: { text: string; label: string }) {
   );
 }
 
-export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; quiet?: boolean }) {
+export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; onBusy?: (busy: boolean) => void; quiet?: boolean }) {
   const { session, chain, safe, assets } = props;
   const [copied, setCopied] = useState(false);
   const [fromWallet, setFromWallet] = useState(false);
@@ -44,10 +44,18 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
   const [sent, setSent] = useState<string | null>(null);
   const [round, setRound] = useState(0);
   const action = useAction();
-  const asset = assets[assetIndex];
+  const safeIndex = assetIndex < assets.length ? assetIndex : 0;
+  const currentAsset = useRef(safeIndex);
+  currentAsset.current = safeIndex;
+  const asset = assets[safeIndex];
   const amount = parseUnits(amountText, asset.decimals);
   const balances = useBalances(session.rpc, fromWallet ? session.account : null, assets, round);
-  const held = balances[assetIndex];
+  const held = balances[safeIndex];
+
+  useEffect(() => {
+    props.onBusy?.(action.busy !== null && !action.slow);
+    return () => props.onBusy?.(false);
+  }, [action.busy, action.slow, props.onBusy]);
 
   const copy = async () => {
     try {
@@ -59,15 +67,16 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
     }
   };
 
-  const send = () =>
-    action.run("deposit", async (waiting) => {
+  const send = () => {
+    setSent(null);
+    return action.run("deposit", async (waiting) => {
       const symbol = asset.symbol;
       if (held !== null && held !== undefined && amount! > held) {
         throw new Error(`Your wallet has only ${formatAmount(held, asset.decimals)} ${symbol}.`);
       }
       if (!asset.token && held !== null && held !== undefined) {
         // The coin also pays the network fee. Sending all of it cannot work.
-        const reserve = await feeReserve(session.rpc);
+        const reserve = await feeReserve(session.rpc, chain.keep);
         if (amount! + reserve > held) {
           const most = held > reserve ? held - reserve : 0n;
           throw new Error(
@@ -99,10 +108,15 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
         props.onSent?.();
       }
     });
+  };
 
   const max = async () => {
     if (!held) return;
-    const most = asset.token ? held : held - (await feeReserve(session.rpc));
+    const index = safeIndex;
+    const most = asset.token ? held : held - (await feeReserve(session.rpc, chain.keep));
+    if (currentAsset.current !== index) return;
+    setSent(null);
+    action.clearError();
     setAmountText(most > 0n ? formatUnits(most, asset.decimals) : "0");
   };
   const bad = amountText.trim() !== "" && amount === null;
@@ -124,11 +138,20 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
         <div class="deposit-wallet">
           <AssetAmount
             assets={assets}
-            asset={assetIndex}
+            asset={safeIndex}
             amount={amountText}
             balances={balances}
-            onAsset={setAssetIndex}
-            onAmount={setAmountText}
+            onAsset={(index) => {
+              setAssetIndex(index);
+              setAmountText("");
+              setSent(null);
+              action.clearError();
+            }}
+            onAmount={(text) => {
+              setAmountText(text);
+              setSent(null);
+              action.clearError();
+            }}
             onMax={held ? max : undefined}
             disabled={!!action.busy}
           />

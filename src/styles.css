@@ -12,6 +12,7 @@
   --blue: #469ced;
   --blue-dark: #286cb2;
   --blue-light: #b1d3f2;
+  --blue-border: #b1d3f2;
   --blue-wash: #eef6fd;
   --blue-text: #1f5fa3;
   /* Gold is for the promises on the welcome page only. It is not the amber of a risk notice. */
@@ -39,6 +40,7 @@
     --line: #26262a;
     --line-strong: #3a3a40;
     --panel: #151517;
+    --blue-border: #1e3a5c;
     --blue-wash: #0f1c2a;
     --blue-text: #8fc3f5;
     --risk-bg: #2a1f08;
@@ -280,7 +282,6 @@ main {
 
 .button:focus-visible,
 .link-button:focus-visible,
-.pill:focus-visible,
 .input:focus-visible,
 .icon-button:focus-visible,
 summary:focus-visible,
@@ -342,10 +343,6 @@ a:focus-visible {
   .spinner {
     animation-duration: 2s;
   }
-}
-
-.push-right {
-  margin-left: auto;
 }
 
 /* Wallet chip ------------------------------------------------------------ */
@@ -1081,23 +1078,25 @@ a:focus-visible {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px 26px;
+  gap: 10px 14px;
 }
 
 .trust li {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   white-space: nowrap;
 }
 
 .trust-tick {
   flex: none;
+  width: 18px;
+  height: 18px;
   color: var(--gold);
 }
 
 .trust strong {
-  font-size: 1rem;
+  font-size: 0.875rem;
   line-height: 1.3;
 }
 
@@ -1229,6 +1228,14 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.open-form {
+  width: 100%;
+  max-width: 520px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+
 .open-row {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -1254,49 +1261,9 @@ a:focus-visible {
   margin-top: 8px;
 }
 
-.field {
-  display: grid;
-  gap: 10px;
-}
-
-.field-label {
-  display: block;
-  font-weight: 600;
-  font-size: 0.95rem;
-  margin-top: 4px;
-}
-
 .field-error {
   color: var(--bad-fg);
   font-size: 0.9rem;
-}
-
-.pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.pill {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-  cursor: pointer;
-}
-
-.pill-on {
-  border-color: var(--fg);
-  background: var(--fg);
-  color: var(--bg);
-}
-
-.pill:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .input {
@@ -1321,82 +1288,6 @@ a:focus-visible {
   grid-template-columns: 110px auto;
   gap: 8px;
   justify-content: start;
-}
-
-.deposit-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.check-row {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  align-items: start;
-  cursor: pointer;
-}
-
-.check-row input {
-  width: 18px;
-  height: 18px;
-  margin: 3px 0 0;
-  accent-color: var(--fg);
-}
-
-.steps {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  counter-reset: step;
-  background: var(--bg);
-}
-
-.steps li {
-  counter-increment: step;
-  display: grid;
-  grid-template-columns: 28px 1fr;
-  column-gap: 12px;
-  padding: 14px 16px;
-}
-
-.steps li + li {
-  border-top: 1px solid var(--line);
-}
-
-.steps li::before {
-  content: counter(step);
-  grid-row: span 2;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  display: grid;
-  place-items: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.steps li span {
-  color: var(--muted);
-  font-size: 0.925rem;
-}
-
-.steps .step-active::before {
-  border-color: var(--blue);
-  color: var(--blue-text);
-  box-shadow: 0 0 0 3px var(--blue-wash);
-}
-
-.steps .step-done::before {
-  content: "✓";
-  background: var(--blue);
-  border-color: var(--blue);
-  color: #fff;
 }
 
 /* Create flow: one question per screen ------------------------------------ */
@@ -1602,10 +1493,6 @@ a:focus-visible {
   justify-items: start;
 }
 
-.wiz-fund .deposit-row {
-  width: 100%;
-}
-
 .wiz-summary {
   margin: 0;
   border: 1px solid var(--line);
@@ -1637,54 +1524,6 @@ a:focus-visible {
 .wiz-summary dd.mono {
   font-size: 0.85rem;
   font-weight: 400;
-}
-
-.wiz-give {
-  display: grid;
-  gap: 6px;
-  justify-items: start;
-  padding: 16px 18px;
-  border: 1.5px solid var(--blue);
-  border-radius: 18px;
-  background: var(--blue-wash);
-}
-
-.wiz-give strong {
-  font-size: 1.08rem;
-}
-
-.wiz-give-coin {
-  color: var(--blue-text);
-  font-size: 0.875rem;
-}
-
-.wiz-give p {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.wiz-give-less {
-  display: grid;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.wiz-give-own {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-}
-
-.wiz-give-own .input {
-  width: 84px;
-  min-height: 40px;
-  border-radius: 999px;
-  text-align: center;
-}
-
-.wiz-give-own .input::placeholder {
-  color: var(--line-strong);
 }
 
 .wiz-foot {
@@ -1811,10 +1650,6 @@ a:focus-visible {
   border-top: 1px solid var(--line);
 }
 
-.deposit-reminder {
-  text-align: center;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .wiz-screen,
   .wiz-tick-on {
@@ -1860,27 +1695,9 @@ a:focus-visible {
 
 /* Vault ------------------------------------------------------------------ */
 
-.vault-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  justify-content: space-between;
-  gap: 8px 16px;
-}
-
 .eyebrow {
   color: var(--muted);
   font-size: 0.875rem;
-}
-
-.vault-title {
-  font-size: 1.75rem;
-}
-
-.vault-address {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .address {
@@ -1914,44 +1731,6 @@ a:focus-visible {
 
 .mono .address {
   font-size: inherit;
-}
-
-/* The lock: the one thing on this page that carries Zodiac blue. */
-.lock-banner {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 4px 18px;
-  padding: 16px 18px;
-  border-radius: var(--radius);
-  background: var(--blue-wash);
-  color: var(--blue-text);
-}
-
-.lock-delay {
-  font-size: 1.6rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  white-space: nowrap;
-}
-
-.lock-text {
-  font-size: 0.95rem;
-}
-
-@media (max-width: 480px) {
-  .lock-banner {
-    grid-template-columns: 1fr;
-  }
-}
-
-.card {
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-  display: grid;
-  gap: 18px;
 }
 
 .balances {
@@ -2076,22 +1855,6 @@ a:focus-visible {
   border-radius: 999px;
 }
 
-.details {
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg);
-}
-
-.details summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.details[open] summary {
-  margin-bottom: 4px;
-}
-
 .checks {
   list-style: none;
   padding: 0;
@@ -2131,18 +1894,6 @@ a:focus-visible {
 
 .check-bad .check-mark {
   font-weight: 700;
-}
-
-.code {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--panel);
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  line-height: 1.6;
-  overflow-x: auto;
-  white-space: pre;
 }
 
 /* Modal ------------------------------------------------------------------ */
@@ -2296,29 +2047,6 @@ a:focus-visible {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-size: 0.9rem;
-}
-
-.fixed-destination {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--panel);
-  font-size: 0.9rem;
-}
-
-.address-box {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: var(--panel);
-}
-
-.address-box code {
-  font-family: var(--mono);
-  font-size: 0.85rem;
-  overflow-wrap: anywhere;
 }
 
 .big-line {
@@ -2687,6 +2415,10 @@ button.row-strong:hover .row-hint {
   animation: sheet-up 0.26s ease;
 }
 
+.modal:focus {
+  outline: none;
+}
+
 @keyframes sheet-up {
   from {
     transform: translateY(18px);
@@ -2718,15 +2450,6 @@ button.row-strong:hover .row-hint {
   font-size: 1.02rem;
 }
 
-.sheet-block {
-  display: grid;
-  gap: 6px;
-}
-
-.sheet-block p {
-  color: var(--muted);
-}
-
 .big-line {
   text-align: center;
   line-height: 1.15;
@@ -2749,6 +2472,17 @@ button.row-strong:hover .row-hint {
     padding-bottom: max(22px, env(safe-area-inset-bottom));
     max-height: 92dvh;
     overflow-y: auto;
+  }
+  /* On narrow screens the sheet scrolls, so keep the token list anchored to the viewport instead of clipping it inside a short modal. */
+  .modal .token-list {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    top: auto;
+    width: auto;
+    max-height: 50dvh;
+    box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
   }
 }
 
@@ -2812,6 +2546,12 @@ button.row-strong:hover .row-hint {
   aspect-ratio: 16 / 9;
   border-radius: 14px;
   background: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .film {
+    border: 1px solid var(--line);
+  }
 }
 
 /* Failures that are not the person's fault: say what is not known, and offer another try. */
@@ -3030,7 +2770,8 @@ button.row-strong:hover .row-hint {
 }
 
 .fund-amount {
-  width: 116px;
+  width: 124px;
+  padding: 0 10px;
   text-align: right;
   font-size: 1.1rem;
   font-variant-numeric: tabular-nums;
@@ -3257,7 +2998,7 @@ button.row-strong:hover .row-hint {
   align-items: center;
   width: 100%;
   padding: 14px 16px;
-  border: 1px solid var(--blue-light);
+  border: 1px solid var(--blue-border);
   border-radius: 16px;
   background: var(--blue-wash);
   text-align: left;

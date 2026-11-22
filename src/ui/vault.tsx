@@ -20,7 +20,7 @@ import {
   changeWalletTx,
   chainTime,
   classify,
-  delayTxHash,
+  councilCompatible,
   executeTx,
   inspect,
   itemStatus,
@@ -36,7 +36,7 @@ import {
   MAX_COOLDOWN,
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
-import { errorText, isRejection } from "../lib/wallet.ts";
+import { errorText } from "../lib/wallet.ts";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -129,13 +129,15 @@ function useVault(session: Session, chain: Chain, safe: Address) {
   return { data, error, refresh };
 }
 
-/** Chain time in seconds, advanced by the local clock between reads. */
+/** Chain time in seconds, advanced by the local clock between reads. Only ticks while something is waiting. */
 function useChainClock(data: VaultData | null): bigint {
   const [, setBeat] = useState(0);
+  const active = (data?.queue.length ?? 0) > 0;
   useEffect(() => {
+    if (!active) return;
     const timer = setInterval(() => setBeat((b) => b + 1), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [active]);
   if (!data) return 0n;
   return data.now + BigInt(Math.floor((Date.now() - data.fetchedAt) / 1000));
 }
@@ -172,6 +174,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const { data, error, refresh } = useVault(session, chain, safe);
   const now = useChainClock(data);
   const [sheet, setSheet] = useState<Sheet>(null);
+  const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
   const [copied, setCopied] = useState(false);
   // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
@@ -280,14 +283,21 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown = held.length > 0 ? held : [{ asset: assets[0], amount: balances[0] ?? 0n }];
   const unread = assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol);
-  // The item in the line that the cancel dialog is about may be gone by now.
+  // The item in the line that a dialog is about may be gone by now.
   const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
+  const confirmItem = confirming ? (queue.find((q) => q.nonce === confirming.nonce) ?? null) : null;
   const passed = inspection.checks.filter((c) => c.ok).length;
   const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
 
   return (
     <section class="page vault">
       <Status inspection={inspection} session={session} chain={chain} />
+      {props.swapTo && vault && !isGuardian && inspection.guardian && !sameAddress(props.swapTo, inspection.controller) ? (
+        <Notice kind="info" title="This link is for the guardian.">
+          It asks the guardian <AddressText address={inspection.guardian} /> to agree to moving this Chronobox to{" "}
+          <AddressText address={props.swapTo} />. Connect that wallet to answer it.
+        </Notice>
+      ) : null}
       {error ? (
         <p class="read-failed" role="status">
           Your wallet's network did not answer. This page shows what it read at {new Date(data.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.{" "}
@@ -421,8 +431,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
-        <Modal title="Add money" onClose={close}>
-          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} />
+        <Modal title="Add money" busy={depositBusy} onClose={close}>
+          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} onSent={refresh} onBusy={setDepositBusy} />
         </Modal>
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
@@ -497,25 +507,38 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
       {confirming && vault ? (
         <Modal title="Carry this out?" onClose={() => setConfirming(null)}>
-          <p class="big-line">{describe(confirming.tx ? classify(confirming.tx, vault) : null, assets, {}).title}</p>
-          <Notice kind="risk">{describe(confirming.tx ? classify(confirming.tx, vault) : null, assets, {}).warning}</Notice>
-          <div class="modal-actions">
-            {canCancel ? (
-              <Button kind="primary" onClick={() => askCancel(confirming)}>
-                Cancel it
-              </Button>
-            ) : null}
-            <Button
-              kind="quiet"
-              onClick={() => {
-                const item = confirming;
-                setConfirming(null);
-                finish(item);
-              }}
-            >
-              Carry it out
-            </Button>
-          </div>
+          {confirmItem ? (
+            <>
+              <p class="big-line">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}).title}</p>
+              <Notice kind="risk">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}).warning}</Notice>
+              <div class="modal-actions">
+                {canCancel ? (
+                  <Button kind="primary" onClick={() => askCancel(confirmItem)}>
+                    Cancel it
+                  </Button>
+                ) : null}
+                <Button
+                  kind="quiet"
+                  onClick={() => {
+                    const item = confirmItem;
+                    setConfirming(null);
+                    finish(item);
+                  }}
+                >
+                  Carry it out
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>This item is not in the line any more. It was cancelled or carried out already.</p>
+              <div class="modal-actions">
+                <Button kind="primary" onClick={() => setConfirming(null)}>
+                  Close
+                </Button>
+              </div>
+            </>
+          )}
         </Modal>
       ) : null}
     </section>
@@ -728,14 +751,18 @@ function WithdrawSheet(props: {
   onClose: () => void;
 }) {
   const { session, vault, inspection, assets, balances } = props;
-  const [assetIndex, setAssetIndex] = useState(0);
+  const [assetIndex, setAssetIndex] = useState(() => {
+    const firstHeld = balances.findIndex((b) => b !== null && b > 0n);
+    return firstHeld >= 0 ? firstHeld : 0;
+  });
   const [amountText, setAmountText] = useState("");
   const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
   const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();
 
-  const asset = assets[assetIndex];
+  const safeIndex = assetIndex < assets.length ? assetIndex : 0;
+  const asset = assets[safeIndex];
   // What earlier items in line will already take out.
   const reserved = useMemo(() => {
     let sum = 0n;
@@ -750,7 +777,7 @@ function WithdrawSheet(props: {
     }
     return sum;
   }, [props.queue, asset, vault, inspection.cooldown, inspection.expiration, props.now]);
-  const inside = balances[assetIndex];
+  const inside = balances[safeIndex];
   const available = inside === null ? 0n : inside > reserved ? inside - reserved : 0n;
   const amount = parseUnits(amountText, asset.decimals);
   const problem =
@@ -761,9 +788,13 @@ function WithdrawSheet(props: {
         : amount === null
           ? "Enter the amount as a plain number, for example 1000 or 1.5."
         : amount === 0n
-          ? "Enter more than zero."
+          ? reserved > 0n && available === 0n
+            ? `All of your ${asset.symbol} is already waiting in line.`
+            : "Enter more than zero."
           : amount > available
-            ? `You can withdraw up to ${formatAmount(available, asset.decimals)} ${asset.symbol}.`
+            ? available === 0n && reserved > 0n
+              ? `All of your ${asset.symbol} is already waiting in line.`
+              : `You can withdraw up to ${formatAmount(available, asset.decimals)} ${asset.symbol}.`
             : null;
   const delayText = formatDuration(inspection.cooldown);
   const amountLine = amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "";
@@ -775,8 +806,6 @@ function WithdrawSheet(props: {
       if (!receipt) return setStage("unknown");
       // The withdrawal is in the line. Nothing after this may look like a failure.
       const added = queuedInReceipt(receipt, vault.delay);
-      const cache = txCache(props.chain.id, vault.delay);
-      for (const one of added) cache.set(one.nonce, delayTxHash(one.tx), one.tx);
       setQueued({ nonce: added[0]?.nonce ?? inspection.queueNonce, at: await receiptTime(session.rpc, receipt) });
       setStage("done");
     });
@@ -829,7 +858,14 @@ function WithdrawSheet(props: {
           <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
-          <Button kind="quiet" onClick={() => setStage("form")} disabled={!!action.busy}>
+          <Button
+            kind="quiet"
+            onClick={() => {
+              action.clearError();
+              setStage("form");
+            }}
+            disabled={!!action.busy}
+          >
             Back
           </Button>
         </div>
@@ -841,7 +877,7 @@ function WithdrawSheet(props: {
     <Modal title="Withdraw" lead="How much do you need?" onClose={props.onClose}>
       <AssetAmount
         assets={assets}
-        asset={assetIndex}
+        asset={safeIndex}
         amount={amountText}
         balances={balances}
         onAsset={(index) => {
@@ -855,6 +891,7 @@ function WithdrawSheet(props: {
         <p class="field-error">{problem}</p>
       ) : (
         <p class="hint">
+          {reserved > 0n ? `${formatAmount(reserved, asset.decimals)} ${asset.symbol} is already waiting in line. ` : ""}
           After {delayText}, you collect it here. Then it goes to your wallet <AddressText address={vault.controller} />.
         </p>
       )}
@@ -976,7 +1013,11 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
   // A request that the guardian has not answered yet. The owner can close the page and come back to it.
   const [asking, setAsking] = useState<Address | null>(() => (guard ? pendingSwap(props.chain.id, vault.safe) : null));
   const next = parseAddress(text);
+  // Base address check (independent of council replacement, which only "alone" mode needs).
+  const baseValid = next ? changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe, null) !== null && (!guard || (!sameAddress(next, guard.guardian) && !sameAddress(next, guard.council))) : false;
   const tx = next ? changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe, guard) : null;
+  const [incompatible, setIncompatible] = useState(false);
+  const councilCollision = !!guard && mode === "alone" && baseValid && (!tx || incompatible);
   const problem =
     text.trim() === ""
       ? null
@@ -988,25 +1029,34 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
             ? "This is the address of the Chronobox itself. Enter the address of the new wallet."
             : guard && sameAddress(next, guard.guardian)
               ? "This is the wallet of your guardian. Wallet and guardian must be two wallets."
-            : !tx
-              ? "Nobody can sign with this address. Enter the address of a wallet."
-              : null;
+              : !baseValid
+                ? "Nobody can sign with this address. Enter the address of a wallet."
+                : councilCollision
+                  ? "This wallet held this Chronobox before. Hand over to it with your guardian, or use another wallet address alone."
+                  : null;
   const wait = formatDuration(inspection.cooldown);
   const [unknown, setUnknown] = useState(false);
   // A contract at the new address is not wrong (it can be a Safe), but it is worth a second look.
   const [isContract, setIsContract] = useState(false);
   useEffect(() => {
     setIsContract(false);
-    if (!next || !tx) return;
+    setIncompatible(false);
+    if (!next || !baseValid) return;
     let stale = false;
     session.rpc("eth_getCode", [next, "latest"]).then(
       (code: string) => !stale && setIsContract(typeof code === "string" && code.length > 2),
       () => undefined,
     );
+    if (guard && tx) {
+      councilCompatible(session.rpc, vault.safe, next, guard.guardian).then(
+        (ok) => !stale && setIncompatible(!ok),
+        () => undefined,
+      );
+    }
     return () => {
       stale = true;
     };
-  }, [next, !!tx, session.rpc]);
+  }, [next, baseValid, !!tx, guard?.guardian, vault.safe, session.rpc]);
   const submit = () =>
     action.run("queue", async (waiting) => {
       const receipt = await queueItem(session, props.chain, vault, tx!, waiting);
@@ -1103,11 +1153,11 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
       ) : null}
       <div class="modal-actions">
         {guard && mode === "together" ? (
-          <Button kind="primary" disabled={!tx || !sure} busy={action.busy === "ask"} onClick={ask}>
+          <Button kind="primary" disabled={!baseValid || !sure} busy={action.busy === "ask"} onClick={ask}>
             {action.busy ? "Confirm in your wallet" : "Ask my guardian"}
           </Button>
         ) : (
-          <Button kind="primary" disabled={!tx || !sure} busy={action.busy === "queue"} onClick={submit}>
+          <Button kind="primary" disabled={!tx || incompatible || !sure} busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
         )}
@@ -1133,7 +1183,7 @@ function TokenSheet(props: { session: Session; chain: Chain; onClose: () => void
       props.onClose();
     });
   return (
-    <Modal title="Add a token" lead={`Your Chronobox can hold any token on ${props.chain.name}. Paste its address to see it here.`} onClose={props.onClose}>
+    <Modal title="Add a token" lead={`Your Chronobox can hold any token on ${props.chain.name}. Paste its address to see it here.`} busy={action.busy !== null} onClose={props.onClose}>
       <input
         class="input"
         placeholder="Token address"

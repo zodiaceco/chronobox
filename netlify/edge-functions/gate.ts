@@ -40,7 +40,12 @@ export default async (req: Request, context: { next: () => Promise<Response> }) 
   const url = new URL(req.url);
 
   if (url.pathname === "/login" && req.method === "POST") {
-    const form = await req.formData();
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch {
+      return new Response("Bad request", { status: 400 });
+    }
     const given = String(form.get("password") || "");
     if (!same(await token(given), await token(password))) {
       await new Promise((r) => setTimeout(r, 600));

@@ -6,6 +6,7 @@
  * All pictures use the same 64 x 64 grid as the mark.
  */
 import type { ComponentChildren } from "preact";
+import { useId } from "preact/hooks";
 
 const WHITE = "#fff";
 const BLUE = "#469CED";
@@ -32,23 +33,25 @@ function arc(from: number, to: number): string {
 
 /**
  * The tile. `behind` is drawn behind the planet, the children in front of it.
- * The ids are the same in every tile on a page, and so is what they define.
  */
 export function Tile(props: { size?: number; class?: string; planet?: boolean; behind?: ComponentChildren; children?: ComponentChildren }) {
+  const id = useId();
+  const tileId = `cb-tile-${id}`;
+  const skyId = `cb-sky-${id}`;
   return (
     <svg class={props.class ?? "mark"} viewBox="0 0 64 64" width={props.size ?? 64} height={props.size ?? 64} aria-hidden="true" focusable="false">
       <defs>
-        <clipPath id="cb-tile">
+        <clipPath id={tileId}>
           <rect x="2" y="2" width="60" height="60" rx="15.5" />
         </clipPath>
-        <radialGradient id="cb-sky" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(31.83 96.21) scale(104.07 99.1)">
+        <radialGradient id={skyId} gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(31.83 96.21) scale(104.07 99.1)">
           <stop offset="0.596" stop-color="#B1D3F2" />
           <stop offset="0.803" stop-color={BLUE} />
           <stop offset="1" stop-color="#286CB2" />
         </radialGradient>
       </defs>
-      <g clip-path="url(#cb-tile)">
-        <rect x="2" y="2" width="60" height="60" fill="url(#cb-sky)" />
+      <g clip-path={`url(#${tileId})`}>
+        <rect x="2" y="2" width="60" height="60" fill={`url(#${skyId})`} />
         {props.behind}
         {props.planet === false ? null : <circle cx="31.83" cy="96.21" r="61.01" fill={BLUE} />}
         {props.children}
@@ -228,16 +231,17 @@ export function DepositArt(props: ArtProps) {
 
 /** Night. The moon is on the path, and nothing moves. */
 export function NightArt(props: ArtProps) {
+  const maskId = `cb-moon-${useId()}`;
   const deg = 60;
   const [x, y] = at(deg);
   const r = 6.4;
   return (
     <Tile size={props.size} class={props.class} behind={<Path solidTo={PATH_START} gap={{ deg, half: 27 }} />}>
-      <mask id="cb-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
         <circle cx={x} cy={y} r={r} fill="#fff" />
         <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
       </mask>
-      <rect class="art-moon" x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-moon)" />
+      <rect class="art-moon" x="0" y="0" width="64" height="64" fill={WHITE} mask={`url(#${maskId})`} />
       <circle class="art-star" cx="19" cy="17" r="1.1" fill={WHITE} />
       <circle class="art-star" cx="27.5" cy="12.5" r="0.8" fill={WHITE} />
       {/* A third star. It shows only while the picture is in motion. */}
@@ -249,9 +253,9 @@ export function NightArt(props: ArtProps) {
 /**
  * The guardian: a moon in the sky, off the path. The sun keeps its place on the
  * path, as in the mark. The moon does not walk the path: it only watches.
- * The mask has its own id, because the night picture is on the same page.
  */
 export function GuardianArt(props: ArtProps) {
+  const maskId = `cb-guardian-moon-${useId()}`;
   const x = 47.5;
   const y = 14.5;
   const r = 5.2;
@@ -266,11 +270,11 @@ export function GuardianArt(props: ArtProps) {
         </>
       }
     >
-      <mask id="cb-guardian-moon" maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
+      <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="64" height="64">
         <circle cx={x} cy={y} r={r} fill="#fff" />
         <circle cx={Number((x + r * 0.46).toFixed(2))} cy={Number((y - r * 0.3).toFixed(2))} r={Number((r * 0.86).toFixed(2))} fill="#000" />
       </mask>
-      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask="url(#cb-guardian-moon)" />
+      <rect x="0" y="0" width="64" height="64" fill={WHITE} mask={`url(#${maskId})`} />
       {/* It keeps watch. The signal shows only while the picture is in motion. */}
       <circle class="art-ping" cx={x} cy={y} r={r + 1} fill="none" stroke={WHITE} stroke-width="1.6" opacity="0" />
     </Tile>
