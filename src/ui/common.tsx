@@ -13,6 +13,7 @@ export type Session = {
   account: Address;
   chainId: number;
   rpc: Rpc;
+  switchChain: (chain: Chain) => Promise<void>;
 };
 
 /** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
@@ -43,7 +44,7 @@ export function assetsOf(chain: Chain): Asset[] {
 export function Button(props: {
   children: ComponentChildren;
   onClick?: () => void;
-  kind?: "primary" | "plain" | "quiet" | "danger";
+  kind?: "primary" | "plain" | "quiet";
   disabled?: boolean;
   busy?: boolean;
   type?: "button" | "submit";
@@ -63,28 +64,51 @@ export function Button(props: {
   );
 }
 
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
 /**
  * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing
  * would hide what becomes of it. A wait that gets long has its own way out ("Stop waiting").
  */
 export function Modal(props: { title: string; lead?: string; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
+  const dialog = useRef<HTMLDivElement>(null);
   const close = () => {
     if (!props.busy) props.onClose();
   };
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("keydown", onKey);
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.current?.focus();
     document.body.classList.add("modal-open");
     return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.classList.remove("modal-open");
+      if (document.querySelectorAll(".modal-backdrop").length <= 1) document.body.classList.remove("modal-open");
+      if (opener && opener.isConnected) opener.focus();
     };
+  }, []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") return close();
+      if (event.key !== "Tab" || !dialog.current) return;
+      const items = [...dialog.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+      if (items.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [props.onClose, props.busy]);
   return (
     <div class="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
-      <div class={props.wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-label={props.title}>
+      <div ref={dialog} tabIndex={-1} class={props.wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-label={props.title}>
         <div class="modal-head">
           <h2>{props.title}</h2>
           <button type="button" class="icon-button" aria-label="Close" disabled={props.busy} onClick={close}>
@@ -246,19 +270,28 @@ export function SlowNote(props: { action: { slow: boolean; stop: () => void } })
   );
 }
 
-/** Balances of one address for a list of assets. Null while loading or when a read failed. */
-export function useBalances(rpc: Rpc, holder: Address | null, assets: Asset[], round = 0): (bigint | null)[] {
-  const [balances, setBalances] = useState<(bigint | null)[]>([]);
+/** Balances of one address for a list of assets, with loading and completeness state. */
+export function useBalancesState(rpc: Rpc, holder: Address | null, assets: Asset[], round = 0): { balances: (bigint | null)[]; loading: boolean; complete: boolean } {
+  const [state, setState] = useState<{ balances: (bigint | null)[]; loading: boolean; complete: boolean }>({ balances: [], loading: !!holder, complete: true });
   const key = assets.map((a) => a.token ?? "native").join(",");
   useEffect(() => {
-    if (!holder) return setBalances([]);
+    if (!holder) return setState({ balances: [], loading: false, complete: true });
     let stale = false;
-    readBalances(rpc, holder, assets).then((read) => !stale && setBalances(read.balances));
+    setState((prev) => ({ balances: round > 0 ? prev.balances : [], loading: true, complete: true }));
+    readBalances(rpc, holder, assets).then(
+      (read) => !stale && setState({ balances: read.balances, loading: false, complete: read.complete }),
+      () => !stale && setState({ balances: assets.map(() => null), loading: false, complete: false }),
+    );
     return () => {
       stale = true;
     };
   }, [rpc, holder, key, round]);
-  return balances;
+  return state;
+}
+
+/** Balances of one address for a list of assets. Null while loading or when a read failed. */
+export function useBalances(rpc: Rpc, holder: Address | null, assets: Asset[], round = 0): (bigint | null)[] {
+  return useBalancesState(rpc, holder, assets, round).balances;
 }
 
 /** A token picker: symbol and the balance of each asset. No images, so nothing is loaded from another site. */

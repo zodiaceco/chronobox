@@ -9,6 +9,7 @@ import {
   chosenGive,
   feeReserves,
   formatUsd,
+  freshPulls,
   giveChoices,
   holdingOrder,
   keptCoin,
@@ -228,4 +229,15 @@ test("the signed message names the Chronobox, the amount and the time limit", ()
   assert.equal(calls.length, 2);
   // transferFrom(wallet, safe, 1)
   assert.ok(calls[1].data.startsWith("0x23b872dd"));
+});
+
+test("freshPulls keeps pulls when Multicall3 fails, and L2 fallback setup scales with keep", async () => {
+  const pull = { token: USDC, amount: 1n, kind: "permit" as const, calls: [{ to: USDC, data: "0x01" as Hex }, { to: USDC, data: "0x02" as Hex }] };
+  const failing = async () => {
+    throw new Error("multicall failed");
+  };
+  assert.deepEqual(await freshPulls(failing, WALLET, SAFE, [pull]), [pull]);
+
+  const l2Keep = units("0.0003", 18);
+  assert.deepEqual(await feeReserves(failing, l2Keep), { setup: units("0.0006", 18), later: l2Keep });
 });

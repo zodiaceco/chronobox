@@ -4,7 +4,7 @@
  * owner. A guardian is never part of the setup. It is added later, from the
  * page of a finished Chronobox, and it waits the delay like every change.
  */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { Chain } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, type Hex, parseAddress, sameAddress } from "../lib/hex.ts";
@@ -16,6 +16,7 @@ import {
   addGuardianTx,
   councilApproveTx,
   councilApproved,
+  councilCompatible,
   councilCreateTx,
   councilExecTx,
   councilHash,
@@ -24,6 +25,7 @@ import {
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
+import { errorText } from "../lib/wallet.ts";
 import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, copyText, useAction } from "./common.tsx";
 import { QrCode } from "./deposit.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
@@ -135,9 +137,28 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
   const [text, setText] = useState("");
   const [stops, setStops] = useState(false);
   const [noBackup, setNoBackup] = useState(false);
+  const [isContract, setIsContract] = useState(false);
+  const [incompatible, setIncompatible] = useState(false);
   const action = useAction();
   const guardian = parseAddress(text);
   const tx = guardian && vault.roles ? addGuardianTx({ safe: vault.safe, delay: vault.delay, roles: vault.roles, controller: vault.controller }, guardian) : null;
+  useEffect(() => {
+    setIsContract(false);
+    setIncompatible(false);
+    if (!guardian || !tx) return;
+    let stale = false;
+    session.rpc("eth_getCode", [guardian, "latest"]).then(
+      (code: string) => !stale && setIsContract(typeof code === "string" && code.length > 2),
+      () => undefined,
+    );
+    councilCompatible(session.rpc, vault.safe, vault.controller, guardian).then(
+      (ok) => !stale && setIncompatible(!ok),
+      () => undefined,
+    );
+    return () => {
+      stale = true;
+    };
+  }, [guardian, !!tx, session.rpc, vault.safe, vault.controller]);
   const problem =
     text.trim() === ""
       ? null
@@ -149,7 +170,9 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
             ? "This is the address of the Chronobox itself. Enter the address of your guardian's wallet."
             : !tx
               ? "Nobody can sign with this address. Enter the address of a wallet."
-              : null;
+              : incompatible
+                ? "This guardian address was used with this Chronobox before and cannot be added again. Use another wallet address."
+                : null;
   const submit = () =>
     action.run("queue", async (waiting) => {
       const receipt = await queueItem(session, chain, vault, tx!, waiting);
@@ -204,6 +227,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
         onInput={(event) => setText((event.target as HTMLInputElement).value)}
       />
       {problem ? <p class="field-error">{problem}</p> : null}
+      {isContract && !problem ? <p class="hint">This address is a contract, not a plain wallet. That is right only if it is a wallet such as a Safe, and your guardian controls it on {chain.name}.</p> : null}
       <div class="wiz-list">
         <Choice
           role="checkbox"
@@ -225,7 +249,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!tx || !stops || !noBackup} busy={action.busy === "queue"} onClick={submit}>
+        <Button kind="primary" disabled={!tx || incompatible || !stops || !noBackup} busy={action.busy === "queue"} onClick={submit}>
           {action.busy ? "Confirm in your wallet" : "Start the wait"}
         </Button>
         <Button kind="quiet" onClick={() => setStage("intro")} disabled={!!action.busy}>
@@ -307,39 +331,64 @@ type Swap =
   | { state: "loading" }
   /** The 2 of 2 Safe of wallet and guardian is not made yet. The owner makes it with the first request. */
   | { state: "not-made" }
+  /** The new wallet already owns the shared Safe: the hand-over happened on chain. */
+  | { state: "done" }
   /** The address cannot hold this Chronobox. */
   | { state: "bad" }
+  /** The first read failed. */
+  | { state: "error"; message: string }
   | { state: "ready"; tx: CouncilTx; hash: Hex; owners: Address[]; agreed: boolean };
 
 /** Reads the request from the chain every few seconds: what both sign, and whether the guardian agreed. */
-function useSwap(rpc: Rpc, vault: VaultRef, to: Address): Swap {
+function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: () => void } {
   const [swap, setSwap] = useState<Swap>({ state: "loading" });
+  const [round, setRound] = useState(0);
+  const reading = useRef(false);
   const { council, guardian, roles, members } = vault;
   useEffect(() => {
     if (!council || !guardian || !roles || !members) return setSwap({ state: "bad" });
     let stale = false;
+    let hadAnswer = false;
+    setSwap({ state: "loading" });
     const read = async () => {
+      if (reading.current) return;
+      reading.current = true;
       try {
         const code = (await rpc("eth_getCode", [council, "latest"])) as string;
-        if (typeof code !== "string" || code.length <= 2) return !stale && setSwap({ state: "not-made" });
+        if (typeof code !== "string" || code.length <= 2) {
+          hadAnswer = true;
+          return !stale && setSwap({ state: "not-made" });
+        }
         const owners = await councilOwners(rpc, council);
+        if (owners.some((o) => sameAddress(o, to))) {
+          hadAnswer = true;
+          return !stale && setSwap({ state: "done" });
+        }
         const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to);
-        if (!tx) return !stale && setSwap({ state: "bad" });
+        if (!tx) {
+          hadAnswer = true;
+          return !stale && setSwap({ state: "bad" });
+        }
         const hash = await councilHash(rpc, council, tx);
         const agreed = await councilApproved(rpc, council, guardian, hash);
+        hadAnswer = true;
         if (!stale) setSwap({ state: "ready", tx, hash, owners, agreed });
-      } catch {
-        // The network did not answer. The last answer stays, and the next round asks again.
+      } catch (e) {
+        // After a first good read, a temporary failure keeps the last answer and asks again next round.
+        if (!stale && !hadAnswer) setSwap({ state: "error", message: errorText(e) });
+      } finally {
+        reading.current = false;
       }
     };
     read();
-    const timer = setInterval(read, 5000);
+    const timer = setInterval(() => document.visibilityState === "visible" && read(), 5000);
     return () => {
       stale = true;
+      reading.current = false;
       clearInterval(timer);
     };
-  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to]);
-  return swap;
+  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to, round]);
+  return { swap, retry: () => setRound((r) => r + 1) };
 }
 
 /**
@@ -355,10 +404,18 @@ export async function prepareSwap(session: Session, chain: Chain, vault: VaultRe
 /** The owner's side while the guardian decides. */
 export function AskGuardianSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onDrop: () => void; onClose: () => void }) {
   const { session, chain, vault, to } = props;
-  const swap = useSwap(session.rpc, vault, to);
+  const { swap, retry } = useSwap(session.rpc, vault, to);
   const [done, setDone] = useState(false);
   const action = useAction();
   const link = guardianLink(chain, vault.safe, to);
+
+  useEffect(() => {
+    if (swap.state === "done") {
+      setPendingSwap(chain.id, vault.safe, null);
+      setDone(true);
+    }
+  }, [swap.state, chain.id, vault.safe]);
+
   const change = () =>
     action.run("change", async (waiting) => {
       if (swap.state !== "ready") return;
@@ -366,7 +423,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
       setPendingSwap(chain.id, vault.safe, null);
       setDone(true);
     });
-  if (done) {
+  if (done || swap.state === "done") {
     return (
       <Modal title="The new wallet holds this Chronobox." lead="This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it." onClose={props.onClose}>
         <CopyLine text={vault.safe} />
@@ -391,6 +448,15 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
       </div>
       {swap.state === "bad" ? (
         <Notice kind="bad">This wallet cannot hold the Chronobox. Drop this request and start again with another address.</Notice>
+      ) : swap.state === "not-made" ? (
+        <Notice kind="risk">The shared Safe with your guardian is not on chain yet. Drop this request and start it again.</Notice>
+      ) : swap.state === "error" ? (
+        <Notice kind="bad">
+          {swap.message}{" "}
+          <button type="button" class="link-button" onClick={retry}>
+            Try again
+          </button>
+        </Notice>
       ) : agreed ? (
         <Notice kind="good" title="Your guardian agreed.">
           You can change the wallet now. It happens at once.
@@ -418,7 +484,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
 /** The guardian's side: a link from the owner asks for a new wallet. */
 export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onClose: () => void }) {
   const { session, chain, vault, to } = props;
-  const swap = useSwap(session.rpc, vault, to);
+  const { swap, retry } = useSwap(session.rpc, vault, to);
   const [spoke, setSpoke] = useState(false);
   const [sent, setSent] = useState(false);
   const action = useAction();
@@ -435,7 +501,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       </Button>
     </div>
   );
-  if (sameAddress(to, vault.controller)) {
+  if (sameAddress(to, vault.controller) || swap.state === "done") {
     return (
       <Modal title="It is done." onClose={props.onClose}>
         <p>
@@ -449,6 +515,21 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
     return (
       <Modal title="Reading the request" onClose={props.onClose}>
         <p class="muted">One moment.</p>
+      </Modal>
+    );
+  }
+  if (swap.state === "error") {
+    return (
+      <Modal title="We could not read the request" onClose={props.onClose}>
+        <Notice kind="bad">{swap.message}</Notice>
+        <div class="modal-actions">
+          <Button kind="primary" onClick={retry}>
+            Try again
+          </Button>
+          <Button kind="quiet" onClick={props.onClose}>
+            Close
+          </Button>
+        </div>
       </Modal>
     );
   }

@@ -7,7 +7,7 @@ import { type Chain, CHAINS, chainById } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
-import { isRejection, switchChain } from "../lib/wallet.ts";
+import { isRejection } from "../lib/wallet.ts";
 import { discover, inspect } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
@@ -32,7 +32,7 @@ function shortOf(address: Address): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-export function StartPage(props: { session: Session | null; chain: Chain | undefined; onConnect: () => void }) {
+export function StartPage(props: { session: Session | null; chain: Chain | undefined; connectOpen: boolean; onConnect: () => void }) {
   const { session, chain } = props;
   const [rows, setRows] = useState<Row[] | null>(null);
   const [opening, setOpening] = useState(false);
@@ -44,6 +44,10 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   const [readFailed, setReadFailed] = useState(false);
   const [again, setAgain] = useState(0);
   const [openChain, setOpenChain] = useState(chain?.id ?? CHAINS[0].id);
+
+  useEffect(() => {
+    if (!props.connectOpen && !session) wantsSetup.current = false;
+  }, [props.connectOpen, session]);
 
   useEffect(() => {
     if (chain) setOpenChain(chain.id);
@@ -66,22 +70,27 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           const found = await discover(session.rpc, session.account);
           const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f.safe, v.safe)));
           const here = [...found.map((f) => f.safe), ...known.map((k) => k.safe)];
-          const inspected = await Promise.all(
-            here.map(async (safe): Promise<Row> => {
-              const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
-              // A wallet shows one network at a time. What is found here stays in the list when the wallet moves on.
-              if (result?.controller && sameAddress(result.controller, session.account)) rememberVault({ chainId: chain.id, safe, wallet: session.account });
-              const title =
-                result === null
-                  ? "Could not read it now"
-                  : result.state === "locked" || result.state === "unverified"
-                    ? `Waits ${formatDuration(result.cooldown)}`
-                    : result.state === "open"
-                      ? "Setup not finished"
-                      : "Needs a look";
-              return { chain, safe, title, note: chain.name };
-            }),
-          );
+          // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
+          const inspected: Row[] = [];
+          for (let i = 0; i < here.length; i += 3) {
+            const batch = await Promise.all(
+              here.slice(i, i + 3).map(async (safe): Promise<Row> => {
+                const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
+                // A wallet shows one network at a time. What is found here stays in the list when the wallet moves on.
+                if (result?.controller && sameAddress(result.controller, session.account)) rememberVault({ chainId: chain.id, safe, wallet: session.account });
+                const title =
+                  result === null
+                    ? "Could not read it now"
+                    : result.state === "locked" || result.state === "unverified"
+                      ? `Waits ${formatDuration(result.cooldown)}`
+                      : result.state === "open"
+                        ? "Setup not finished"
+                        : "Needs a look";
+                return { chain, safe, title, note: chain.name };
+              }),
+            );
+            inspected.push(...batch);
+          }
           list.unshift(...inspected);
         } catch {
           // The wallet could not read the chain. Show what the browser remembers, and say so.
@@ -136,7 +145,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
               key={c.id}
               onClick={() => {
                 setSwitchError(null);
-                switchChain(session.wallet.provider, c).catch((e) => {
+                session.switchChain(c).catch((e) => {
                   if (!isRejection(e)) setSwitchError(`Your wallet did not switch. Switch to ${c.name} in your wallet itself.`);
                 });
               }}
@@ -153,6 +162,19 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
   const openAddress = parseAddress(openText);
   const openTarget = chainById(openChain);
   const hasSome = !!rows && rows.length > 0;
+  const rememberedSome = !!session && rows === null && vaultsOf(session.account).length > 0;
+
+  // Returning users with remembered Chronoboxes wait in the home layout instead of flashing the landing page.
+  if (rememberedSome) {
+    return (
+      <div class="start">
+        <section class="home">
+          <h1>Your Chronoboxes</h1>
+          <p class="wiz-note">Looking for your Chronoboxes…</p>
+        </section>
+      </div>
+    );
+  }
 
   // With Chronoboxes: the list is the page. Without: the welcome.
   if (session && hasSome) {
@@ -296,27 +318,37 @@ function Tick() {
 }
 
 function OpenByAddress(props: { chainId: number; onChain: (id: number) => void; text: string; onText: (text: string) => void; target: string | null }) {
+  const bad = props.text.trim() !== "" && !props.target;
   return (
-    <div class="open-row">
-      <select class="input select" aria-label="Network" value={props.chainId} onChange={(event) => props.onChain(Number((event.target as HTMLSelectElement).value))}>
-        {CHAINS.filter((c) => !c.testnet || __DEV__ || c.id === props.chainId).map((c) => (
-          <option value={c.id} key={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-      <input
-        class="input"
-        placeholder="Address of the Chronobox"
-        aria-label="Address of the Chronobox"
-        autocomplete="off"
-        spellcheck={false}
-        value={props.text}
-        onInput={(event) => props.onText((event.target as HTMLInputElement).value)}
-      />
-      <a class={`button button-plain${props.target ? "" : " is-disabled"}`} href={props.target ?? undefined} aria-disabled={!props.target}>
-        Open
-      </a>
-    </div>
+    <form
+      class="open-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (props.target) location.hash = props.target;
+      }}
+    >
+      <div class="open-row">
+        <select class="input select" aria-label="Network" value={props.chainId} onChange={(event) => props.onChain(Number((event.target as HTMLSelectElement).value))}>
+          {CHAINS.filter((c) => (__DEV__ ? true : !c.testnet || c.id === props.chainId)).map((c) => (
+            <option value={c.id} key={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <input
+          class="input"
+          placeholder="Address of the Chronobox"
+          aria-label="Address of the Chronobox"
+          autocomplete="off"
+          spellcheck={false}
+          value={props.text}
+          onInput={(event) => props.onText((event.target as HTMLInputElement).value)}
+        />
+        <Button type="submit" kind="plain" disabled={!props.target}>
+          Open
+        </Button>
+      </div>
+      {bad ? <p class="field-error">This is not a valid address. Check that it is complete and spelled right.</p> : null}
+    </form>
   );
 }

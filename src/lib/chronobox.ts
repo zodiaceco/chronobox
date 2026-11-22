@@ -411,7 +411,7 @@ export const slowAfterMs = (): number => (globalThis as { __CHRONOBOX_SLOW_MS?: 
 export async function sendAndWait(rpc: Rpc, from: Address, tx: TxRequest, options: SendOptions | ((hash: Hex) => void) = {}): Promise<Receipt> {
   const opts: SendOptions = typeof options === "function" ? { onHash: options } : options;
   if (opts.chainId !== undefined) await assertWallet(rpc, from, opts.chainId, opts.chainName);
-  const request: Record<string, string> = { from, to: tx.to, data: tx.data };
+  const request: Record<string, string> = { from, to: tx.to, ...(tx.data === "0x" ? {} : { data: tx.data }) };
   if (tx.value && tx.value > 0n) request.value = toQuantity(tx.value);
   // Estimate first: a transaction that would fail is stopped before the wallet
   // asks for a signature, and a plain transfer to a Safe gets enough gas.
@@ -541,6 +541,8 @@ export type Inspection = {
 
 /** Remembers in which block a contract was created, so its logs are read from there. */
 export type BlockHints = {
+  /** The network id, so cached history checks never cross between networks. */
+  chainId?: number;
   get(address: Address): bigint | null;
   set(address: Address, block: bigint): void;
 };
@@ -548,26 +550,50 @@ export type BlockHints = {
 type Log = { address: Address; topics: Hex[]; data: Hex; blockNumber: Hex };
 
 /** Sizes of the pieces, largest first. Networks differ in the range they accept. */
-const LOG_CHUNKS = [50_000n, 10_000n];
+const LOG_CHUNKS = [500_000n, 100_000n, 50_000n, 10_000n];
 const LOG_CHUNKS_MAX = 400n;
 
 /**
+ * Finds the block in which a contract first appeared, via binary search on historical code.
+ * Works on archive RPCs (such as MetaMask/Infura/Alchemy); returns null on pruned nodes.
+ */
+async function findDeployBlock(rpc: Rpc, address: Address, latest: bigint): Promise<bigint | null> {
+  const hasCodeAt = async (block: bigint): Promise<boolean> => {
+    const code = (await rpc("eth_getCode", [address, toQuantity(block)])) as Hex;
+    return size(code) > 0;
+  };
+  try {
+    if (await hasCodeAt(0n)) return 0n;
+    let lo = 0n;
+    let hi = latest;
+    while (hi - lo > 1n) {
+      const mid = (lo + hi) / 2n;
+      if (await hasCodeAt(mid)) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every log of one contract from a block to now. Many wallet networks refuse a wide range, so
- * when the one query fails and the start is known, the range is read in pieces. With no known
- * start, or a range too long to read in pieces, it throws: the caller then says "could not check".
+ * when the one query fails, the range is read in pieces. When no start block is known yet, the
+ * app tries to find the contract's creation block first (on archive RPCs).
  */
 async function logsOf(rpc: Rpc, address: Address, from: bigint | null): Promise<Log[]> {
   try {
     return (await rpc("eth_getLogs", [{ address, fromBlock: from === null ? "0x0" : toQuantity(from), toBlock: "latest" }])) as Log[];
   } catch (error) {
-    if (from === null) throw error;
     const latest = toBigInt(await rpc("eth_blockNumber", []));
-    if (latest < from) throw error;
+    const startFrom = from ?? (await findDeployBlock(rpc, address, latest));
+    if (startFrom === null || latest < startFrom) throw error;
     let last: unknown = error;
     for (const chunk of LOG_CHUNKS) {
-      if ((latest - from) / chunk >= LOG_CHUNKS_MAX) continue;
+      if ((latest - startFrom) / chunk >= LOG_CHUNKS_MAX) continue;
       const ranges: [bigint, bigint][] = [];
-      for (let start = from; start <= latest; start += chunk) ranges.push([start, start + chunk - 1n > latest ? latest : start + chunk - 1n]);
+      for (let start = startFrom; start <= latest; start += chunk) ranges.push([start, start + chunk - 1n > latest ? latest : start + chunk - 1n]);
       try {
         const all: Log[] = [];
         // A few at a time: fast enough, and not so many that the network refuses them.
@@ -720,7 +746,17 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
   return true;
 }
 
-/** History checks that passed, per wallet connection (so per network). See where it is used. */
+/**
+ * Can `predictCouncil(safe, wallet, guardian)` serve as the shared 2 of 2 Safe for this pair?
+ * True when nothing is deployed there yet, or when a clean 2 of 2 Safe of exactly these two exists there.
+ * False when an existing Safe at that address has other owners (e.g. after an earlier rotation).
+ */
+export async function councilCompatible(rpc: Rpc, safe: Address, wallet: Address, guardian: Address): Promise<boolean> {
+  const state = await councilState(rpc, safe, predictCouncil(safe, wallet, guardian), wallet, guardian);
+  return typeof state === "boolean";
+}
+
+/** History checks that passed, keyed by network + vault state. See where it is used. */
 const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
 
 export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Promise<Inspection> {
@@ -846,11 +882,15 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   let cancelOk = true;
   let cancelUnknown = false;
   if (roles && controllerOk && result.controller) {
-    const [rolesOwner, rolesAvatar, rolesTarget, members] = await Promise.all([
+    const [rolesOwner, rolesAvatar, rolesTarget, members, rolesGuard] = await Promise.all([
       one(roles, "owner()", "address") as Promise<Address>,
       one(roles, "avatar()", "address") as Promise<Address>,
       one(roles, "target()", "address") as Promise<Address>,
       modulesOf(rpc, roles),
+      (one(roles, "getGuard()", "address") as Promise<Address>).catch((error) => {
+        if (isTemporary(error)) throw error;
+        return ZERO;
+      }),
     ]);
     const wiredOk = add(
       "cancel-wiring",
@@ -858,6 +898,9 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       "Only the Chronobox itself can change who can cancel",
       `Owner, avatar and target of the Roles modifier ${roles} are the Safe`,
     );
+    const rolesGuardOk = sameAddress(rolesGuard, ZERO)
+      ? true
+      : add("roles-guard", false, "Nothing can block a cancel", `Guard of the Roles modifier: ${rolesGuard}`);
     // One member: the wallet alone. Three: the wallet, a guardian, and the 2 of 2 Safe of the two.
     result.members = members ?? [];
     const controller = result.controller;
@@ -896,15 +939,20 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     } else if (councilProblem) {
       add("council", false, "A wallet change without the wait needs the wallet and the guardian together", councilProblem);
     }
-    cancelOk = wiredOk && memberOk;
+    cancelOk = wiredOk && rolesGuardOk && memberOk;
     if (cancelOk) {
-      // A history that passed is good until the members or txNonce change: a permission can change
-      // only through the Delay, which moves txNonce, or through wallet and guardian together, which
-      // changes the members. Only a pass is kept, and only in memory.
-      const key = `${safe}:${roles}:${delay}:${controller}:${txNonce}:${result.members.join(",")}`.toLowerCase();
-      const kept = passed.get(rpc)?.get(key);
+      // A history that passed is good until the network, members, txNonce, or council nonce change:
+      // a permission can change only through the Delay (moving txNonce) or through the shared 2 of 2
+      // Safe (moving its nonce). Only a pass is kept, and only in memory when the chainId is known.
+      const councilNonce = guard && result.councilMade ? ((await one(guard.council, "nonce()", "uint256")) as bigint) : 0n;
+      const chainKey = hints?.chainId;
+      const key =
+        chainKey !== undefined
+          ? `${chainKey}:${safe}:${roles}:${delay}:${controller}:${txNonce}:${councilNonce}:${result.members.join(",")}`.toLowerCase()
+          : null;
+      const kept = key ? passed.get(rpc)?.get(key) : undefined;
       const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard));
-      if (history?.ok && !kept) {
+      if (history?.ok && key && !kept) {
         if (!passed.has(rpc)) passed.set(rpc, new Map());
         passed.get(rpc)!.set(key, history);
       }
@@ -1285,6 +1333,9 @@ export function changeWalletTx(
     if (guard) {
       if (!safe) return null;
       const council = predictCouncil(safe, to, guard.guardian);
+      // If the new wallet's predicted council Safe is the same address as the current one (after an earlier rotation),
+      // replacing it would immediately revoke and disable it. Require a fresh wallet or a hand-over with the guardian.
+      if (sameAddress(council, guard.council)) return null;
       members.add(council);
       items.push(batchItem(roles, assign(council, COUNCIL_ROLE, true)), batchItem(roles, assign(guard.council, COUNCIL_ROLE, false)));
       items.push(batchItem(roles, call("disableModule(address,address)", [members.remove(guard.council), guard.council])));
@@ -1625,12 +1676,12 @@ export function arrivedInReceipt(receipt: Receipt, token: Address, to: Address):
  * How much coin to leave in a wallet so that it can still pay for a simple transaction: a
  * generous amount of gas at twice the price of now. With no price from the network, a fixed amount.
  */
-export async function feeReserve(rpc: Rpc): Promise<bigint> {
+export async function feeReserve(rpc: Rpc, fallback = 5_000_000_000_000_000n): Promise<bigint> {
   try {
     const price = toBigInt(await rpc("eth_gasPrice", []));
     if (price > 0n) return price * 2n * 150_000n;
   } catch {
     // Fall through.
   }
-  return 5_000_000_000_000_000n;
+  return fallback;
 }

@@ -43,11 +43,17 @@ export function savedVaults(): SavedVault[] {
 
 export function rememberVault(vault: SavedVault): void {
   const all = savedVaults();
-  const at = all.findIndex((v) => v.chainId === vault.chainId && sameAddress(v.safe, vault.safe));
-  if (at < 0) return save("chronobox:vaults", [...all, vault]);
-  if (!vault.wallet || sameAddress(all[at].wallet, vault.wallet)) return;
-  all[at] = { ...all[at], wallet: vault.wallet };
-  save("chronobox:vaults", all);
+  const exact = all.findIndex(
+    (v) => v.chainId === vault.chainId && sameAddress(v.safe, vault.safe) && (vault.wallet ? sameAddress(v.wallet, vault.wallet) : !v.wallet),
+  );
+  if (exact >= 0) return;
+  // Upgrade an older entry without a wallet, rather than leaving a duplicate beside it.
+  const legacy = vault.wallet ? all.findIndex((v) => v.chainId === vault.chainId && sameAddress(v.safe, vault.safe) && !v.wallet) : -1;
+  if (legacy >= 0) {
+    all[legacy] = { ...all[legacy], wallet: vault.wallet };
+    return save("chronobox:vaults", all);
+  }
+  save("chronobox:vaults", [...all, vault]);
 }
 
 /**
@@ -57,10 +63,16 @@ export function rememberVault(vault: SavedVault): void {
  */
 export function vaultsOf(wallet: Address): SavedVault[] {
   let mine: Address[] | null = null;
+  const seen = new Set<string>();
   return savedVaults().filter((v) => {
-    if (v.wallet) return sameAddress(v.wallet, wallet);
-    mine ??= Array.from({ length: 20 }, (_, index) => predictSafe(wallet, index));
-    return mine.some((safe) => sameAddress(safe, v.safe));
+    const matches = v.wallet
+      ? sameAddress(v.wallet, wallet)
+      : (mine ??= Array.from({ length: 20 }, (_, index) => predictSafe(wallet, index))).some((safe) => sameAddress(safe, v.safe));
+    if (!matches) return false;
+    const key = `${v.chainId}:${v.safe.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
@@ -114,6 +126,7 @@ export function txCache(chainId: number, delay: Address): TxCache {
 export function blockHints(chainId: number): BlockHints {
   const key = (address: Address) => `chronobox:block:${chainId}:${address.toLowerCase()}`;
   return {
+    chainId,
     get(address: Address): bigint | null {
       const value = load<string | null>(key(address), null);
       return value !== null && /^[0-9]+$/.test(value) ? BigInt(value) : null;
