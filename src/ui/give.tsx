@@ -1,6 +1,7 @@
 /**
- * The contribution, as one quiet card. It says what is set and what it is
- * for. "Change" opens the choices: nothing, smaller amounts, the amount
+ * The contribution, as one quiet card. It says what is set, and that it is
+ * the owner's choice. The tone is light: no word about what happens without
+ * it, because nothing happens without it. "Change" opens the choices: nothing, smaller amounts, the amount
  * that the app suggests, and one larger amount.
  */
 import { useState } from "preact/hooks";
@@ -12,7 +13,7 @@ export function Support(props: { usd: number; choices: number[]; onPick: (usd: n
       <span class="support-sun" aria-hidden="true" />
       <strong>{props.title}</strong>
       <span class="support-text">
-        {props.detail ?? "Chronobox is free software. This pays for the work that keeps it safe."}{" "}
+        {props.detail ?? "Chronobox is free. This part is up to you."}{" "}
         {open ? null : (
           <button type="button" class="link-button" onClick={() => setOpen(true)}>
             Change
@@ -38,7 +39,7 @@ export function OnUs(props: { from: number }) {
     <div class="support support-plain">
       <span class="support-sun" aria-hidden="true" />
       <strong>Trying it out? This one is on us.</strong>
-      <span class="support-text">Chronobox asks for a contribution only from ${props.from} on.</span>
+      <span class="support-text">We ask only from ${props.from} on.</span>
     </div>
   );
 }

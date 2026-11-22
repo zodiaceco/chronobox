@@ -303,10 +303,11 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   // Is a contribution really paid in this setup?
   const gives = !!contribution && split !== null && split.from !== "none";
   // What the card says. "Of it" is true only when the contribution is a part of the money that goes in.
-  const giveTitle = (of: string): string => (!gives ? "No contribution this time." : split?.from === "wallet" ? `${giveText} keeps Chronobox free.` : `${giveText} ${of} keeps Chronobox free.`);
-  const giveDetail =
-    gives && split?.from === "wallet"
-      ? `Your wallet pays it ${batch ? "in the same confirmation" : "when it switches on the time delay"}. Chronobox is free software, and this pays for the work that keeps it safe.`
+  const giveTitle = (of: string): string => (!gives ? "No contribution. That is fine." : split?.from === "wallet" ? `${giveText} supports the makers.` : `${giveText} ${of} supports the makers.`);
+  const giveDetail = !gives
+    ? "Chronobox is free either way."
+    : split?.from === "wallet"
+      ? `Chronobox is free. This part is up to you. Your wallet sends it ${batch ? "in the same confirmation" : "when it switches on the time delay"}.`
       : undefined;
   // In which money it is paid, for the summary and the card.
   const givePaid = (): string => {
@@ -401,7 +402,17 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         asked = true;
         await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"), () => stop.current);
       } else {
-        // Signatures first. They cost nothing, and a refusal here leaves nothing half done.
+        if (!now.created) {
+          setProgress("create");
+          asked = true;
+          const receipt = await sendAndWait(session.rpc, session.account, createTx(session.account, now.index), send);
+          const safe = safeFromReceipt(receipt);
+          if (!safe || safe !== now.safe) throw new Error("Something is not right: your Chronobox is not where it should be. Stop here, and do not send money.");
+          now = { ...now, created: true };
+          setPlan(now);
+        }
+        // Then the signatures. They come after the Chronobox exists: a wallet warns its owner about an approval
+        // for an address with nothing behind it, and before this moment the Chronobox is such an address.
         const pulls: Pull[] = [];
         const failed: number[] = [];
         for (const d of money) {
@@ -414,15 +425,6 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             failed.push(d.index);
             setDemoted([...failed]);
           }
-        }
-        if (!now.created) {
-          setProgress("create");
-          asked = true;
-          const receipt = await sendAndWait(session.rpc, session.account, createTx(session.account, now.index), send);
-          const safe = safeFromReceipt(receipt);
-          if (!safe || safe !== now.safe) throw new Error("Something is not right: your Chronobox is not where it should be. Stop here, and do not send money.");
-          now = { ...now, created: true };
-          setPlan(now);
         }
         setProgress("lock");
         const safe = now.safe;
@@ -541,7 +543,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               ))}
             </ul>
           ) : null}
-          {done.gave ? <p class="wiz-thanks">Thank you. Your {done.gave} helps to keep Chronobox free for the next person.</p> : null}
+          {done.gave ? <p class="wiz-thanks">Thank you for the {done.gave}. You made our day.</p> : null}
           {done.stayed.length > 0 ? (
             <Notice kind="info">
               {listOf(done.stayed.map((l) => `${l.text} ${l.symbol}`))} stayed in your wallet. You can add it from your Chronobox.
@@ -582,8 +584,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           { id: "check", text: "Run the safety checks" },
         ]
       : [
-          ...chosen.filter(isSigned).map((d) => ({ id: `sign:${d.index}`, text: `Allow ${amountOf(d)} to go in` })),
           ...(makes.current ? [{ id: "create", text: "Create your Chronobox" }] : []),
+          ...chosen.filter(isSigned).map((d) => ({ id: `sign:${d.index}`, text: `Allow ${amountOf(d)} to go in` })),
           { id: "lock", text: lockText },
           { id: "check", text: "Run the safety checks" },
           ...chosen.filter((d) => !inSetup(d)).map((d) => ({ id: `send:${d.index}`, text: `Put ${amountOf(d)} in` })),
@@ -752,7 +754,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             suggested === 0 ? (
               <OnUs from={CONTRIBUTION_STEPS[CONTRIBUTION_STEPS.length - 1][0]} />
             ) : payable ? (
-              <Support usd={gives ? giveUsd : 0} choices={choices} onPick={pickGive} title={giveTitle("of it")} detail={giveDetail} />
+              <Support usd={gives ? giveUsd : 0} choices={choices} onPick={pickGive} title={giveTitle(total !== null ? "of it" : "of what goes in")} detail={giveDetail} />
             ) : null
           ) : null}
           {!batch && !depositProblem && signs + sends > 0 ? (
