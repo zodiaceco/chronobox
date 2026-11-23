@@ -101,7 +101,7 @@ export const ALERTS_TELEGRAM: string | null = "zodiac_chronobox_bot";
  * serves it, with RESEND_KEY (see watcher/README.md). Null means: no alerts
  * by email. The app only opens that page. It never sees an email address.
  */
-export const ALERTS_EMAIL: string | null = null;
+export const ALERTS_EMAIL: string | null = "https://watcher.chrono.box/api/email";
 
 /**
  * Alerts by email are not there yet, but they will be. While this is true and

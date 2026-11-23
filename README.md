@@ -151,7 +151,7 @@ What this gives and what it does not:
 "Get told" opens with one question: how do you want to hear about it?
 
 - **Telegram**: a message from our alert service (`ALERTS_TELEGRAM`).
-- **Email**: not there yet. While `ALERTS_EMAIL_SOON` is true and `ALERTS_EMAIL` is `null`, the list shows it as "Coming soon", and it cannot be chosen. `ALERTS_EMAIL` will be the page of the alert service where a person gives an email address. With it set, the row opens that page.
+- **Email**: an email from our alert service (`ALERTS_EMAIL`). The row opens the page of the alert service where a person gives an email address. While `ALERTS_EMAIL_SOON` is true and `ALERTS_EMAIL` is `null`, the list shows email as "Coming soon", and it cannot be chosen.
 - **Your own alert service**: one button that opens the guide "Run it yourself" in `watcher/README.md` (`ALERTS_GUIDE`).
 
 Under the list, the sheet says it in plain words: our alert service is not private. To send an alert it must know who follows a Chronobox, and we can see that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
@@ -160,7 +160,7 @@ A way whose setting is `null` is not in the list. With one way left and `ALERTS_
 
 ### Alerts by email
 
-The same alert service can send the alerts by email, through Resend. `ALERTS_EMAIL` in `src/lib/chains.ts` is the page of the alert service where a person gives an email address (`<alert service>/api/email`). It is `null` in the source, so "Get told" shows email as "Coming soon". With it set, "Email" opens that page. The person confirms the address with a link in one email (double opt-in). The app never sees the address.
+The same alert service can send the alerts by email, through Resend. `ALERTS_EMAIL` in `src/lib/chains.ts` is the page of the alert service where a person gives an email address (`<alert service>/api/email`). Here it is `https://watcher.chrono.box/api/email`. With it set, "Email" opens that page. With it `null`, "Get told" shows email as "Coming soon". The person confirms the address with a link in one email (double opt-in). The app never sees the address.
 
 - The alert service keeps the email address, the address of the Chronobox and since when, encrypted like the list of chats. Resend gets the address and the text of each email, because it sends them.
 - Every alert by email ends with a link that stops the alerts. It is the only link in it.
