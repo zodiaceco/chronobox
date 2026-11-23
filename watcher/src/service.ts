@@ -163,7 +163,16 @@ async function ensureWebhook(s: Setup): Promise<void> {
   }
 }
 
-export type NetworkResult = { chainId: number; ok: boolean; skipped?: true; error?: string };
+export type NetworkResult = {
+  chainId: number;
+  /** The chain could be read. */
+  ok: boolean;
+  skipped?: true;
+  error?: string;
+  /** Vaults that were due and were not read, for lack of time, and how long the oldest of them waits. */
+  late?: number;
+  overdueSeconds?: number;
+};
 
 /** Vercel Cron, every minute. */
 export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Reply> {
@@ -182,7 +191,8 @@ export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Rep
   const deadline = started + s.sc.pollBudgetSeconds * 1000;
   const results: NetworkResult[] = await Promise.all(watchers(s).map(async ({ chainId, w }) => {
     try {
-      return { chainId, ok: await w.poll({ deadline }) };
+      const ok = await w.poll({ deadline });
+      return { chainId, ok, ...(w.report.late ? { late: w.report.late, overdueSeconds: w.report.overdueSeconds } : {}) };
     } catch (e) {
       // The poll before this one still runs. It does this work.
       if (e instanceof BusyError) return { chainId, ok: true, skipped: true as const };
@@ -242,7 +252,11 @@ export async function health(env: Env, _req: Request, deps: Deps = {}): Promise<
   }
   const age = last?.at ? Math.round((Date.now() - Date.parse(last.at)) / 1000) : null;
   const fresh = age !== null && age <= sc.healthMaxAgeSeconds;
-  const healthy = fresh && Array.isArray(last.networks) && last.networks.every((n: NetworkResult) => n.ok);
-  const networks = Array.isArray(last?.networks) ? last.networks.map((n: NetworkResult) => ({ chainId: n.chainId, ok: n.ok })) : [];
+  // A network is behind when a vault waits to be read for longer than a poll may be missing.
+  const behind = (n: NetworkResult) => (n.overdueSeconds ?? 0) > sc.healthMaxAgeSeconds;
+  const healthy = fresh && Array.isArray(last.networks) && last.networks.every((n: NetworkResult) => n.ok && !behind(n));
+  const networks = Array.isArray(last?.networks)
+    ? last.networks.map((n: NetworkResult) => ({ chainId: n.chainId, ok: n.ok, ...(n.late ? { late: n.late, overdueSeconds: n.overdueSeconds } : {}) }))
+    : [];
   return { status: healthy ? 200 : 503, body: { healthy, lastPoll: last?.at ?? null, ageSeconds: age, networks } };
 }

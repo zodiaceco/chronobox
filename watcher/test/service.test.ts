@@ -239,6 +239,16 @@ test('health: 503 before the first poll and when the polls stopped, 200 after a 
   const last = JSON.parse(redis.get('chronobox:last-poll')!);
   redis.data.set('chronobox:last-poll', { value: JSON.stringify({ ...last, at: new Date(Date.now() - 600_000).toISOString() }) });
   assert.equal((await health(env(), req, deps)).status, 503);
+  // A network that reads every vault late is not healthy, even when the chain can be read.
+  const behind = (overdueSeconds: number) => redis.data.set('chronobox:last-poll', {
+    value: JSON.stringify({ ...last, at: new Date().toISOString(), networks: [{ chainId: 1, ok: true, late: 2, overdueSeconds }] }),
+  });
+  behind(100);
+  assert.equal((await health(env(), req, deps)).status, 200);
+  behind(600);
+  const late = await health(env(), req, deps);
+  assert.equal(late.status, 503);
+  assert.deepEqual((late.body as any).networks, [{ chainId: 1, ok: true, late: 2, overdueSeconds: 600 }]);
 });
 
 test('Redis locks: a held lock is busy, a lock left behind runs out, only the holder frees it', async () => {

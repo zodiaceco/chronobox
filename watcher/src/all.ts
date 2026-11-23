@@ -15,7 +15,15 @@ import type { Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, errText } from './util.ts';
 import { Watcher, parseState } from './watcher.ts';
 
-type Known = { delay: string; active: boolean; heartbeatAt?: number };
+type Known = {
+  delay: string;
+  active: boolean;
+  heartbeatAt?: number;
+  /** When the last read of this vault began (ms). The poll reads the vaults that waited longest first. */
+  lookedAt?: number;
+  /** Since when this vault is due and was skipped because the poll ran out of time (ms). */
+  waitingSince?: number;
+};
 
 export type AllState = {
   version: 1;
@@ -30,6 +38,16 @@ export type AllOptions = {
   telegram?: Telegram;
   /** Where the state of this network is kept. Default: the folder STATE_DIR (in memory only with --dry-run). */
   store?: Store;
+  /** The time in ms, for the deadline of a poll and the order of the vaults. Tests set it. */
+  clock?: () => number;
+};
+
+/** What the last poll could not do in time. */
+export type PollReport = {
+  /** Vaults that were due and were not read, for lack of time. */
+  late: number;
+  /** How long the vault that has waited longest has been due without being read. */
+  overdueSeconds: number;
 };
 
 export type PollOptions = {
@@ -44,13 +62,17 @@ export class AllWatcher {
   cfg: Config;
   state: AllState = { version: 1, vaults: {} };
   log: Log;
+  /** Set by each poll. */
+  report: PollReport = { late: 0, overdueSeconds: 0 };
   private opts: AllOptions;
   private probe: Watcher;
   private store: Store;
+  private clock: () => number;
 
   constructor(cfg: Config, opts: AllOptions = {}) {
     this.cfg = cfg;
     this.opts = opts;
+    this.clock = opts.clock ?? Date.now;
     this.store = opts.store ?? (cfg.dryRun ? new DryRunStore(new FileStore(cfg.stateDir)) : new FileStore(cfg.stateDir));
     // Reads the chain only. It never loads or saves a state.
     this.probe = new Watcher({ ...cfg, dryRun: true }, { fetch: opts.fetch, log: opts.log });
@@ -156,6 +178,11 @@ export class AllWatcher {
 
   /** Reads one vault and sends its alerts. False if the chain could not be read. */
   private async look(vault: string, known: Known): Promise<boolean> {
+    // Saved before the read: if the function is killed during it, this vault goes to the back of the line, and it
+    // cannot block every poll after this one.
+    known.lookedAt = this.clock();
+    delete known.waitingSince;
+    await this.save();
     const w = this.watcherOf(vault, known);
     const ok = await w.poll();
     const ws = w.state;
@@ -240,12 +267,24 @@ export class AllWatcher {
     if (s.chainId === undefined) return false;
     await this.opts.telegram?.ready();
     const beat = this.cfg.heartbeatHours * 3600;
-    let late = 0;
-    for (const [vault, known] of Object.entries(s.vaults)) {
+    const chainId = s.chainId;
+    const due = Object.entries(s.vaults).filter(([vault, known]) => {
       // An "all quiet" message makes sense only where somebody can hear it.
-      const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(s.chainId, vault).length ?? 0) > 0;
-      if (!known.active && !(heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat)) continue;
-      if (opts.deadline !== undefined && Date.now() > opts.deadline) { late++; continue; }
+      const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(chainId, vault).length ?? 0) > 0;
+      return known.active || (heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat);
+    });
+    // The vaults that waited longest first. A poll that runs out of time goes on there the next time, so vaults
+    // that are always busy cannot keep the others from being read.
+    due.sort(([, a], [, b]) => (a.lookedAt ?? 0) - (b.lookedAt ?? 0));
+    let late = 0;
+    let oldest = this.clock();
+    for (const [vault, known] of due) {
+      if (opts.deadline !== undefined && this.clock() > opts.deadline) {
+        late++;
+        known.waitingSince ??= this.clock();
+        oldest = Math.min(oldest, known.waitingSince);
+        continue;
+      }
       try {
         if (!(await this.look(vault, known))) ok = false;
       } catch (e) {
@@ -254,7 +293,8 @@ export class AllWatcher {
         this.log(`${vault}: ${errText(e)}`);
       }
     }
-    if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll`);
+    this.report = { late, overdueSeconds: late ? Math.round((this.clock() - oldest) / 1000) : 0 };
+    if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll (the oldest waits ${this.report.overdueSeconds}s)`);
     await this.save();
     return ok;
   }

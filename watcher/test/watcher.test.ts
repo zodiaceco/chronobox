@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, MemoryStore, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
@@ -663,6 +663,52 @@ test('--all tries a failed delivery again on the next poll', async () => {
   await w.poll();
   assert.deepEqual(hooks().map((s) => s.json.vault), [SAFE]);
   assert.equal(w.state.vaults[SAFE].active, false);
+});
+
+test('--all: a poll out of time goes on where it stopped, so busy vaults cannot starve the others', async () => {
+  // Four vaults where something always waits. The clock moves 10 ms per read, and a poll has 5 ms: one read each.
+  let now = 1_000_000;
+  const vaults = ['a', 'b', 'c', 'd'].map((c) => '0x' + c.repeat(40));
+  const store = new MemoryStore();
+  const seed = { version: 1, chainId: 1, lastBlock: chain.head, vaults: Object.fromEntries(vaults.map((v) => [v, { delay: v, active: true }])) };
+  await store.set('all', JSON.stringify(seed));
+  const read: string[] = [];
+  let hang: string | null = null;
+  const open = (st: MemoryStore) => {
+    const w = new AllWatcher(allConfig(), { log: (m) => logs.push(m), store: st, clock: () => now });
+    (w as any).watcherOf = (vault: string) => ({
+      state: { items: { 0: {} }, outbox: [], failCount: 0, lastBlock: 1 },
+      poll: async () => {
+        // The time of this read is saved before the read.
+        assert.equal(JSON.parse((await st.get('all'))!).vaults[vault].lookedAt, now);
+        read.push(vault);
+        now += 10;
+        if (vault === hang) await new Promise(() => undefined); // the function is killed here
+        return true;
+      },
+    });
+    return w;
+  };
+  const w = open(store);
+  for (let i = 0; i < 5; i++) await w.poll({ deadline: now + 5 });
+  assert.deepEqual(read, [vaults[0], vaults[1], vaults[2], vaults[3], vaults[0]], 'each in turn, then from the start');
+  // Skipped vaults are reported with how long the oldest waits.
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 0 });
+  now += 600_000;
+  await w.poll({ deadline: now + 5 });
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 600 });
+
+  // A read that never ends (the function is killed): the next run starts with the vault after it.
+  read.length = 0;
+  hang = vaults[2];
+  void w.poll({ deadline: now + 5 });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(read, [vaults[2]]);
+  hang = null;
+  const after = new MemoryStore();
+  for (const [k, v] of store.data) after.data.set(k, v); // the lock ran out; the state is what was saved
+  await open(after).poll({ deadline: now + 5 });
+  assert.deepEqual(read, [vaults[2], vaults[3]]);
 });
 
 // ---------------------------------------------------------------------------
