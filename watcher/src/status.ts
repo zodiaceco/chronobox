@@ -85,10 +85,12 @@ export function replayQueue(args: {
     const it = items.get(n);
     return it !== undefined && itemStatus(it.createdAt, timing.cooldown, timing.expiration, ts).status === 'expired';
   };
+  // Only a request whose contents the watcher knows can be proved by a call. One it could not read (a first start
+  // with more than FIRST_START_LOOKUP_LIMIT waiting) proves nothing, and matches nothing.
   const same = (it: QueueTx | undefined, c: { to: string; value: bigint; data: string; operation: number }) =>
-    it === undefined || it.to === undefined ||
-    (it.to.toLowerCase() === c.to.toLowerCase() && BigInt(it.value ?? '0') === c.value &&
-      (it.data ?? '0x').toLowerCase() === c.data.toLowerCase() && (it.operation ?? 0) === c.operation);
+    it !== undefined && it.to !== undefined && it.data !== undefined &&
+    it.to.toLowerCase() === c.to.toLowerCase() && BigInt(it.value ?? '0') === c.value &&
+    it.data.toLowerCase() === c.data.toLowerCase() && (it.operation ?? 0) === c.operation;
   let cur = args.from;
   let sure = true;
   const open: Extract<VaultEvent, { kind: 'call' }>[] = [];
@@ -122,19 +124,13 @@ export function replayQueue(args: {
     if (!call) { sure = false; break; }
     const ts = args.timeOf(e.block);
     if (e.module === delay) {
-      // Which request did the Delay carry out? The head, if the call is the head: the log proves it.
+      // Which request did the Delay carry out? From the head on: a request that is exactly the call was carried out
+      // (the log proves it, whatever the time says). Before it, each one must have run out of time and been removed.
+      // The first one that is neither (it was not read, or it is something else) leaves the replay unsure.
       let j = cur;
-      if (!same(items.get(j), call)) {
-        j = cur + 1;
-        while (j < args.to && !same(items.get(j), call)) j++;
-        // A later one: then every request before it ran out of time, by the timing in force now.
-        if (j >= args.to) { sure = false; break; }
-        let skipped = true;
-        for (let k = cur; k < j; k++) if (!expiredAt(k, ts)) skipped = false;
-        if (!skipped) { sure = false; break; }
-        for (; cur < j; cur++) reasons.set(cur, { how: 'expired' });
-      }
-      if (j >= args.to) { sure = false; break; }
+      while (j < args.to && !same(items.get(j), call) && expiredAt(j, ts)) j++;
+      if (j >= args.to || !same(items.get(j), call)) { sure = false; break; }
+      for (; cur < j; cur++) reasons.set(cur, { how: 'expired' });
       reasons.set(j, { how: 'executed', block: e.block });
       cur = j + 1;
     }

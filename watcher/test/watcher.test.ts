@@ -576,6 +576,50 @@ test('a request that ran out of time before the time to finish got longer is sti
   ]);
 });
 
+test('a request the watcher could not read proves nothing: it cannot take the log of a real withdrawal', async () => {
+  // The case of the finding. 51 requests wait at the first start: the watcher reads 50, and #50 stays unknown.
+  chain.withCancel();
+  for (let i = 0; i < 51; i++) chain.enqueue(OWNER_WALLET, BigInt(i + 1));
+  const w = watcher();
+  await w.poll();
+  assert.equal(w.state.items['50'].kind, 'unknown');
+  chain.mine(DAY);
+  chain.enqueue(STRANGER, ONE_HALF_ETH); // #51, known
+  await w.poll();
+  // #0 to #50 run out of time (9 days) and are removed. #51 is carried out just before its own end.
+  chain.mine(8n * DAY + 60n);
+  chain.skipExpired(51);
+  chain.mine(DAY - 180n);
+  sent = [];
+  chain.execute();
+  // The next poll is just after #51 would have run out of time.
+  chain.mine(240n);
+  await w.poll();
+  const closed = hooks().filter((h) => h.json.event === 'closed');
+  const last = closed.find((h) => h.json.nonce === 51)!;
+  assert.equal(last.json.title, 'Done: Send 1.5 ETH to 0xbaba…baba');
+  assert.match(last.json.message, /The money left this Chronobox\./);
+  assert.equal(closed.find((h) => h.json.nonce === 50)!.json.title, 'Removed: Do something that the alert service could not read');
+  assert.equal(closed.filter((h) => /^Removed/.test(h.json.title)).length, 51);
+});
+
+test('an execution while an unread request is still valid leaves the replay unsure, never "no money moved"', async () => {
+  chain.withCancel();
+  for (let i = 0; i < 51; i++) chain.enqueue(OWNER_WALLET, BigInt(i + 1));
+  chain.mine(2n * DAY + 60n);
+  const w = watcher();
+  await w.poll();
+  // #0 to #49 carried out; then the Delay carries out #50, which the watcher never read.
+  sent = [];
+  for (let i = 0; i < 51; i++) chain.execute(i > 0);
+  await w.poll();
+  const closed = hooks().filter((h) => h.json.event === 'closed');
+  assert.equal(closed.length, 51);
+  assert.ok(closed.slice(0, 50).every((h) => /^Done/.test(h.json.title)));
+  assert.equal(closed[50].json.title, 'Closed: Do something that the alert service could not read');
+  assert.ok(closed.every((h) => !/No money moved/.test(h.json.message)));
+});
+
 test('an execution is reported as executed, an expired item as expired and removed', async () => {
   chain.withCancel();
   const w = watcher();

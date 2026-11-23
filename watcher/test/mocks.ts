@@ -67,6 +67,8 @@ export class MockChain {
   withCancel(order: 'delay-first' | 'roles-first' = 'delay-first') {
     this.safeModules = order === 'delay-first' ? [DELAY, ROLES] : [ROLES, DELAY];
   }
+  /** What really happened to each request that left the queue. The truth that the watcher must not contradict. */
+  outcomes: Record<number, 'executed' | 'expired' | 'cancelled'> = {};
   /** What the Safe (a SafeL2 1.4.1) logs: each call of a module, and its result right after it. In chain order. */
   safeLogs: { block: number; topics: string[]; data: string }[] = [];
   private moduleCall(module: string, to: string, value: bigint, data: string, operation: number, success: boolean) {
@@ -86,17 +88,27 @@ export class MockChain {
   /** executeNextTx: the Delay calls the Safe with the request at the head of the queue. */
   execute(sameBlock = false) {
     const q = this.queue[this.txNonce];
+    this.outcomes[this.txNonce] = 'executed';
     this.setNonce(this.txNonce + 1, sameBlock);
     this.moduleCall(DELAY, q.to, q.value, q.data, q.operation, true);
-    // A request on the Delay itself changes its timing.
+    // A request on the Delay itself changes its timing, or removes the requests after it.
     const d = q.data.toLowerCase();
     if (q.to === DELAY && d.length === 74 && d.startsWith('0xebb2b4a2')) this.cooldown = BigInt('0x' + d.slice(10));
     if (q.to === DELAY && d.length === 74 && d.startsWith('0x9b56d5be')) this.expiration = BigInt('0x' + d.slice(10));
+    if (q.to === DELAY && d.length === 74 && d.startsWith('0x46ba2307')) {
+      const n = Number(BigInt('0x' + d.slice(10)));
+      for (let i = this.txNonce; i < n; i++) this.outcomes[i] = 'cancelled';
+      this.txNonce = n;
+    }
   }
   /** skipExpired: no log at all. */
-  skipExpired() { this.setNonce(this.txNonce + 1, false); }
+  skipExpired(count = 1) {
+    for (let i = 0; i < count; i++) this.outcomes[this.txNonce + i] = 'expired';
+    this.setNonce(this.txNonce + count, false);
+  }
   /** setTxNonce(n) through the Roles modifier. With an event TxNonceSet(n) on a Delay that has it. */
   cancel(n: number, sameBlock = false) {
+    for (let i = this.txNonce; i < n; i++) this.outcomes[i] = 'cancelled';
     this.setNonce(n, sameBlock);
     // Another call of the cancel contract first, which is no cancel.
     this.moduleCall(ROLES, OWNER_WALLET, 0n, '0x', 0, true);
