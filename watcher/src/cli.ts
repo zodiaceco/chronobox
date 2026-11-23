@@ -14,7 +14,8 @@ import { Telegram } from './telegram.ts';
 import { ConfigError, errText } from './util.ts';
 import { Watcher } from './watcher.ts';
 
-export async function main(argv: string[], env: Record<string, string | undefined>): Promise<number> {
+/** `stopped` ends the loop after a poll: for the tests. The program itself runs until it is killed. */
+export async function main(argv: string[], env: Record<string, string | undefined>, stopped: () => boolean = () => false): Promise<number> {
   let cfg: Config;
   try {
     cfg = parseConfig(argv, env);
@@ -60,8 +61,6 @@ export async function main(argv: string[], env: Record<string, string | undefine
       if (e instanceof ConfigError) { console.error(`Configuration error: ${e.message}`); return 2; }
       w.log(`telegram: cannot reach Telegram yet: ${errText(e)}`);
     }
-    // The bot answers at once, also while the watcher waits for its next poll.
-    if (!cfg.once) void telegram.run();
   }
   if (email && !cfg.once) {
     try {
@@ -74,6 +73,7 @@ export async function main(argv: string[], env: Record<string, string | undefine
   } else if (email) {
     w.log('email: with --once there is no sign-up page. The addresses on the list get their alerts.');
   }
+  let botRuns = false;
   for (;;) {
     let ok = true;
     for (const one of watchers) {
@@ -90,6 +90,11 @@ export async function main(argv: string[], env: Record<string, string | undefine
       if (telegram) await telegram.pump(0).catch((e) => w.log(`telegram: cannot get messages: ${errText(e)}`));
       return ok ? 0 : 1;
     }
+    // From here on the bot answers at once, also while the watcher waits for its next poll. It starts after the
+    // first poll: before that the watcher has not said which network it reads, and a Start that waits at Telegram
+    // would get "try again in a few minutes".
+    if (telegram && !botRuns) { botRuns = true; void telegram.run(stopped); }
+    if (stopped()) return ok ? 0 : 1;
     await new Promise((r) => setTimeout(r, cfg.pollSeconds * 1000));
   }
 }

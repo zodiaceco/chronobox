@@ -3129,3 +3129,9 @@ button.row-strong:hover .row-hint {
   color: var(--muted);
   font-size: 0.95rem;
 }
+
+/* A way that is not there yet: it cannot be chosen, and it looks like it. */
+.row-pick-soon strong {
+  color: var(--muted);
+  font-weight: 500;
+}

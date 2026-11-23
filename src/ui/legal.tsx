@@ -7,7 +7,7 @@ import type { ComponentChildren } from "preact";
  * commit.
  */
 
-const UPDATED = "20 November 2026";
+const UPDATED = "23 November 2026";
 
 function Ext(props: { href: string; children: ComponentChildren }) {
   return (
@@ -56,7 +56,10 @@ export function PrivacyPage() {
 
       <header class="tech-head">
         <h1>Privacy</h1>
-        <p class="lead">Chronobox has no account, no server and no analytics. Your data stays in your browser and on the blockchain.</p>
+        <p class="lead">
+          The Chronobox app has no account, no server and no analytics. Your data stays in your browser and on the blockchain. Alerts are
+          the one exception, and you choose them.
+        </p>
         <p class="tech-note">Last updated {UPDATED}</p>
       </header>
 
@@ -71,7 +74,10 @@ export function PrivacyPage() {
       <Block title="What we do not do">
         <ul>
           <li>We do not ask for your name, email address or any other account data.</li>
-          <li>We do not run a server for this app. The page does not send data to us or to anybody else.</li>
+          <li>
+            We do not run a server for this app. The page does not send data to us or to anybody else. Alerts are a service of their own:
+            see "Alerts" below.
+          </li>
           <li>We do not use cookies, analytics, tracking pixels or advertising.</li>
           <li>We do not load fonts, scripts or images from other websites.</li>
         </ul>
@@ -144,6 +150,38 @@ export function PrivacyPage() {
           The app makes the calendar file in your browser. It holds the times of the reminders only, no amount, no address and no link.
           If your calendar copies its entries to a cloud, the privacy policy of your calendar applies.
         </p>
+      </Block>
+
+      <Block title="Alerts">
+        <p>
+          Alerts are optional. They do not come from this page. They come from an alert service that we run, and you start them yourself
+          in Telegram. This service is not private: to send you an alert, it must know who follows a Chronobox, and we can see that.
+        </p>
+        <p>When you press Start in Telegram, the alert service keeps:</p>
+        <ul>
+          <li>the number of your Telegram chat,</li>
+          <li>the address and the network of the Chronobox you follow,</li>
+          <li>since when you follow it.</li>
+        </ul>
+        <p>
+          It keeps no name, no username, no phone number and no message. We keep the list encrypted. That protects a copy of the list. It
+          does not hide the list from us: with it we can see that a Telegram account follows a Chronobox, and so how much money that
+          account may control.
+        </p>
+        <p>
+          Telegram delivers the alerts. Telegram knows the phone number of your account, sees that you follow a Chronobox, and can read
+          what the bot sends you. The privacy policy of Telegram applies to this.
+        </p>
+        <p>
+          The alert service runs at Vercel Inc., USA, and keeps the encrypted list at Upstash Inc., USA. Both process the data on our
+          behalf.
+        </p>
+        <p>To delete your data, send /stop to the bot. That ends the alerts and deletes your chat from the list.</p>
+        <p>
+          If you do not want us or Telegram to know this, do not use our alert service. Its code is public, and you can run it yourself on a server.
+          Then we learn nothing about you. "Get told" in your Chronobox shows how.
+        </p>
+        <p class="tech-note">Legal basis: Art. 6(1)(b) GDPR. We need this data for the service you ask for.</p>
       </Block>
 
       <Block title="Links to other websites">

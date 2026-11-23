@@ -104,10 +104,17 @@ export const ALERTS_TELEGRAM: string | null = "zodiac_chronobox_bot";
 export const ALERTS_EMAIL: string | null = null;
 
 /**
+ * Alerts by email are not there yet, but they will be. While this is true and
+ * ALERTS_EMAIL is null, "Get told" shows email as "Coming soon". Set it to
+ * false in a copy of the app that will not have alerts by email.
+ */
+export const ALERTS_EMAIL_SOON = true;
+
+/**
  * Where a person reads how to run the alert service on a machine of their
  * own: the guide in the repository. Null means: the app does not point to it.
  */
-export const ALERTS_GUIDE: string | null = null;
+export const ALERTS_GUIDE: string | null = "https://github.com/zodiaceco/chronobox/tree/main/watcher#run-it-yourself";
 
 /**
  * The suggested contribution in US dollars, by how much money is in play:
