@@ -112,7 +112,7 @@ Read these. They are the honest edge of what a delay can do.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** Chronobox has no recovery of its own. If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian cannot help. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
-- **No alerts.** A web page cannot wake up when it is closed, and this version has no alert service. Use the calendar file (below), and look at your Chronobox regularly.
+- **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below). It is built, but this version does not switch it on. Use the calendar file, and look at your Chronobox regularly.
 
 
 
@@ -123,11 +123,25 @@ Read these. They are the honest edge of what a delay can do.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
 
-## Get told: calendar
+## Get told: calendar and alerts
 
 Each queued withdrawal has an **Add to calendar** link: one reminder when it becomes ready, one before it expires. Many calendars copy their entries to a cloud, so the file holds no amount, no address and no link.
 
-Alerts to a phone when something is queued are not part of this version yet.
+### Alerts in Telegram
+
+`watcher/watch.ts` is a single file with no dependencies. It watches every Chronobox on a network and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
+
+`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
+
+The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
+
+What this gives and what it does not:
+
+- No second app for people who have Telegram, and no form to fill in.
+- The alert service keeps one pair per chat: the number of the Telegram chat and the address of the Chronobox. It keeps no name, no username, no phone number and no message. `/stop` deletes the pair. This pair is personal data: it links a reachable account to a Chronobox. On disk the list is encrypted with a key that is not stored with it, so a copy of the file alone shows nothing. A person who controls the running service can still read it.
+- Telegram knows the phone number of the account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
+- A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat stops, every other chat that follows the same Chronobox is told.
+- The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
 
 ## Run it
 
@@ -144,6 +158,7 @@ The dev build injects a test wallet ("Anvil test wallet") that signs with anvil'
 ```bash
 npm test             # unit tests
 npm run test:fork    # the full flow against the real contracts on the fork
+npm run test:fork:alerts   # the alert service against the real contracts on the fork, with a stand-in for Telegram
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```
@@ -215,9 +230,12 @@ src/lib/abi.ts       minimal ABI encoder and decoder
 src/lib/chains.ts    contract addresses, networks, main tokens
 src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
+src/lib/alerts.ts    the link to the Telegram bot
 src/ui/              screens
+watcher/             the alert service: one file, no dependencies
 build.mjs            build, dev server, build hash
 test/fork.ts         end-to-end proof on a fork
+test/alerts-fork.ts  the alert service on a fork
 brand/               logo and icons
 ```
 

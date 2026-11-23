@@ -37,6 +37,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
+import { AlertsSheet, BOT } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -55,7 +56,7 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | null;
 
 function useVault(session: Session, chain: Chain, safe: Address) {
   const [data, setData] = useState<VaultData | null>(null);
@@ -419,6 +420,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
             onClick={() => setSheet("checks")}
           />
+          {BOT ? <Row label="Get told" value="Alerts in Telegram" onClick={() => setSheet("alerts")} /> : null}
           <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
         </ul>
       ) : inspection.checks.length > 0 ? (
@@ -473,6 +475,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           </p>
         </Modal>
       ) : null}
+      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
       {cancelling && vault ? (
         <Modal title={isGuardian ? "Stop this?" : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (
