@@ -970,11 +970,18 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       // A history that passed is good until the network, members, txNonce, or council nonce change:
       // a permission can change only through the Delay (moving txNonce) or through the shared 2 of 2
       // Safe (moving its nonce). Only a pass is kept, and only in memory when the chainId is known.
+      //
+      // That holds only for a Chronobox that passed every other check: above all, one that no person
+      // owns. A Safe that still has an owner can change its Roles modifier directly, without the
+      // Delay, and then burn its ownership. So a pass is kept, and used, only when everything else
+      // passed. The Safe's own nonce is part of the key as well: every transaction of an owner moves it.
+      const isolated = cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk;
       const councilNonce = guard && result.councilMade ? ((await one(guard.council, "nonce()", "uint256")) as bigint) : 0n;
+      const safeNonce = isolated ? ((await one(safe, "nonce()", "uint256")) as bigint) : 0n;
       const chainKey = hints?.chainId;
       const key =
-        chainKey !== undefined
-          ? `${chainKey}:${safe}:${roles}:${delay}:${controller}:${txNonce}:${councilNonce}:${result.members.join(",")}`.toLowerCase()
+        chainKey !== undefined && isolated
+          ? `${chainKey}:${safe}:${safeNonce}:${roles}:${delay}:${controller}:${txNonce}:${councilNonce}:${result.members.join(",")}`.toLowerCase()
           : null;
       const kept = key ? passed.get(rpc)?.get(key) : undefined;
       const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard));
