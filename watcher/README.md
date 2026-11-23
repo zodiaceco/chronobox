@@ -4,12 +4,59 @@ A Chronobox is a Safe. Everything goes through a Zodiac Delay, controlled by one
 
 The watcher reads the chain every minute and sends a message when something happens. It runs in two ways:
 
-- **As an alert service (`--all`).** It watches every Chronobox on one or more networks and runs a Telegram bot. A person opens the bot from the Chronobox app, presses Start, and gets the alerts of that Chronobox in Telegram.
+- **As an alert service (`--all`).** It watches every Chronobox on one or more networks. A person gets the alerts of their Chronobox in Telegram (they open the bot from the Chronobox app and press Start) or by email (they give an address on a page of the service and confirm it).
 - **For one Chronobox.** It watches the address you give it and posts every alert to a webhook of yours.
 
 The watcher is a program of its own. It is not part of the Chronobox website, and it does not start when the website is published. Somebody must run it on a machine that stays on: a small server, or a computer at home. A host that runs code only when a request comes in (Vercel, Netlify and others like them) cannot run it. If the app shows the button "Get alerts in Telegram" and no watcher runs, the bot does not answer and nobody gets an alert.
 
 It is one file with no packages and no keys. It needs Node.js 22.18 or newer. Run `node watch.ts --help` for all settings. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
+
+## Run it yourself
+
+You do not need the alert service of anybody else. The watcher is this one file, and you can run it yourself. Then:
+
+- It writes only to you, and to the people you give your bot to.
+- Nobody else keeps a list that links you to your Chronobox.
+- It works as long as your machine runs. It does not need us.
+
+Choose what you want to get, and then where it runs.
+
+### What you get
+
+| | Alerts in Telegram | Alerts for your own tools |
+|---|---|---|
+| **What it is** | Your own Telegram bot sends you a message. | Every alert goes to a web address of yours (a webhook), as data. |
+| **Good for** | You, on your phone. | A script, a home automation, the chat of a team. |
+| **It watches** | Every Chronobox on the network. You follow yours with one message to your bot. | Only your Chronobox. |
+| **You need** | A bot from BotFather, a key for the list of chats, and an RPC that can search logs without an address. | Any RPC for the network of your Chronobox. |
+| **How** | [The alert service](#the-alert-service---all) | [One Chronobox, to a webhook](#one-chronobox-to-a-webhook) |
+
+With your own bot, the button "Get alerts in Telegram" in the Chronobox app does not lead to it. Open your bot in Telegram and send it the network and the address of your Chronobox:
+
+```
+/start 1-0xYourChronobox
+```
+
+The number is the chain ID: 1 for Ethereum, 8453 for Base, 42161 for Arbitrum One, 100 for Gnosis. The bot answers with what waits in your Chronobox right now.
+
+### Where it runs
+
+The watcher needs a machine that stays on, and Node.js 22.18 or newer. There are three ways to start it:
+
+| | In a terminal | As a service | With cron |
+|---|---|---|---|
+| **Good for** | A first try. | A small server or a Raspberry Pi. | A machine that runs cron already. |
+| **It stops when** | You close the terminal. | Never. It starts again after an error or a restart. | Never. It looks one time per run. |
+| **Telegram** | Yes | Yes | No: the bot would answer late. Use it for the webhook. |
+| **How** | The commands in the two sections named above. | [Run it as a service](#run-it-as-a-service) | The last lines of [Run it as a service](#run-it-as-a-service) |
+
+There is no host yet that runs it for you with one click. A host that runs code only when a request comes in cannot run it.
+
+### Before you rely on it
+
+- Try it first with `--dry-run`. It prints the messages and sends nothing.
+- Ask your Chronobox for a small withdrawal and cancel it. You must get two messages.
+- The watcher says "All quiet" once a day. If that message stops, the watcher has stopped.
 
 ## What it reports
 
@@ -32,7 +79,7 @@ The watcher names three requests of the app by their shape: a new wallet, a new 
 ## The alert service (`--all`)
 
 1. In Telegram, write to [BotFather](https://t.me/BotFather): `/newbot`, a name, a username. It answers with a token.
-2. Make a key for the list of chats. Do this one time, and keep the key:
+2. Make a key for the lists of chats and of email addresses. Do this one time, and keep the key:
 
    ```sh
    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
@@ -43,7 +90,7 @@ The watcher names three requests of the app by their shape: a new wallet, a new 
    ```sh
    export RPC_URL=https://your-rpc,https://backup-rpc
    export TELEGRAM_TOKEN=123456:AA...
-   export TELEGRAM_KEY=<the key from step 2>
+   export ALERTS_KEY=<the key from step 2>
    export STATE_DIR=/var/lib/chronobox-watcher
    node watch.ts --all
    ```
@@ -81,18 +128,54 @@ Things to know:
 - The RPC must answer `eth_getLogs` without an address filter. Lower `LOG_CHUNK` if it limits the block range.
 - With `--once` the bot reads its messages one time per run, so an answer takes as long as the pause between two runs. Run the watcher as a service.
 - `CHRONOBOX`, `DELAY` and `STATE_FILE` do not work with `--all`. `WEBHOOK_URL` works, and gets the alerts of every Chronobox.
+- `TELEGRAM_KEY` is the older name of `ALERTS_KEY`. It still works.
 - Not tested yet with the real Telegram. The checks are the unit tests and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
+
+### Alerts by email
+
+With `RESEND_KEY` the watcher also sends the alerts by email, through [Resend](https://resend.com). It works with the Telegram bot or without it.
+
+```sh
+export RESEND_KEY=re_...
+export EMAIL_FROM="Chronobox alerts <alerts@example.org>"   # a domain that Resend has verified
+export PUBLIC_URL=https://alerts.example.org                 # the address of this watcher on the web
+export PORT=8787                                             # the port that the watcher listens on
+export ALERTS_KEY=<the key from step 2>
+```
+
+Then, only when the watcher runs: in the Chronobox app, set `ALERTS_EMAIL` in `src/lib/chains.ts` to `<PUBLIC_URL>/email` and build.
+
+A person signs up in two steps (double opt-in). The app is not part of it: it only opens the first page.
+
+1. The page `<PUBLIC_URL>/email?c=<chain id>-<address>` asks for an email address. The watcher checks on the chain that the address is a Chronobox.
+2. The watcher sends one email with a link. Nothing else goes to that address yet.
+3. The link opens a page with one button, "Confirm". Only the button confirms. A program that opens the links in an email for the person does not press it.
+4. From then on the alerts of that Chronobox go to that address. Each one ends with a link that stops them, and mail programs show their own button for it.
+
+Things to know:
+
+- **Email needs an address on the web. Telegram does not.** Put a proxy with TLS in front of `PORT`, for example Caddy or nginx, and let it pass the visitor in `X-Forwarded-For`. `GET /health` answers `ok`.
+- A request that nobody confirms is deleted after one day.
+- The page gives the same answer for every address, so nobody can use it to find out who is on the list.
+- Somebody can type the address of another person. That person gets one email and nothing more. An address gets one confirmation in ten minutes for a Chronobox and holds three open requests at most. One visitor can ask for ten an hour, and all visitors together for 300.
+- "All quiet" does not go out by email. An inbox is not the place for a message every day. So a person with email only does not notice when the watcher stops.
+- An alert in Telegram holds no link. An alert by email holds one: the link that stops the alerts.
+- When an address stops, the other addresses and the Telegram chats of that Chronobox are told, and the other way round.
+- With `--once` there is no page to sign up. People who are on the list get their alerts.
+- Not tested yet with the real Resend. The checks are the unit tests and `npm run test:fork:alerts`, with a stand-in for Resend.
 
 ### What the service keeps
 
 - Public chain data: the Chronoboxes it found and what waits in them.
 - `STATE_DIR/telegram.json`: for each chat that pressed Start, the number of the chat and the Chronoboxes it follows. No name, no username, no phone number, no message.
-- That list is personal data. It links a Telegram account to a Chronobox, and so to an amount of money.
-- The list is encrypted on disk with `TELEGRAM_KEY` (AES-256-GCM). The file holds no address and no chat number that somebody can read without the key. So the file, a backup of it or the disk alone are worth nothing.
+- `STATE_DIR/email.json`: for each address that confirmed, the address and the Chronobox, and the requests of the last day that are not confirmed yet. Nothing else.
+- These lists are personal data. They link a Telegram account or an email address to a Chronobox, and so to an amount of money.
+- The lists are encrypted on disk with `ALERTS_KEY` (AES-256-GCM). The files hold no address and no chat number that somebody can read without the key. So the files, a backup of them or the disk alone are worth nothing.
+- Resend gets every email address and the text of every email, because it sends them. Name it where you tell people what happens to their data.
 - Keep the key and the token away from `STATE_DIR` and its backups: in the secret store of your host, or in a file that only the service can read. With the list and the token, somebody could write to every person as the real bot.
 - The key does not protect against a person who controls the running watcher. The watcher must know which chats follow a Chronobox when it sends an alert, so it holds the list and the key. Only a sealed enclave could hide the list from the person who runs the machine. That is not built.
 - If the key is lost, the list is lost: remove `telegram.json`, and every person must press Start again. A wrong key stops the watcher with a clear message. It does not start with an empty list.
-- The watcher does not write the number of a chat, the token or the key to its log.
+- The watcher does not write the number of a chat, an email address, the token or a key to its log.
 - Telegram knows the phone number of each account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 
 ### Try it on your machine
@@ -100,7 +183,7 @@ Things to know:
 Make a test bot with BotFather, put its username in `ALERTS_TELEGRAM`, start the fork (`npm run fork`) and the app (`npm run dev`), and run:
 
 ```sh
-RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... TELEGRAM_KEY=<32 characters or more> node watch.ts --all
+RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... ALERTS_KEY=<32 characters or more> node watch.ts --all
 ```
 
 Then press "Get alerts in Telegram" in a Chronobox. On the local fork the network is Ethereum (chain 1), so the link starts with `1-`.
@@ -161,7 +244,7 @@ Everybody on the machine can read a unit file, so the secrets go into `/etc/chro
 ```sh
 RPC_URL=https://your-rpc,https://backup-rpc
 TELEGRAM_TOKEN=123456:AA...
-TELEGRAM_KEY=...
+ALERTS_KEY=...
 ```
 
 The state goes to `/var/lib/chronobox-watcher/`, the folder systemd creates for the service. Then:
@@ -177,7 +260,7 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 ## Privacy
 
 - Your RPC provider sees what the watcher reads and its IP address. Use your own node, or an RPC you trust, if that matters to you.
-- The watcher never writes your RPC URL, your webhook URL, the bot token or the key of the chat list into a message or its log.
+- The watcher never writes your RPC URL, your webhook URL, the bot token, the Resend key or the key of the lists into a message or its log.
 - For the Telegram bot, see "What the service keeps" above.
 
 ## Limits

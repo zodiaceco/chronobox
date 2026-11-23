@@ -6,9 +6,9 @@
  *   npm run test:fork:alerts
  *
  * It creates Chronoboxes and a Safe that is not a Chronobox, lets chats press
- * Start, and checks that every alert goes to the chats that follow that
- * Chronobox and to nobody else. The Telegram API is a local stand-in that
- * records what the bot says. The script prints the messages, so that a person
+ * Start and an email address sign up, and checks that every alert goes to the
+ * people who follow that Chronobox and to nobody else. The Telegram API and
+ * Resend are local stand-ins that record what they get. The script prints the messages, so that a person
  * can read them. It takes a snapshot first and reverts to it at the end.
  */
 import assert from "node:assert/strict";
@@ -33,7 +33,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
-import { AllWatcher, Telegram, parseConfig } from "../watcher/watch.ts";
+import { AllWatcher, Email, Telegram, parseConfig } from "../watcher/watch.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 6 to 8. The browser dev wallet uses 0 to 2 and test/fork.ts uses 3 to 5.
@@ -86,6 +86,22 @@ const server = http.createServer((req, res) => {
 });
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const telegramApi = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+// A stand-in for Resend: it records every email.
+type Mail = { to: string; subject: string; text: string };
+const mails: Mail[] = [];
+const resend = http.createServer((req, res) => {
+  let body = "";
+  req.on("data", (chunk) => (body += chunk));
+  req.on("end", () => {
+    const m = JSON.parse(body);
+    mails.push({ to: m.to[0], subject: m.subject, text: m.text });
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ id: "mail" }));
+  });
+});
+await new Promise<void>((resolve) => resend.listen(0, "127.0.0.1", resolve));
+const resendApi = `http://127.0.0.1:${(resend.address() as { port: number }).port}`;
+const inbox = () => mails.splice(0, mails.length);
+const ANNA_MAIL = "anna@example.org";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chronobox-alerts-"));
 const heard = () => said.splice(0, said.length);
 const chats = (messages: Said[]) => messages.map((m) => m.chat).sort();
@@ -104,6 +120,7 @@ async function chronobox(wallet: Address, cooldown: bigint, index = 0) {
   return { safe, delay: state.delay!, roles: state.roles! };
 }
 
+const closers: (() => void)[] = [];
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [ANNA, BEN, CARL, GUARD]) await rpc("anvil_setCode", [account, "0x"]);
@@ -112,11 +129,22 @@ try {
 
   step("1. The alert service starts and knows nobody");
   const logs: string[] = [];
-  const settings = { RPC_URL: URL, STATE_DIR: dir, HEARTBEAT_HOURS: "0", TELEGRAM_TOKEN: TOKEN, TELEGRAM_KEY: KEY, TELEGRAM_API: telegramApi };
+  const settings = {
+    RPC_URL: URL, STATE_DIR: dir, HEARTBEAT_HOURS: "0", TELEGRAM_TOKEN: TOKEN, ALERTS_KEY: KEY, TELEGRAM_API: telegramApi,
+    RESEND_KEY: "re_fork_test_key_0123456789", RESEND_API: resendApi, EMAIL_FROM: "Chronobox alerts <alerts@chrono.example>", PUBLIC_URL: "http://placeholder.invalid",
+  };
   const config = parseConfig(["--all"], settings);
   const bot = new Telegram(config, { log: (line) => logs.push(line) });
   await bot.start();
-  const watcher = new AllWatcher(config, { log: (line) => logs.push(line), telegram: bot });
+  const email = new Email(config, { log: (line) => logs.push(line) });
+  const pages = `http://127.0.0.1:${await email.listen(0)}`;
+  (email as any).publicUrl = pages; // the links in the emails lead to the pages of this test
+  bot.peers.push(email);
+  email.peers.push(bot);
+  closers.push(() => email.close());
+  const post = (pathname: string, fields: Record<string, string>) =>
+    fetch(pages + pathname, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields).toString() }).then((r) => r.text());
+  const watcher = new AllWatcher(config, { log: (line) => logs.push(line), telegram: bot, email });
   assert.equal(await watcher.poll(), true);
   assert.deepEqual(watcher.state.vaults, {});
   ok("first look: no Chronobox, no message");
@@ -148,6 +176,18 @@ try {
   ok("the plain Safe is refused");
   show(told[0].text);
 
+  step("3b. An email address signs up, and confirms");
+  await post("/email", { c: telegramStart(1, anna.safe), email: ANNA_MAIL });
+  let got = inbox();
+  assert.deepEqual(got.map((m) => [m.to, m.subject]), [[ANNA_MAIL, "Confirm the alerts for your Chronobox"]]);
+  assert.deepEqual(email.subscribers(1, anna.safe), []);
+  const confirmed = await post("/confirm", { t: /\/confirm\?t=([\w-]+)/.exec(got[0].text)![1] });
+  assert.match(confirmed, /<h1>Done<\/h1><p>You now get the alerts of the Chronobox 0x\w{4}…\w{4} on Ethereum by email\.<\/p><p>Nothing waits there right now\.<\/p>/);
+  assert.match(await post("/email", { c: telegramStart(1, plainSafe), email: ANNA_MAIL }), /is not a Chronobox on Ethereum/);
+  assert.equal(mails.length, 0);
+  ok("one email with a link, and the alerts start only after the confirmation");
+  show(got[0].text.replace(/t=[\w-]+/, "t=…"));
+
   step("4. A withdrawal is asked for in one of them");
   await sendAndWait(rpc, ANNA, depositTx(anna.safe, null, 3n * ETH));
   await sendAndWait(rpc, BEN, depositTx(ben.safe, null, 2n * ETH));
@@ -164,6 +204,11 @@ try {
   assert.match(told[0].text, /Was it you\? Then you need to do nothing\. If not, open your Chronobox and cancel it\. Somebody else may have your wallet\.\n\nChronobox 0x\w{4}…\w{4} on Ethereum$/);
   ok("it went to the two chats of that Chronobox, and to nobody else");
   show(told[0].text);
+  got = inbox();
+  assert.deepEqual(got.map((m) => [m.to, m.subject]), [[ANNA_MAIL, "New request: Withdraw 1 ETH"]]);
+  assert.match(got[0].text, /^Somebody asked this Chronobox to withdraw 1 ETH\.[\s\S]*\n\nChronobox 0x\w{4}…\w{4} on Ethereum\n\nTo stop these alerts, open this link:\nhttp\S+\/stop\?t=[\w-]+$/);
+  ok("the email address got the same alert, with a link to stop");
+  show(`Subject: ${got[0].subject}\n\n${got[0].text.replace(/t=[\w-]+/, "t=…")}`);
   // Somebody who starts now is told what waits.
   person(CURIOUS, `/start ${telegramStart(1, anna.safe)}`);
   await bot.pump();
@@ -172,6 +217,8 @@ try {
   person(CURIOUS, "/stop");
   await bot.pump();
   heard();
+  // The chat that left is told to the people who still listen, in Telegram and by email.
+  assert.deepEqual(inbox().map((m) => m.subject), ["Somebody stopped the alerts of your Chronobox"]);
   ok("a chat that starts while something waits is told about it");
 
   step("5. Cancel");
@@ -266,11 +313,15 @@ try {
   await bot.pump();
   told = heard();
   assert.match(told.find((m) => m.chat === ANNA_PHONE)!.text, /^Done\. You get no more alerts here/);
-  assert.match(told.find((m) => m.chat === ANNA_FRIEND)!.text, /has stopped them\. You still get them here\.$/);
+  assert.match(told.find((m) => m.chat === ANNA_FRIEND)!.text, /has stopped them\. You still get them\.$/);
+  got = inbox().filter((m) => /stopped/.test(m.subject));
+  assert.deepEqual(got.map((m) => m.to), [ANNA_MAIL]);
+  assert.match(got[0].text, /^A chat that got the alerts of the Chronobox 0x\w{4}…\w{4} on Ethereum has stopped them\. You still get them\./);
   await sendAndWait(rpc, ANNA, queueTx(anna.delay, annaOut));
   assert.equal(await watcher.poll(), true);
   assert.deepEqual(chats(heard()), [ANNA_FRIEND]);
-  ok("the friend is told that a chat stopped, and only the friend gets the next alert");
+  ok("the friend and the email address are told that a chat stopped, and only they get the next alert");
+  assert.deepEqual(inbox().map((m) => m.to), [ANNA_MAIL]);
 
   step("9. A restart sends nothing twice");
   const bot2 = new Telegram(config, { log: () => undefined });
@@ -279,6 +330,9 @@ try {
   assert.equal(await bot2.pump(), 0);
   assert.equal(said.length, 0);
   assert.deepEqual(bot2.subscribers(1, anna.safe), [String(ANNA_FRIEND)]);
+  assert.deepEqual(new Email(config).subscribers(1, anna.safe).map((e) => e.email), [ANNA_MAIL]);
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, "email.json"), "utf8"), /anna|example\.org/);
+  assert.doesNotMatch(logs.join("\n"), /anna@/);
   ok("no message after a restart, and the list of chats is kept");
   const onDisk = fs.readFileSync(path.join(dir, "telegram.json"), "utf8");
   assert.doesNotMatch(onDisk, new RegExp(`${anna.safe.slice(2)}|chats`, "i"));
@@ -288,6 +342,9 @@ try {
   console.log("\nAll alert checks passed.");
 } finally {
   await rpc("evm_revert", [snapshot]);
+  for (const close of closers) close();
+  resend.closeAllConnections();
+  resend.close();
   server.closeAllConnections();
   server.close();
   fs.rmSync(dir, { recursive: true, force: true });

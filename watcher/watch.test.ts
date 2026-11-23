@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, Telegram, Email, EMAIL_PENDING_SECONDS, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   TOPIC_TRANSACTION_ADDED, TOPIC_TX_NONCE_SET, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_MODULE_PROXY_CREATION, MODULE_PROXY_FACTORY,
   SEL, encUint, encAddr, proxyCode, MASTER_COPY, BURN_ADDRESS,
 } from './watch.ts';
@@ -227,6 +227,15 @@ let nextUpdate = 1;
 let tgCalls: string[] = [];
 /** What sendMessage answers for a chat: a Telegram error, one time ("once") or every time. */
 let tgRefuse: Record<number, { code: number; description: string; once?: boolean }> = {};
+// A stand-in for Resend: it records every email, and can refuse.
+const RESEND_KEY = 're_fake_key_for_the_tests_0123456789';
+let resendApi: { url: string; close: () => Promise<void> };
+type Mail = { to: string; from: string; subject: string; text: string; headers?: Record<string, string>; idem?: string; agent?: string };
+let mails: Mail[] = [];
+let resendRefuse: { code: number; message: string; once?: boolean } | null = null;
+const mailsTo = (to: string) => mails.filter((m) => m.to === to);
+const linkIn = (m: Mail, kind: 'confirm' | 'stop') => new RegExp(`https?://\\S+/${kind}\\?t=[\\w-]+`).exec(m.text)![0];
+
 const person = (chat: number, text: string, type = 'private') => {
   inbox.push({ update_id: nextUpdate++, message: { chat: { id: chat, type }, from: { id: chat, first_name: 'Somebody', username: 'somebody' }, text } });
 };
@@ -268,7 +277,26 @@ before(async () => {
     return answer(404, { ok: false, error_code: 404, description: 'Not Found' });
   });
 });
-after(async () => { await rpc.close(); await notify.close(); await telegramApi.close(); });
+before(async () => {
+  resendApi = await startServer((req, body, res) => {
+    const answer = (code: number, json: unknown) => res.writeHead(code, { 'content-type': 'application/json' }).end(JSON.stringify(json));
+    if (req.method !== 'POST' || req.url !== '/emails') return answer(404, { name: 'not_found', message: 'Not found' });
+    if (req.headers.authorization !== `Bearer ${RESEND_KEY}`) return answer(403, { name: 'validation_error', message: 'API key is invalid' });
+    // Resend refuses a request without this header.
+    if (!req.headers['user-agent']) return answer(403, { name: 'forbidden', message: 'error code: 1010' });
+    if (resendRefuse) {
+      const r = resendRefuse;
+      if (r.once) resendRefuse = null;
+      return answer(r.code, { name: 'error', message: r.message });
+    }
+    const m = JSON.parse(body);
+    const idem = req.headers['idempotency-key'] as string | undefined;
+    // The same key a second time: Resend sends nothing again.
+    if (!idem || !mails.some((x) => x.idem === idem)) mails.push({ to: m.to[0], from: m.from, subject: m.subject, text: m.text, headers: m.headers, idem, agent: req.headers['user-agent'] });
+    return answer(200, { id: 'mail-' + mails.length });
+  });
+});
+after(async () => { await rpc.close(); await notify.close(); await telegramApi.close(); await resendApi.close(); });
 
 beforeEach(() => {
   chain = new MockChain();
@@ -278,6 +306,8 @@ beforeEach(() => {
   inbox = [];
   tgCalls = [];
   tgRefuse = {};
+  mails = [];
+  resendRefuse = null;
   logs.length = 0;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chronobox-watch-'));
 });
@@ -834,7 +864,7 @@ test('--all ignores a Delay that is not a Chronobox', async () => {
 });
 
 test('--all settings', () => {
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x' }), /Set TELEGRAM_TOKEN and\/or WEBHOOK_URL/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x' }), /Set TELEGRAM_TOKEN, RESEND_KEY and\/or WEBHOOK_URL/);
   assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', WEBHOOK_URL: 'http://h', CHRONOBOX: SAFE }), /CHRONOBOX does not work with --all/);
   assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', WEBHOOK_URL: 'ftp://h' }), /WEBHOOK_URL must start/);
   assert.throws(() => parseConfig(['--all', '--ntfy-server', 'http://n'], { RPC_URL: 'http://x' }), /Unknown flag/);
@@ -1032,7 +1062,7 @@ test('Telegram: /stop, /list and /privacy', async () => {
   assert.equal(saidTo(ANNA)[4], 'Done. You get no more alerts here, and I deleted this chat from my list.');
   assert.equal(saidTo(ANNA)[5], 'This chat follows no Chronobox.');
   // The alerts do not go off in silence: the chat that still listens is told.
-  assert.equal(saidTo(BEN)[1], 'A chat that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them. You still get them here.');
+  assert.equal(saidTo(BEN)[1], 'A chat that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them. You still get them.');
   assert.equal(saidTo(BEN)[2], 'Done. You get no more alerts here, and I deleted this chat from my list.');
   assert.deepEqual(withBot().bot.state.chats, {}, 'the file on disk holds no chat any more');
 
@@ -1104,13 +1134,13 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
 
   // Another key, or a file that was changed: the watcher stops and says why, without the key in the message.
   const other = 'another-secret-that-is-also-long-enough-98765';
-  assert.throws(() => new Telegram({ ...cfg, telegramKey: other }), (e: Error) => e instanceof ConfigError && /TELEGRAM_KEY does not open/.test(e.message) && !e.message.includes(other));
+  assert.throws(() => new Telegram({ ...cfg, alertsKey: other }), (e: Error) => e instanceof ConfigError && /ALERTS_KEY does not open/.test(e.message) && !e.message.includes(other));
   const saved = fs.readFileSync(file, 'utf8');
   const parsed = JSON.parse(saved);
   const bytes = Buffer.from(parsed.sealed, 'base64');
   bytes[bytes.length - 1] ^= 1;
   fs.writeFileSync(file, JSON.stringify({ ...parsed, sealed: bytes.toString('base64') }));
-  assert.throws(() => new Telegram(cfg), /TELEGRAM_KEY does not open/);
+  assert.throws(() => new Telegram(cfg), /ALERTS_KEY does not open/);
   fs.writeFileSync(file, saved);
 
   // A list from before the encryption is sealed at the first start.
@@ -1125,8 +1155,8 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
 test('Telegram settings', async () => {
   const base = { RPC_URL: 'http://x', TELEGRAM_KEY: TG_KEY };
   // The key that encrypts the list of chats is not optional, and a short one is refused without being repeated.
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN }), /TELEGRAM_KEY is required with TELEGRAM_TOKEN/);
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: 'too-short' }), (e: Error) => /TELEGRAM_KEY is required/.test(e.message) && !/too-short/.test(e.message));
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN }), /ALERTS_KEY is required with TELEGRAM_TOKEN or RESEND_KEY/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: 'too-short' }), (e: Error) => /ALERTS_KEY is required/.test(e.message) && !/too-short/.test(e.message));
   assert.throws(() => parseConfig([], { ...base, CHRONOBOX: SAFE, WEBHOOK_URL: 'http://h/x', TELEGRAM_TOKEN: TG_TOKEN }), /TELEGRAM_TOKEN works with --all only/);
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: 'nonsense' }), (e: Error) => /does not look like a bot token/.test(e.message) && !/nonsense/.test(e.message));
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_API: 'ftp://t' }), /TELEGRAM_API must start/);
@@ -1140,6 +1170,314 @@ test('Telegram settings', async () => {
   // A token that Telegram does not accept is a configuration error, and the token is not in the message.
   const wrong = parseConfig(['--all'], { ...base, STATE_DIR: path.join(dir, 'wrong'), TELEGRAM_TOKEN: '999:AAwrong-token_0123456789abcdef', TELEGRAM_API: telegramApi.url });
   await assert.rejects(new Telegram(wrong).start(), (e: Error) => e instanceof ConfigError && !/AAwrong/.test(e.message));
+});
+
+// ---------------------------------------------------------------------------
+// --all with alerts by email
+
+const MAIL_ANNA = 'anna@example.org', MAIL_BEN = 'ben@example.org';
+let clock = 0;
+/** The watcher of every Chronobox with email, and with the Telegram bot too if `bot` is set. Its pages are served on a free port. */
+async function withEmail(opts: { bot?: boolean } = {}) {
+  const env: Record<string, string> = {
+    RPC_URL: rpc.url, STATE_DIR: path.join(dir, 'all'), HEARTBEAT_HOURS: '0', ALERTS_KEY: TG_KEY,
+    RESEND_KEY, RESEND_API: resendApi.url, EMAIL_FROM: 'Chronobox alerts <alerts@chrono.example>', PUBLIC_URL: 'http://placeholder.invalid',
+  };
+  if (opts.bot) { env.TELEGRAM_TOKEN = TG_TOKEN; env.TELEGRAM_API = telegramApi.url; }
+  const cfg = parseConfig(['--all'], env);
+  clock = Math.floor(Date.now() / 1000);
+  const email = new Email(cfg, { log: (m) => logs.push(m), now: () => clock });
+  const port = await email.listen(0);
+  const base = `http://127.0.0.1:${port}`;
+  // The links in the emails start with PUBLIC_URL. In the test that is the server itself.
+  (email as any).publicUrl = base;
+  const bot = opts.bot ? new Telegram(cfg, { log: (m) => logs.push(m) }) : undefined;
+  if (bot) { bot.peers.push(email); email.peers.push(bot); }
+  const w = new AllWatcher(cfg, { log: (m) => logs.push(m), telegram: bot, email });
+  const get = async (pathname: string) => { const r = await fetch(base + pathname); return { status: r.status, html: await r.text(), headers: r.headers }; };
+  const post = async (pathname: string, fields: Record<string, string>, ip = '203.0.113.7') => {
+    const r = await fetch(base + pathname, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': ip }, body: new URLSearchParams(fields).toString() });
+    return { status: r.status, html: await r.text() };
+  };
+  /** Sign up and confirm, as a person does it. */
+  const join = async (address: string) => {
+    await post('/email', { c: `1-${SAFE}`, email: address });
+    const link = linkIn(mailsTo(address).at(-1)!, 'confirm');
+    return post('/confirm', { t: new URL(link).searchParams.get('t')! });
+  };
+  return { w, email, bot, cfg, base, get, post, join };
+}
+const tokenOf = (link: string) => new URL(link).searchParams.get('t')!;
+
+test('Email: a person signs up, confirms, and then gets the alerts of the vault', async () => {
+  chain.withCancel();
+  const { w, email, get, post } = await withEmail();
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+
+    // 1. The page of the alert service.
+    const form = await get(`/email?c=1-${SAFE}`);
+    assert.equal(form.status, 200);
+    assert.match(form.html, /<h1>Alerts by email<\/h1><p>For the Chronobox 0x5a5a…5a5a on Ethereum\.<\/p>/);
+    assert.match(form.html, new RegExp(`<input type="hidden" name="c" value="1-${SAFE}">`));
+    assert.match(form.headers.get('content-security-policy')!, /default-src 'none'.*form-action 'self'/);
+    assert.equal(form.headers.get('referrer-policy'), 'no-referrer');
+
+    // 2. The address is given. One email goes out, and nothing else happens yet.
+    const sent = await post('/email', { c: `1-${SAFE}`, email: ' Anna@Example.org ' });
+    assert.equal(sent.status, 200);
+    assert.match(sent.html, /<h1>Look in your inbox<\/h1><p>We sent a link to anna@example\.org\./);
+    assert.equal(mails.length, 1);
+    const first = mails[0];
+    assert.equal(first.to, MAIL_ANNA);
+    assert.equal(first.from, 'Chronobox alerts <alerts@chrono.example>');
+    assert.equal(first.subject, 'Confirm the alerts for your Chronobox');
+    assert.match(first.text, new RegExp(`^Somebody asked for alerts for the Chronobox ${SAFE} on Ethereum to this address\\.\\n\\nWas it you\\? Then open this link and confirm:\\nhttp`));
+    assert.match(first.text, /If it was not you, do nothing\. We delete this request after one day\.$/);
+    assert.equal(first.agent, 'chronobox-watcher');
+    assert.deepEqual(email.subscribers(1, SAFE), []);
+    chain.mine(12n);
+    chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+    await w.poll();
+    assert.equal(mails.length, 1, 'no alert before the person confirmed');
+
+    // 3. The link opens a page with a button. Opening it alone confirms nothing: a mail scanner opens links too.
+    const link = linkIn(first, 'confirm');
+    const ask = await get(new URL(link).pathname + new URL(link).search);
+    assert.match(ask.html, /<h1>Confirm the alerts<\/h1><p>For the Chronobox 0x5a5a…5a5a on Ethereum, to anna@example\.org\.<\/p>/);
+    assert.deepEqual(email.subscribers(1, SAFE), []);
+    const done = await post('/confirm', { t: tokenOf(link) });
+    assert.match(done.html, /<h1>Done<\/h1><p>You now get the alerts of the Chronobox 0x5a5a…5a5a on Ethereum by email\.<\/p><p>Right now one request waits there:<\/p><p>Withdraw 1\.5 ETH\. Its wait ends on /);
+    assert.deepEqual(email.subscribers(1, SAFE).map((e) => e.email), [MAIL_ANNA]);
+    // The link works one time.
+    assert.equal((await post('/confirm', { t: tokenOf(link) })).status, 410);
+    assert.equal(mails.length, 1, 'no extra email after the confirmation');
+
+    // 4. Alerts. The stop link is in the text and in the headers that mail programs read.
+    chain.enqueue(STRANGER, ONE_HALF_ETH);
+    await w.poll();
+    assert.equal(mails.length, 2);
+    const alert = mails[1];
+    assert.equal(alert.subject, '⚠️ New request: Send 1.5 ETH to 0xbaba…baba');
+    assert.match(alert.text, /^Somebody asked this Chronobox to send 1\.5 ETH to 0xbaba…baba\./);
+    assert.match(alert.text, /\n\nChronobox 0x5a5a…5a5a on Ethereum\n\nTo stop these alerts, open this link:\nhttp\S+\/stop\?t=[\w-]+$/);
+    const stop = linkIn(alert, 'stop');
+    assert.deepEqual(alert.headers, { 'List-Unsubscribe': `<${stop}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
+    assert.equal((alert.text.match(/https?:\/\//g) ?? []).length, 1, 'the stop link is the only link in an alert');
+
+    // 5. The list on disk is sealed, and no address is in the log.
+    const text = fs.readFileSync(path.join(dir, 'all', 'email.json'), 'utf8');
+    assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['sealed', 'version']);
+    assert.doesNotMatch(Buffer.from(JSON.parse(text).sealed, 'base64').toString('latin1'), /anna|example\.org/);
+    assert.doesNotMatch(logs.join('\n'), new RegExp(`anna|${RESEND_KEY}|${TG_KEY}`));
+  } finally { email.close(); }
+});
+
+test('Email: stop from the page or from the mail program, and the others are told', async () => {
+  const { w, email, bot, get, post, join } = await withEmail({ bot: true });
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+    await join(MAIL_ANNA);
+    await join(MAIL_BEN);
+    person(CARL, START);
+    await bot!.pump();
+    said = [];
+    chain.mine(12n);
+    chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+    await w.poll();
+    mails = mails.filter((m) => /^New request/.test(m.subject));
+    assert.deepEqual(mails.map((m) => m.to), [MAIL_ANNA, MAIL_BEN]);
+    assert.equal(said.length, 1, 'the chat in Telegram gets the same alert');
+
+    // Anna stops on the page: a page with a button first, then the stop.
+    const link = linkIn(mailsTo(MAIL_ANNA)[0], 'stop');
+    const ask = await get(new URL(link).pathname + new URL(link).search);
+    assert.match(ask.html, /<h1>Stop these alerts\?<\/h1><p>The alerts of the Chronobox 0x5a5a…5a5a on Ethereum, to anna@example\.org\.<\/p>/);
+    assert.equal(email.subscribers(1, SAFE).length, 2);
+    mails = [];
+    said = [];
+    const done = await post('/stop', { t: tokenOf(link) });
+    assert.match(done.html, /<h1>Done<\/h1><p>No more alerts of the Chronobox 0x5a5a…5a5a on Ethereum to this address\. We deleted it from our list\.<\/p>/);
+    assert.deepEqual(email.subscribers(1, SAFE).map((e) => e.email), [MAIL_BEN]);
+    // Alerts do not go off in silence: Ben and the chat are told.
+    assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_BEN, 'Somebody stopped the alerts of your Chronobox']]);
+    assert.match(mails[0].text, /^An email address that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them\. You still get them\./);
+    assert.deepEqual(saidTo(CARL), ['An email address that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them. You still get them.']);
+    assert.equal((await post('/stop', { t: tokenOf(link) })).status, 410);
+
+    // Ben stops with the button of his mail program: one request to the link, no page.
+    const one = linkIn(mails[0], 'stop');
+    mails = [];
+    said = [];
+    const r = await fetch(one, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'List-Unsubscribe=One-Click' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(email.subscribers(1, SAFE), []);
+    assert.equal(saidTo(CARL).length, 1);
+
+    // And the other way round: the chat stops, and nobody with email is left to tell.
+    person(CARL, '/stop');
+    await bot!.pump();
+    assert.equal(mails.length, 0);
+    chain.enqueue(OWNER_WALLET, 1n);
+    await w.poll();
+    assert.equal(mails.length, 0);
+  } finally { email.close(); }
+});
+
+test('Email: a chat that stops in Telegram is told to the people with email', async () => {
+  const { w, email, bot, join } = await withEmail({ bot: true });
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+    await join(MAIL_ANNA);
+    person(CARL, START);
+    await bot!.pump();
+    mails = [];
+    person(CARL, '/stop');
+    await bot!.pump();
+    assert.deepEqual(mails.map((m) => m.to), [MAIL_ANNA]);
+    assert.match(mails[0].text, /^A chat that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them\. You still get them\./);
+  } finally { email.close(); }
+});
+
+test('Email: what the sign-up refuses, and what it does not give away', async () => {
+  const { w, email, get, post, join } = await withEmail();
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+
+    assert.equal((await get('/email?c=nonsense')).status, 400);
+    assert.equal((await get('/nothing')).status, 404);
+    assert.equal((await get('/confirm?t=unknown')).status, 410);
+    assert.equal((await get('/stop?t=unknown')).status, 410);
+    assert.equal((await (await fetch((await withEmailBase(email)) + '/health')).text()), 'ok');
+    for (const bad of ['', 'anna', 'anna@', 'a b@example.org', 'anna@example', '<script>@example.org', `${'a'.repeat(250)}@example.org`]) {
+      const r = await post('/email', { c: `1-${SAFE}`, email: bad });
+      assert.equal(r.status, 400, bad);
+      assert.match(r.html, /This does not look like an email address\./);
+      assert.doesNotMatch(r.html, /<script>/);
+    }
+    assert.equal(mails.length, 0);
+    const notOne = await post('/email', { c: `1-${STRANGER}`, email: MAIL_ANNA });
+    assert.equal(notOne.status, 404);
+    assert.match(notOne.html, /is not a Chronobox on Ethereum/);
+    assert.match((await post('/email', { c: `137-${SAFE}`, email: MAIL_ANNA })).html, /Our alert service does not watch Polygon\./);
+    assert.equal(mails.length, 0);
+
+    // The same address again: the same page, and no second email within ten minutes.
+    const a = await post('/email', { c: `1-${SAFE}`, email: MAIL_ANNA });
+    const b = await post('/email', { c: `1-${SAFE}`, email: MAIL_ANNA });
+    assert.equal(a.html, b.html);
+    assert.equal(mails.length, 1);
+    // An address that is on the list gets the same page too, and no email: the page does not say who is on the list.
+    await join(MAIL_BEN);
+    const before = mails.length;
+    const c = await post('/email', { c: `1-${SAFE}`, email: MAIL_BEN });
+    assert.match(c.html, /Look in your inbox/);
+    assert.equal(mails.length, before);
+
+    // A request that nobody confirmed is deleted after one day, and its link is dead.
+    const link = linkIn(mailsTo(MAIL_ANNA)[0], 'confirm');
+    clock += EMAIL_PENDING_SECONDS + 1;
+    assert.equal((await post('/confirm', { t: tokenOf(link) })).status, 410);
+    assert.deepEqual(email.state.pending, []);
+    assert.deepEqual(email.subscribers(1, SAFE).map((e) => e.email), [MAIL_BEN]);
+
+    // One visitor cannot ask for more than ten emails an hour.
+    mails = [];
+    let refused = 0;
+    for (let i = 0; i < 12; i++) {
+      const r = await post('/email', { c: `1-${SAFE}`, email: `person${i}@example.org` }, '198.51.100.9');
+      if (r.status === 429) refused++;
+    }
+    assert.equal(refused, 2);
+    assert.equal(mails.length, 10);
+
+    // A form that is far too long is not read.
+    assert.equal((await post('/email', { c: `1-${SAFE}`, email: 'x'.repeat(9000) + '@example.org' })).status, 413);
+  } finally { email.close(); }
+});
+const withEmailBase = async (email: Email) => (email as any).publicUrl as string;
+
+test('Email: an email that fails is tried again, and nobody gets it twice', async () => {
+  const { w, email, join, post } = await withEmail();
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+    await join(MAIL_ANNA);
+    await join(MAIL_BEN);
+    mails = [];
+
+    // Resend is down for one request: the first address fails, the watcher stops there and tries again.
+    resendRefuse = { code: 500, message: 'Internal error', once: true };
+    chain.mine(12n);
+    chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+    await w.poll();
+    assert.equal(mails.length, 0);
+    assert.match(logs.join('\n'), /via email failed, will retry next poll/);
+    await w.poll();
+    assert.deepEqual(mails.map((m) => m.to), [MAIL_ANNA, MAIL_BEN]);
+    await w.poll();
+    assert.equal(mails.length, 2);
+    // Every alert has its own key, so that Resend sends it one time also when the answer got lost.
+    assert.equal(new Set(mails.map((m) => m.idem)).size, 2);
+    assert.match(mails[0].idem!, /^alert-1-0x5a5a/);
+
+    // An email that Resend will never take is not tried for ever.
+    resendRefuse = { code: 422, message: 'Invalid `to` field' };
+    chain.enqueue(OWNER_WALLET, 1n);
+    await w.poll();
+    resendRefuse = null;
+    await w.poll();
+    assert.equal(mails.length, 2);
+    assert.equal(w.state.vaults[SAFE].active, true, 'the requests still wait, but no email is owed');
+
+    // When the confirmation cannot be sent, the page says so and the request is not kept.
+    resendRefuse = { code: 500, message: 'Internal error' };
+    const r = await post('/email', { c: `1-${SAFE}`, email: 'carl@example.org' });
+    assert.equal(r.status, 502);
+    assert.match(r.html, /We could not send the email right now/);
+    assert.deepEqual(email.state.pending, []);
+  } finally { email.close(); }
+});
+
+test('Email: "All quiet" and "Watching" do not go to an inbox', async () => {
+  const { w, email, join } = await withEmail();
+  try {
+    await w.poll();
+    chain.create();
+    await w.poll();
+    await join(MAIL_ANNA);
+    mails = [];
+    chain.mine(3n * DAY);
+    const again = new AllWatcher({ ...(w.cfg), heartbeatHours: 24 }, { log: (m) => logs.push(m), email });
+    await again.poll();
+    assert.equal(mails.length, 0);
+  } finally { email.close(); }
+});
+
+test('Email settings', () => {
+  const base = { RPC_URL: 'http://x', ALERTS_KEY: TG_KEY };
+  const full = { ...base, RESEND_KEY, EMAIL_FROM: 'Alerts <alerts@example.org>', PUBLIC_URL: 'https://alerts.example.org/' };
+  assert.throws(() => parseConfig([], { ...full, CHRONOBOX: SAFE, WEBHOOK_URL: 'http://h/x' }), /RESEND_KEY works with --all only/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', RESEND_KEY }), /ALERTS_KEY is required with TELEGRAM_TOKEN or RESEND_KEY/);
+  assert.throws(() => parseConfig(['--all'], { ...base, RESEND_KEY, PUBLIC_URL: 'https://a.example' }), /EMAIL_FROM is required with RESEND_KEY/);
+  assert.throws(() => parseConfig(['--all'], { ...base, RESEND_KEY, EMAIL_FROM: 'a@example.org' }), /PUBLIC_URL is required with RESEND_KEY/);
+  assert.throws(() => parseConfig(['--all'], { ...full, PUBLIC_URL: 'alerts.example.org' }), /PUBLIC_URL is required/);
+  const c = parseConfig(['--all'], full);
+  assert.equal(c.publicUrl, 'https://alerts.example.org');
+  assert.equal(c.port, 8787);
+  assert.equal(c.resendApi, 'https://api.resend.com');
+  assert.equal(parseConfig(['--all', '--port', '9000'], full).port, 9000);
+  // The older name of the key still works.
+  assert.equal(parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_KEY: TG_KEY, TELEGRAM_TOKEN: TG_TOKEN }).alertsKey, TG_KEY);
 });
 
 test('config, time and status helpers', () => {

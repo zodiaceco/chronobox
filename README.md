@@ -145,6 +145,16 @@ What this gives and what it does not:
 - A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat stops, every other chat that follows the same Chronobox is told.
 - The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
 
+### Alerts by email, and your own alert service
+
+The same watcher can send the alerts by email, through Resend. `ALERTS_EMAIL` in `src/lib/chains.ts` is the page of the alert service where a person gives an email address. It is `null` in the source. With it set, "Get told" asks how the person wants to hear about a withdrawal, and "Email" opens that page. The person confirms the address with a link in one email (double opt-in). The app never sees the address.
+
+- The alert service keeps the email address and the address of the Chronobox, encrypted on disk like the list of chats. Resend gets the address and the text of each email, because it sends them.
+- Every alert by email ends with a link that stops the alerts. It is the only link in it.
+- Email needs an address on the web for the alert service. Telegram does not.
+
+`ALERTS_GUIDE` is where a person reads how to run the alert service on a machine of their own. With it set, "Get told" has a third way, "Your own alert service", with one button that opens the guide. The guide is "Run it yourself" in `watcher/README.md`.
+
 ## Run it
 
 Needs Node 22.18 or later.
@@ -233,6 +243,7 @@ src/lib/chains.ts    contract addresses, networks, main tokens
 src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/lib/alerts.ts    the link to the Telegram bot
+src/ui/alerts.tsx    the sheet "Get told"
 src/ui/              screens
 watcher/             the alert service: one file, no dependencies
 build.mjs            build, dev server, build hash

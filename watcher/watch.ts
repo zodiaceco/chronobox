@@ -2,6 +2,7 @@
 // Run: node watch.ts --help   (Node 22.18+; TypeScript by type stripping)
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import process from 'node:process';
 
@@ -120,8 +121,14 @@ export type Config = {
   // --all: a Telegram bot that sends the alerts of a Chronobox to every chat that asked for them.
   telegramToken?: string;
   telegramApi: string;
-  // The secret that encrypts the list of chats on disk. It is not stored with the list.
-  telegramKey?: string;
+  // The secret that encrypts the lists of chats and of email addresses on disk. It is not stored with them.
+  alertsKey?: string;
+  // --all: alerts by email, sent through Resend. People sign up on a page that this watcher serves.
+  resendKey?: string;
+  resendApi: string;
+  emailFrom?: string;
+  publicUrl?: string;
+  port: number;
 };
 
 export type Settings = {
@@ -219,8 +226,15 @@ With --all (instead of CHRONOBOX, DELAY and STATE_FILE):
   START_BLOCK      --start-block      first block to search for Chronoboxes (default: the newest block at the first start)
   TELEGRAM_TOKEN   --telegram-token   token of a Telegram bot. A person opens https://t.me/<bot>?start=<chain id>-<vault address>
                                       and presses Start. From then on the bot sends the alerts of that Chronobox to that chat.
-  TELEGRAM_KEY     --telegram-key     a secret of 32 characters or more. It encrypts the list of chats in STATE_DIR.
-                                      Required with TELEGRAM_TOKEN. Keep it away from STATE_DIR and its backups.
+  RESEND_KEY       --resend-key       API key of Resend. With it the watcher sends alerts by email, and serves a page
+                                      where a person gives an email address and confirms it (double opt-in).
+  EMAIL_FROM       --email-from       the sender, for example "Chronobox alerts <alerts@example.org>". A domain that Resend has verified.
+  PUBLIC_URL       --public-url       the address of this watcher on the web, for example https://alerts.example.org.
+                                      The links in the emails start with it.
+  PORT             --port             the port for that page (default 8787). Put a proxy with TLS in front of it.
+  ALERTS_KEY       --alerts-key       a secret of 32 characters or more. It encrypts the lists of chats and of email
+                                      addresses in STATE_DIR. Required with TELEGRAM_TOKEN or RESEND_KEY.
+                                      Keep it away from STATE_DIR and its backups.
 
 Flags:
   --all       watch every Chronobox on the chain; the alerts of a vault go to the Telegram chats that follow it
@@ -257,7 +271,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   }
   const cfg: Config = {
     rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './chronobox-watch-state.json',
-    failPolls: 3, logChunk: 2000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org', ...bools,
+    failPolls: 3, logChunk: 2000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org',
+    resendApi: 'https://api.resend.com', port: 8787, ...bools,
   };
   if (bools.help) return cfg;
 
@@ -275,16 +290,27 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   if (!cfg.all && /^(1|true|yes)$/i.test(str('ALL') ?? '')) cfg.all = true;
   if (!cfg.all && cfg.networks.length > 1) throw new ConfigError('More than one network in RPC_URL (a semicolon) works with --all only.');
   if (!cfg.all && str('TELEGRAM_TOKEN')) throw new ConfigError('TELEGRAM_TOKEN works with --all only.');
+  if (!cfg.all && str('RESEND_KEY')) throw new ConfigError('RESEND_KEY works with --all only.');
   if (cfg.all) {
     cfg.telegramToken = str('TELEGRAM_TOKEN');
     // The token is a secret, so the message does not repeat it.
     if (cfg.telegramToken && !/^\d+:[A-Za-z0-9_-]{20,}$/.test(cfg.telegramToken)) throw new ConfigError('TELEGRAM_TOKEN does not look like a bot token (<number>:<letters>).');
-    cfg.telegramKey = str('TELEGRAM_KEY');
-    if (cfg.telegramToken && (!cfg.telegramKey || cfg.telegramKey.length < 32)) {
+    cfg.resendKey = str('RESEND_KEY');
+    // TELEGRAM_KEY is the older name of ALERTS_KEY.
+    cfg.alertsKey = str('ALERTS_KEY') ?? str('TELEGRAM_KEY');
+    if ((cfg.telegramToken || cfg.resendKey) && (!cfg.alertsKey || cfg.alertsKey.length < 32)) {
       throw new ConfigError(
-        'TELEGRAM_KEY is required with TELEGRAM_TOKEN: a secret of 32 characters or more that encrypts the list of chats. ' +
+        'ALERTS_KEY is required with TELEGRAM_TOKEN or RESEND_KEY: a secret of 32 characters or more that encrypts the lists of chats and of email addresses. ' +
         'Make one with: node -e "console.log(require(\'node:crypto\').randomBytes(32).toString(\'base64url\'))"',
       );
+    }
+    if (cfg.resendKey) {
+      cfg.emailFrom = str('EMAIL_FROM');
+      cfg.publicUrl = str('PUBLIC_URL')?.replace(/\/+$/, '');
+      if (!cfg.emailFrom || !/@/.test(cfg.emailFrom)) throw new ConfigError('EMAIL_FROM is required with RESEND_KEY: the sender of the emails, for example "Chronobox alerts <alerts@example.org>".');
+      if (!cfg.publicUrl || !/^https?:\/\//i.test(cfg.publicUrl)) throw new ConfigError('PUBLIC_URL is required with RESEND_KEY: the address of this watcher on the web. It must start with http:// or https://.');
+      cfg.resendApi = str('RESEND_API')?.replace(/\/+$/, '') ?? cfg.resendApi;
+      if (!/^https?:\/\//i.test(cfg.resendApi)) throw new ConfigError('RESEND_API must start with http:// or https://.');
     }
     cfg.telegramApi = str('TELEGRAM_API')?.replace(/\/+$/, '') ?? cfg.telegramApi;
     if (!/^https?:\/\//i.test(cfg.telegramApi)) throw new ConfigError('TELEGRAM_API must start with http:// or https://.');
@@ -299,8 +325,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   if (cfg.delay && !ADDRESS_RE.test(cfg.delay)) throw new ConfigError('DELAY is not a valid address.');
   cfg.webhookUrl = str('WEBHOOK_URL');
   if (cfg.webhookUrl && !/^https?:\/\//i.test(cfg.webhookUrl)) throw new ConfigError('WEBHOOK_URL must start with http:// or https://.');
-  if (!cfg.webhookUrl && !cfg.telegramToken && !cfg.dryRun) {
-    throw new ConfigError(`Set ${cfg.all ? 'TELEGRAM_TOKEN and/or WEBHOOK_URL' : 'WEBHOOK_URL'}, or use --dry-run.`);
+  if (!cfg.webhookUrl && !cfg.telegramToken && !cfg.resendKey && !cfg.dryRun) {
+    throw new ConfigError(`Set ${cfg.all ? 'TELEGRAM_TOKEN, RESEND_KEY and/or WEBHOOK_URL' : 'WEBHOOK_URL'}, or use --dry-run.`);
   }
   const num = (k: string, def: number, min: number, integer: boolean) => {
     const v = str(k);
@@ -315,6 +341,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   cfg.heartbeatHours = num('HEARTBEAT_HOURS', 24, 0, false);
   cfg.failPolls = num('FAIL_POLLS', 3, 1, true);
   cfg.logChunk = num('LOG_CHUNK', 2000, 1, true);
+  cfg.port = num('PORT', 8787, 1, true);
   cfg.stateFile = str('STATE_FILE') ?? cfg.stateFile;
   if (cfg.all && str('START_BLOCK') !== undefined) cfg.startBlock = num('START_BLOCK', 0, 0, true);
   return cfg;
@@ -323,7 +350,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
 const KNOWN_KEYS = [
   'RPC_URL', 'CHRONOBOX', 'DELAY', 'WEBHOOK_URL', 'POLL_SECONDS',
   'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK', 'STATE_DIR', 'START_BLOCK',
-  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY',
+  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'ALERTS_KEY', 'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'PUBLIC_URL', 'PORT',
 ];
 
 // ---------------------------------------------------------------------------
@@ -820,10 +847,12 @@ export class Watcher {
   private blockTs = new Map<number, bigint>();
   private proxyKinds = new Map<string, 'delay' | 'roles'>();
   private telegram?: Telegram;
+  private email?: Email;
 
-  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram } = {}) {
+  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram; email?: Email } = {}) {
     this.cfg = cfg;
     this.telegram = opts.telegram;
+    this.email = opts.email;
     this.fetchFn = opts.fetch ?? fetch;
     this.rpc = new Rpc(cfg.rpcUrls, this.fetchFn);
     const out = opts.log ?? ((m: string) => console.log(`${new Date().toISOString()} ${m}`));
@@ -844,7 +873,8 @@ export class Watcher {
     this.cfg.rpcUrls.forEach((u, i) => secrets.push([u, `[RPC #${i + 1}]`]));
     if (this.cfg.webhookUrl) secrets.push([this.cfg.webhookUrl, '[webhook]']);
     if (this.cfg.telegramToken) out = out.split(this.cfg.telegramToken).join('[telegram token]');
-    if (this.cfg.telegramKey) out = out.split(this.cfg.telegramKey).join('[telegram key]');
+    if (this.cfg.alertsKey) out = out.split(this.cfg.alertsKey).join('[alerts key]');
+    if (this.cfg.resendKey) out = out.split(this.cfg.resendKey).join('[resend key]');
     for (const [secret, label] of secrets) {
       out = out.split(secret).join(label);
       try {
@@ -1388,6 +1418,7 @@ export class Watcher {
     else {
       if (this.cfg.webhookUrl) channels.push('webhook');
       if (this.telegram) channels.push('telegram');
+      if (this.email) channels.push('email');
     }
     for (const alert of [...s.outbox]) {
       for (const ch of channels) {
@@ -1418,6 +1449,10 @@ export class Watcher {
       await this.telegram!.deliver(this.state.chainId ?? 0, vault, a);
       return;
     }
+    if (channel === 'email') {
+      await this.email!.deliver(this.state.chainId ?? 0, vault, a);
+      return;
+    }
     const body: Record<string, unknown> = {
       event: a.event, title: a.title, message: a.message, priority: a.priority, vault, delay, chainId: this.state.chainId ?? null,
     };
@@ -1442,9 +1477,35 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 // vault. That pair is all this watcher stores about a person. It keeps no name, no username and no
 // message, and it does not write the number of a chat to the log.
 //
-// On disk the list of chats is encrypted with TELEGRAM_KEY (AES-256-GCM). The key is a setting and is
+// On disk the list of chats is encrypted with ALERTS_KEY (AES-256-GCM). The key is a setting and is
 // not in the file, so the file, a copy of it or the disk alone show nobody who follows what. This does
 // not protect against a person who controls the running watcher: it holds the list and the key.
+
+/** The key that seals a list on disk. A slow step, one time, so that a short secret is not guessed from a stolen file by trying. */
+function sealKey(secret: string, label: string): Buffer {
+  return crypto.scryptSync(secret, label, 32);
+}
+
+/** A value as one sealed block: base64 of nonce, tag and ciphertext. `label` ties the block to its use. */
+function sealJson(key: Buffer, label: string, value: unknown): string {
+  const nonce = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(Buffer.from(label));
+  const body = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return Buffer.concat([nonce, cipher.getAuthTag(), body]).toString('base64');
+}
+
+/** Throws when the key is not the one that sealed the block, or when the block was changed. */
+function openJson(key: Buffer, label: string, sealed: string): any {
+  const raw = Buffer.from(sealed, 'base64');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+  decipher.setAAD(Buffer.from(label));
+  decipher.setAuthTag(raw.subarray(12, 28));
+  return JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8'));
+}
+
+/** Somebody who gets alerts and can be told that another person stopped them. */
+type Listeners = { notice(chainId: number, vault: string, text: string): Promise<void> };
 
 /** The text after "start=" in the link to the bot. The same rule is in the app (src/lib/alerts.ts). */
 export function telegramStart(chainId: number, vault: string): string {
@@ -1512,14 +1573,15 @@ export class Telegram {
   private fetchFn: FetchFn;
   private log: Log;
   private networks = new Map<number, Network>();
+  /** The other ways to get alerts. They are told too when a chat stops. */
+  peers: Listeners[] = [];
 
   constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log } = {}) {
     if (!cfg.telegramToken) throw new ConfigError('TELEGRAM_TOKEN is not set.');
     this.token = cfg.telegramToken;
-    if (!cfg.telegramKey || cfg.telegramKey.length < 32) throw new ConfigError('TELEGRAM_KEY must be a secret of 32 characters or more.');
-    this.secret = cfg.telegramKey;
-    // A slow step, one time, so that a short secret is not guessed from a stolen file by trying.
-    this.key = crypto.scryptSync(cfg.telegramKey, SEAL_LABEL, 32);
+    if (!cfg.alertsKey || cfg.alertsKey.length < 32) throw new ConfigError('ALERTS_KEY must be a secret of 32 characters or more.');
+    this.secret = cfg.alertsKey;
+    this.key = sealKey(cfg.alertsKey, SEAL_LABEL);
     this.api = cfg.telegramApi;
     this.dryRun = cfg.dryRun;
     this.expected = cfg.networks.length;
@@ -1533,23 +1595,12 @@ export class Telegram {
     this.state = this.load();
   }
 
-  redact(msg: string): string { return msg.split(this.token).join('[telegram token]').split(this.secret).join('[telegram key]'); }
+  redact(msg: string): string { return msg.split(this.token).join('[telegram token]').split(this.secret).join('[alerts key]'); }
 
-  private seal(chats: Record<string, string[]>): string {
-    const nonce = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.key, nonce);
-    cipher.setAAD(Buffer.from(SEAL_LABEL));
-    const body = Buffer.concat([cipher.update(JSON.stringify(chats), 'utf8'), cipher.final()]);
-    return Buffer.concat([nonce, cipher.getAuthTag(), body]).toString('base64');
-  }
+  private seal(chats: Record<string, string[]>): string { return sealJson(this.key, SEAL_LABEL, chats); }
 
-  /** Throws when the key is not the one that sealed the block, or when the block was changed. */
   private open(sealed: string): Record<string, string[]> {
-    const raw = Buffer.from(sealed, 'base64');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', this.key, raw.subarray(0, 12));
-    decipher.setAAD(Buffer.from(SEAL_LABEL));
-    decipher.setAuthTag(raw.subarray(12, 28));
-    const chats = JSON.parse(Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString('utf8'));
+    const chats = openJson(this.key, SEAL_LABEL, sealed);
     if (typeof chats !== 'object' || chats === null) throw new Error('unknown format');
     return chats;
   }
@@ -1579,7 +1630,7 @@ export class Telegram {
       return { offset: f.offset, chats: this.open(f.sealed) };
     } catch {
       throw new ConfigError(
-        `TELEGRAM_KEY does not open ${this.file}. Use the key that the list was written with. ` +
+        `ALERTS_KEY does not open ${this.file}. Use the key that the list was written with. ` +
         'Without that key the list is lost: remove the file, and every person must press Start again.',
       );
     }
@@ -1785,6 +1836,13 @@ export class Telegram {
     await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${TG_NEVER}`);
   }
 
+  /** Tells every chat that follows a vault something that is not an alert. A chat that cannot be reached is skipped. */
+  async notice(chainId: number, vault: string, text: string): Promise<void> {
+    for (const chat of this.subscribers(chainId, vault)) {
+      await this.say(chat, text).catch((e) => this.log(`telegram: could not tell a chat: ${errText(e)}`));
+    }
+  }
+
   private async unsubscribe(chat: number, arg: string): Promise<void> {
     const mine = this.state.chats[chat] ?? [];
     const one = ADDRESS_RE.test(arg) ? arg.toLowerCase() : null;
@@ -1799,10 +1857,8 @@ export class Telegram {
     // Alerts must not go off in silence: a person who is forced to stop them has others who still listen.
     for (const key of mine.filter((k) => !left.includes(k))) {
       const [id, vault] = key.split('-');
-      for (const other of this.subscribers(Number(id), vault)) {
-        await this.say(other, `A chat that got the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))} has stopped them. You still get them here.`)
-          .catch((e) => this.log(`telegram: could not tell a chat that another one stopped: ${errText(e)}`));
-      }
+      const text = `A chat that got the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))} has stopped them. You still get them.`;
+      for (const all of [this, ...this.peers]) await all.notice(Number(id), vault, text);
     }
     await this.say(chat, left.length
       ? `Done. No more alerts for ${one} here. /list shows what this chat still follows.`
@@ -1811,12 +1867,441 @@ export class Telegram {
 }
 
 // ---------------------------------------------------------------------------
+// Email
+//
+// The third way to get the alerts of --all. A person gives an email address on a page that this
+// watcher serves, gets one email with a link, and confirms on a second page (double opt-in). Only
+// then do the alerts go to that address. Every alert ends with a link that stops them. The emails
+// go out through Resend.
+//
+// The list of addresses is sealed on disk like the list of Telegram chats, and the watcher does not
+// write an address to its log. Resend sees every address and every text that it sends.
+
+type EmailEntry = { email: string; box: string; token: string; at: number };
+type EmailState = { entries: EmailEntry[]; pending: EmailEntry[] };
+
+const EMAIL_LABEL = 'chronobox-email-list-v1';
+/** One address cannot follow more Chronoboxes than this. */
+export const EMAIL_MAX_PER_ADDRESS = 20;
+/** A request that is not confirmed is deleted after this time. */
+export const EMAIL_PENDING_SECONDS = 24 * 3600;
+// Somebody can type the address of another person. These limits keep that from becoming a flood.
+const EMAIL_AGAIN_SECONDS = 600; // no second confirmation for the same address and Chronobox within this time
+const EMAIL_PENDING_PER_ADDRESS = 3;
+const EMAIL_PER_IP_HOUR = 10;
+const EMAIL_PER_HOUR = 300;
+const EMAIL_RE = /^[^\s@<>"'`,;:\\()[\]]+@[^\s@<>"'`,;:\\()[\]]+\.[^\s@<>"'`,;:\\()[\]]{2,}$/;
+const BOX_RE = /^(\d{1,12})-(0x[0-9a-fA-F]{40})$/;
+
+export class ResendError extends Error {
+  code: number;
+  constructor(code: number, message: string) {
+    super(`Resend: ${code} ${message}`);
+    this.code = code;
+  }
+}
+
+type Page = { status: number; html: string };
+
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+const PAGE_STYLE =
+  'body{margin:0;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;color:#111;background:#f5f5f7}' +
+  'main{max-width:400px;margin:8vh auto;padding:24px;background:#fff;border:1px solid #e3e3e6;border-radius:24px}' +
+  '.mark{margin:0 0 18px;color:#111;font-size:.8rem;font-weight:600;letter-spacing:.14em}' +
+  'h1{margin:0 0 8px;font-size:1.4rem;letter-spacing:-.015em}p{margin:0 0 14px;color:#555;overflow-wrap:anywhere}' +
+  'input{box-sizing:border-box;width:100%;margin:0 0 12px;padding:13px 14px;border:1px solid #cfcfd4;border-radius:14px;background:#fff;color:#111;font:inherit}' +
+  'button{width:100%;min-height:50px;border:0;border-radius:999px;background:#111;color:#fff;font:inherit;font-weight:600;cursor:pointer}' +
+  'small{display:block;margin-top:14px;color:#777;font-size:.85rem}.bad{color:#b3261e}' +
+  '@media (max-width:460px){main{margin:0;min-height:100vh;border:0;border-radius:0}}' +
+  '@media (prefers-color-scheme:dark){body{background:#000;color:#f5f5f7}main{background:#151517;border-color:#2c2c2e}.mark,h1{color:#f5f5f7}p{color:#a1a1a6}' +
+  'input{background:#000;border-color:#3a3a3c;color:#f5f5f7}button{background:#f5f5f7;color:#111}small{color:#8e8e93}}';
+
+/** One page of the alert service. `body` is HTML: every value in it must be escaped. */
+function page(status: number, title: string, body: string): Page {
+  return {
+    status,
+    html:
+      '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+      `<meta name="robots" content="noindex"><title>${esc(title)}</title><style>${PAGE_STYLE}</style></head>` +
+      `<body><main><p class="mark">CHRONOBOX ALERTS</p><h1>${esc(title)}</h1>${body}</main></body></html>`,
+  };
+}
+
+const PAGE_HEADERS = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Cache-Control': 'no-store',
+  // The pages load nothing and send a form only to this service. A link in them carries a token, so no referrer.
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  'Referrer-Policy': 'no-referrer',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+};
+
+const GONE = () => page(410, 'This link does not work any more', '<p>It was used already, or it is too old. Start again from your Chronobox.</p>');
+const boxText = (box: string) => {
+  const [id, vault] = box.split('-');
+  return `the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))}`;
+};
+
+export class Email {
+  state: EmailState;
+  /** The other ways to get alerts. They are told too when an address stops. */
+  peers: Listeners[] = [];
+  private secret: string;
+  private key: Buffer;
+  private resendKey: string;
+  private api: string;
+  private from: string;
+  private publicUrl: string;
+  private file: string;
+  private dryRun: boolean;
+  private expected: number;
+  private fetchFn: FetchFn;
+  private log: Log;
+  private now: () => number;
+  private networks = new Map<number, Network>();
+  private hits: { ip: string; at: number }[] = [];
+  private server?: http.Server;
+
+  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log; now?: () => number } = {}) {
+    if (!cfg.resendKey || !cfg.emailFrom || !cfg.publicUrl) throw new ConfigError('RESEND_KEY, EMAIL_FROM and PUBLIC_URL are required for alerts by email.');
+    if (!cfg.alertsKey || cfg.alertsKey.length < 32) throw new ConfigError('ALERTS_KEY must be a secret of 32 characters or more.');
+    this.resendKey = cfg.resendKey;
+    this.api = cfg.resendApi;
+    this.from = cfg.emailFrom;
+    this.publicUrl = cfg.publicUrl;
+    this.secret = cfg.alertsKey;
+    this.key = sealKey(cfg.alertsKey, EMAIL_LABEL);
+    this.dryRun = cfg.dryRun;
+    this.expected = cfg.networks.length;
+    this.fetchFn = opts.fetch ?? fetch;
+    this.now = opts.now ?? (() => Math.floor(Date.now() / 1000));
+    const out = opts.log ?? ((m: string) => console.log(`${new Date().toISOString()} ${m}`));
+    this.log = (m: string) => out(this.redact(m));
+    try { fs.mkdirSync(cfg.stateDir, { recursive: true }); } catch (e) {
+      throw new ConfigError(`Cannot create STATE_DIR: ${errText(e)}`);
+    }
+    this.file = path.join(cfg.stateDir, 'email.json');
+    this.state = this.load();
+  }
+
+  redact(msg: string): string { return msg.split(this.resendKey).join('[resend key]').split(this.secret).join('[alerts key]'); }
+
+  private load(): EmailState {
+    let text: string;
+    try { text = fs.readFileSync(this.file, 'utf8'); } catch (e: any) {
+      if (e?.code === 'ENOENT') return { entries: [], pending: [] };
+      throw new ConfigError(`Cannot read ${this.file}: ${e?.message ?? e}`);
+    }
+    let f: any;
+    try { f = JSON.parse(text); } catch { f = null; }
+    if (f?.version !== 1 || typeof f.sealed !== 'string') {
+      throw new ConfigError(`${this.file} is not a valid list of email addresses. Fix or remove it; removing it ends every subscription.`);
+    }
+    try {
+      const s = openJson(this.key, EMAIL_LABEL, f.sealed);
+      if (!Array.isArray(s?.entries) || !Array.isArray(s?.pending)) throw new Error('unknown format');
+      return s as EmailState;
+    } catch {
+      throw new ConfigError(
+        `ALERTS_KEY does not open ${this.file}. Use the key that the list was written with. ` +
+        'Without that key the list is lost: remove the file, and every person must sign up again.',
+      );
+    }
+  }
+
+  private save(): void {
+    if (this.dryRun) return;
+    const tmp = `${this.file}.tmp-${process.pid}`;
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, sealed: sealJson(this.key, EMAIL_LABEL, this.state) }) + '\n', { mode: 0o600 });
+    fs.renameSync(tmp, this.file);
+  }
+
+  /** The watcher of a network says that it is there. Before that, nobody can sign up for a vault on that network. */
+  addNetwork(n: Network): void { this.networks.set(n.chainId, n); }
+
+  /** The addresses that follow a vault. */
+  subscribers(chainId: number, vault: string): EmailEntry[] {
+    const box = telegramStart(chainId, vault);
+    return this.state.entries.filter((e) => e.box === box);
+  }
+
+  /** Requests that nobody confirmed in time are deleted. */
+  private purge(): void {
+    const now = this.now();
+    const kept = this.state.pending.filter((e) => now - e.at < EMAIL_PENDING_SECONDS);
+    if (kept.length === this.state.pending.length) return;
+    this.state.pending = kept;
+    this.save();
+  }
+
+  /** One email through Resend. `idem` makes a second try of the same email harmless: Resend sends it one time. */
+  private async send(to: string, subject: string, text: string, extra: { stop?: string; idem?: string } = {}): Promise<void> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.resendKey}`, 'Content-Type': 'application/json', 'User-Agent': 'chronobox-watcher',
+    };
+    if (extra.idem) headers['Idempotency-Key'] = extra.idem.slice(0, 256);
+    const body: Record<string, unknown> = { from: this.from, to: [to], subject, text };
+    // Mail programs show their own "unsubscribe" with these two headers. It is one request to the same link.
+    if (extra.stop) body.headers = { 'List-Unsubscribe': `<${extra.stop}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
+    let res: Response;
+    try {
+      res = await this.fetchFn(`${this.api}/emails`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
+    } catch (e) {
+      throw new Error(this.redact(`Resend: ${errText(e)}`));
+    }
+    if (!res.ok) {
+      let j: any = null;
+      try { j = await res.json(); } catch { /* not JSON */ }
+      throw new ResendError(res.status, String(j?.message ?? j?.name ?? `HTTP ${res.status}`));
+    }
+    await res.arrayBuffer().catch(() => undefined);
+  }
+
+  private stopLink(e: EmailEntry): string { return `${this.publicUrl}/stop?t=${e.token}`; }
+
+  /** The same lines under every email that goes to an address on the list. */
+  private foot(e: EmailEntry): string {
+    const [id, vault] = e.box.split('-');
+    return `\n\nChronobox ${shortAddr(vault)} on ${networkName(Number(id))}\n\nTo stop these alerts, open this link:\n${this.stopLink(e)}`;
+  }
+
+  /**
+   * Sends an alert to every address that follows the vault. An address that got it is marked in `a.done`,
+   * so a second try does not send it twice. Throws if an email could not be sent and should be tried again.
+   */
+  async deliver(chainId: number, vault: string, a: Alert): Promise<void> {
+    // No "all quiet" by email: an inbox is not the place for a message every day.
+    if (a.event === 'watching' || a.priority <= 2) return;
+    const mark = a.priority >= 5 ? '\u{1F6A8} ' : a.priority >= 4 ? '⚠️ ' : '';
+    let failed: string | null = null;
+    for (const e of this.subscribers(chainId, vault)) {
+      const done = `em:${e.token.slice(0, 12)}`;
+      if (a.done.includes(done)) continue;
+      try {
+        await this.send(e.email, `${mark}${a.title}`, `${a.message}${this.foot(e)}`, { stop: this.stopLink(e), idem: `alert-${e.box}-${a.id}-${e.token.slice(0, 12)}` });
+        a.done.push(done);
+      } catch (err) {
+        if (err instanceof ResendError && (err.code === 400 || err.code === 422)) {
+          // Resend does not take this email, and will not take it later.
+          this.log(`email: "${a.title}" was refused: ${err.message}`);
+          a.done.push(done);
+        } else {
+          failed = errText(err);
+          // Too many requests, or the key is not accepted: stop here, the next poll goes on.
+          if (err instanceof ResendError) break;
+        }
+      }
+    }
+    if (failed) throw new Error(failed);
+  }
+
+  /** Tells every address that follows a vault something that is not an alert. An email that fails is skipped. */
+  async notice(chainId: number, vault: string, text: string): Promise<void> {
+    for (const e of this.subscribers(chainId, vault)) {
+      await this.send(e.email, 'Somebody stopped the alerts of your Chronobox', `${text}${this.foot(e)}`, { stop: this.stopLink(e) })
+        .catch((err) => this.log(`email: could not tell an address: ${errText(err)}`));
+    }
+  }
+
+  // --- The pages
+
+  private formPage(c: string, problem = '', status = 200): Page {
+    const m = BOX_RE.exec(c);
+    if (!m) return page(400, 'This link is not complete', '<p>Open it again from your Chronobox: "Get told", then "Email".</p>');
+    const box = `${Number(m[1])}-${m[2].toLowerCase()}`;
+    return page(status, 'Alerts by email',
+      `<p>For ${esc(boxText(box))}.</p>` +
+      (problem ? `<p class="bad">${esc(problem)}</p>` : '') +
+      `<form method="post" action="/email"><input type="hidden" name="c" value="${esc(box)}">` +
+      '<input type="email" name="email" placeholder="you@example.com" autocomplete="email" required autofocus>' +
+      '<button type="submit">Send me the link</button></form>' +
+      '<small>We send one email with a link. The alerts start when you open it and confirm. We keep your email address and the address of this Chronobox. Nothing else.</small>');
+  }
+
+  /** The first step: an address asks for the alerts of a vault. It gets one email with a link. */
+  async signUp(c: string, address: string, ip: string): Promise<Page> {
+    const m = BOX_RE.exec(c);
+    if (!m) return this.formPage(c);
+    const chainId = Number(m[1]);
+    const vault = m[2].toLowerCase();
+    const box = `${chainId}-${vault}`;
+    const email = address.trim().toLowerCase();
+    if (email.length > 254 || !EMAIL_RE.test(email)) return this.formPage(box, 'This does not look like an email address.', 400);
+
+    const now = this.now();
+    this.hits = this.hits.filter((h) => now - h.at < 3600);
+    if (this.hits.length >= EMAIL_PER_HOUR || this.hits.filter((h) => h.ip === ip).length >= EMAIL_PER_IP_HOUR) {
+      return page(429, 'Too many requests', '<p>Try again in an hour.</p>');
+    }
+    this.hits.push({ ip, at: now });
+
+    const net = this.networks.get(chainId);
+    if (!net) {
+      return this.networks.size < this.expected
+        ? page(503, 'Try again in a few minutes', '<p>We cannot read the network right now.</p>')
+        : page(404, 'Not a network that we watch', `<p>Our alert service does not watch ${esc(networkName(chainId))}.</p>`);
+    }
+    let found: boolean;
+    try {
+      found = await net.adopt(vault);
+    } catch (e) {
+      this.log(`email: could not check ${vault} on chain ${chainId}: ${errText(e)}`);
+      return page(503, 'Try again in a few minutes', '<p>We cannot read the network right now.</p>');
+    }
+    if (!found) return page(404, 'This is not a Chronobox', `<p>${esc(vault)} is not a Chronobox on ${esc(networkName(chainId))}. Open the link again from your Chronobox.</p>`);
+
+    this.purge();
+    // The same answer in every case from here on. It does not say whether an address is on the list.
+    const sent = page(200, 'Look in your inbox',
+      `<p>We sent a link to ${esc(email)}. Open it and confirm. It works for one day.</p><small>Nothing more comes before you confirm. If no email arrives, look in the spam folder.</small>`);
+    const mine = this.state.entries.filter((e) => e.email === email);
+    if (mine.some((e) => e.box === box) || mine.length >= EMAIL_MAX_PER_ADDRESS) return sent;
+    const waiting = this.state.pending.filter((e) => e.email === email);
+    if (waiting.some((e) => e.box === box && now - e.at < EMAIL_AGAIN_SECONDS) || waiting.length >= EMAIL_PENDING_PER_ADDRESS) return sent;
+
+    const entry: EmailEntry = { email, box, token: crypto.randomBytes(24).toString('base64url'), at: now };
+    this.state.pending = this.state.pending.filter((e) => !(e.email === email && e.box === box));
+    this.state.pending.push(entry);
+    this.save();
+    try {
+      await this.send(email, 'Confirm the alerts for your Chronobox',
+        `Somebody asked for alerts for the Chronobox ${vault} on ${networkName(chainId)} to this address.\n\n` +
+        `Was it you? Then open this link and confirm:\n${this.publicUrl}/confirm?t=${entry.token}\n\n` +
+        'If it was not you, do nothing. We delete this request after one day.',
+        { idem: `confirm-${entry.token}` });
+    } catch (e) {
+      this.state.pending = this.state.pending.filter((p) => p !== entry);
+      this.save();
+      this.log(`email: could not send a confirmation: ${errText(e)}`);
+      return page(502, 'That did not work', '<p>We could not send the email right now. Try again in a few minutes.</p>');
+    }
+    this.log(`email: a confirmation went out for ${vault} on chain ${chainId}`);
+    return sent;
+  }
+
+  /** The link in the email opens this page. A program that reads the email for the person does not press the button. */
+  private confirmPage(token: string): Page {
+    this.purge();
+    const p = token ? this.state.pending.find((e) => e.token === token) : undefined;
+    if (!p) return GONE();
+    return page(200, 'Confirm the alerts',
+      `<p>For ${esc(boxText(p.box))}, to ${esc(p.email)}.</p>` +
+      `<form method="post" action="/confirm"><input type="hidden" name="t" value="${esc(token)}"><button type="submit">Confirm</button></form>`);
+  }
+
+  /** The second step: the person confirmed. From now on the alerts go to the address. */
+  private confirm(token: string): Page {
+    this.purge();
+    const p = token ? this.state.pending.find((e) => e.token === token) : undefined;
+    if (!p) return GONE();
+    this.state.pending = this.state.pending.filter((e) => e !== p);
+    if (!this.state.entries.some((e) => e.email === p.email && e.box === p.box)) {
+      this.state.entries.push({ email: p.email, box: p.box, token: crypto.randomBytes(24).toString('base64url'), at: this.now() });
+    }
+    this.save();
+    const [id, vault] = p.box.split('-');
+    this.log(`email: an address follows ${vault} on chain ${id}`);
+    const waits = this.networks.get(Number(id))?.pending(vault) ?? [];
+    const now = waits.length === 0 ? '<p>Nothing waits there right now.</p>'
+      : `<p>Right now ${waits.length === 1 ? 'one request waits' : `${waits.length} requests wait`} there:</p>${waits.map((w) => `<p>${esc(w)}</p>`).join('')}`;
+    return page(200, 'Done', `<p>You now get the alerts of ${esc(boxText(p.box))} by email.</p>${now}<small>To end the alerts, use the link at the end of any alert.</small>`);
+  }
+
+  private stopPage(token: string): Page {
+    const e = token ? this.state.entries.find((x) => x.token === token) : undefined;
+    if (!e) return GONE();
+    return page(200, 'Stop these alerts?',
+      `<p>The alerts of ${esc(boxText(e.box))}, to ${esc(e.email)}.</p>` +
+      `<form method="post" action="/stop"><input type="hidden" name="t" value="${esc(token)}"><button type="submit">Stop the alerts</button></form>`);
+  }
+
+  private async stop(token: string): Promise<Page> {
+    const e = token ? this.state.entries.find((x) => x.token === token) : undefined;
+    if (!e) return GONE();
+    this.state.entries = this.state.entries.filter((x) => x !== e);
+    this.save();
+    this.log('email: an address stopped');
+    // Alerts must not go off in silence: a person who is forced to stop them has others who still listen.
+    const [id, vault] = e.box.split('-');
+    const text = `An email address that got the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))} has stopped them. You still get them.`;
+    for (const all of [this, ...this.peers]) await all.notice(Number(id), vault, text);
+    return page(200, 'Done', `<p>No more alerts of ${esc(boxText(e.box))} to this address. We deleted it from our list.</p>`);
+  }
+
+  /** One request to the pages. */
+  handle = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
+    let out: Page;
+    try {
+      const url = new URL(req.url ?? '/', 'http://local');
+      if (req.method === 'GET' && url.pathname === '/health') {
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }).end('ok');
+        return;
+      }
+      const form = req.method === 'POST' ? await readForm(req) : new URLSearchParams();
+      // The proxy in front of the watcher names the visitor in this header.
+      const ip = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || req.socket.remoteAddress || '';
+      const token = form.get('t') ?? url.searchParams.get('t') ?? '';
+      switch (`${req.method} ${url.pathname}`) {
+        case 'GET /email': out = this.formPage(url.searchParams.get('c') ?? ''); break;
+        case 'POST /email': out = await this.signUp(form.get('c') ?? '', form.get('email') ?? '', ip); break;
+        case 'GET /confirm': out = this.confirmPage(token); break;
+        case 'POST /confirm': out = this.confirm(token); break;
+        case 'GET /stop': out = this.stopPage(token); break;
+        case 'POST /stop': out = await this.stop(token); break;
+        default: out = page(404, 'Nothing here', '<p>Open the link again from your Chronobox or from an email.</p>');
+      }
+    } catch (e) {
+      this.log(`email: a request failed: ${errText(e)}`);
+      out = page(e instanceof TooLong ? 413 : 500, 'Something went wrong', '<p>Try again in a few minutes.</p>');
+    }
+    res.writeHead(out.status, PAGE_HEADERS).end(out.html);
+  };
+
+  /** Serves the pages. Returns the port (useful when `port` is 0: any free one). */
+  listen(port: number): Promise<number> {
+    const server = http.createServer((req, res) => void this.handle(req, res));
+    this.server = server;
+    return new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, () => resolve((server.address() as { port: number }).port));
+    });
+  }
+
+  close(): void {
+    this.server?.closeAllConnections();
+    this.server?.close();
+  }
+}
+
+class TooLong extends Error {}
+
+/** The fields of a form, or of the one-click request of a mail program. More than a few thousand bytes is not a form of ours. */
+function readForm(req: http.IncomingMessage): Promise<URLSearchParams> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => {
+      size += chunk.length;
+      // What is too long is not kept, but the request is read to its end, so that the visitor gets an answer.
+      if (size <= 4096) body += chunk;
+      // Far too long: no answer at all.
+      if (size > 1_000_000) req.destroy();
+    });
+    req.on('end', () => (size > 4096 ? reject(new TooLong('the request is too long')) : resolve(new URLSearchParams(body))));
+    req.on('error', reject);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // --all: every Chronobox on the chain
 //
 // Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can
 // watch every Chronobox without being told about each one: it finds new Chronoboxes by the Delay they
-// deploy and by the transactions they queue. The alerts of a vault go to the Telegram chats that
-// follow it, and to the webhook.
+// deploy and by the transactions they queue. The alerts of a vault go to the Telegram chats and the
+// email addresses that follow it, and to the webhook.
 
 type Known = { delay: string; active: boolean; heartbeatAt?: number };
 
@@ -1831,13 +2316,13 @@ export class AllWatcher {
   cfg: Config;
   state: AllState;
   log: Log;
-  private opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram };
+  private opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram; email?: Email };
   private probe: Watcher;
   private file: string;
   // A poll and a question from the Telegram bot do not read the same vault at the same time.
   private turn: Promise<unknown> = Promise.resolve();
 
-  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram } = {}) {
+  constructor(cfg: Config, opts: { fetch?: FetchFn; log?: Log; telegram?: Telegram; email?: Email } = {}) {
     this.cfg = cfg;
     this.opts = opts;
     try { fs.mkdirSync(cfg.stateDir, { recursive: true }); } catch (e) {
@@ -1861,7 +2346,9 @@ export class AllWatcher {
   private announce(): void {
     const chainId = this.state.chainId;
     if (chainId === undefined) return;
-    this.opts.telegram?.addNetwork({ chainId, adopt: (vault) => this.adopt(vault), pending: (vault) => this.pending(vault) });
+    const network: Network = { chainId, adopt: (vault) => this.adopt(vault), pending: (vault) => this.pending(vault) };
+    this.opts.telegram?.addNetwork(network);
+    this.opts.email?.addNetwork(network);
   }
 
   /**
@@ -1886,7 +2373,7 @@ export class AllWatcher {
         }
         if (!delay) return false;
         s.vaults[vault] = { delay, active: true };
-        this.log(`new Chronobox ${vault} (Delay ${delay}), found by a question in Telegram`);
+        this.log(`new Chronobox ${vault} (Delay ${delay}), found because somebody asked for its alerts`);
         this.save();
       }
       const known = s.vaults[vault];
@@ -1939,7 +2426,7 @@ export class AllWatcher {
       chronobox: vault,
       delay: known.delay,
       stateFile: path.join(this.cfg.stateDir, `${vault}.json`),
-    }, { fetch: this.opts.fetch, telegram: this.opts.telegram, log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`) });
+    }, { fetch: this.opts.fetch, telegram: this.opts.telegram, email: this.opts.email, log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`) });
   }
 
   /** Reads one vault and sends its alerts. False if the chain could not be read. */
@@ -2022,6 +2509,7 @@ export class AllWatcher {
     for (const [vault, known] of Object.entries(s.vaults)) {
       // An "all quiet" message makes sense only where somebody can hear it.
       const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(s.chainId, vault).length ?? 0) > 0;
+      // Email gets no "all quiet", so an email address alone is no reason to read a quiet vault.
       if (!known.active && !(heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat)) continue;
       try {
         if (!(await this.look(vault, known, s.chainId))) ok = false;
@@ -2049,13 +2537,17 @@ export async function main(argv: string[], env: Record<string, string | undefine
   if (cfg.help) { process.stdout.write(HELP); return 0; }
   let watchers: (Watcher | AllWatcher)[];
   let telegram: Telegram | undefined;
+  let email: Email | undefined;
   try {
     if (cfg.all) {
       telegram = cfg.telegramToken && !cfg.dryRun ? new Telegram(cfg) : undefined;
+      email = cfg.resendKey && !cfg.dryRun ? new Email(cfg) : undefined;
+      // When somebody stops the alerts in one way, the people who get them in the other way are told too.
+      if (telegram && email) { telegram.peers.push(email); email.peers.push(telegram); }
       // More than one network: each one keeps its state in its own folder, in the order of RPC_URL.
       watchers = cfg.networks.map((rpcUrls, i) => new AllWatcher(
         { ...cfg, rpcUrls, stateDir: cfg.networks.length > 1 ? path.join(cfg.stateDir, `network-${i + 1}`) : cfg.stateDir },
-        { telegram },
+        { telegram, email },
       ));
     } else {
       watchers = [new Watcher(cfg)];
@@ -2079,6 +2571,17 @@ export async function main(argv: string[], env: Record<string, string | undefine
     }
     // The bot answers at once, also while the watcher waits for its next poll.
     if (!cfg.once) void telegram.run();
+  }
+  if (email && !cfg.once) {
+    try {
+      await email.listen(cfg.port);
+      w.log(`email: the sign-up page is on port ${cfg.port}. The links in the emails start with ${cfg.publicUrl}`);
+    } catch (e) {
+      console.error(`Configuration error: cannot open PORT ${cfg.port}: ${errText(e)}`);
+      return 2;
+    }
+  } else if (email) {
+    w.log('email: with --once there is no sign-up page. People who are on the list get their alerts.');
   }
   for (;;) {
     let ok = true;
