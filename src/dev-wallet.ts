@@ -8,6 +8,7 @@
 // Announced via EIP-6963 only; window.ethereum is not set.
 // window.__anvil.rpc(method, params) and window.__anvil.warp(seconds) help in the console and tests.
 
+import { selector } from "./lib/abi.ts";
 import { createTx, ownerBatchTx, predictSafe } from "./lib/chronobox.ts";
 
 // The wallet can switch between local forks: a fork of another network on 127.0.0.1:8546 is a second network.
@@ -114,6 +115,9 @@ async function sendAsSafe(owner: string, safe: string, calls: RawCall[]): Promis
 }
 
 let recent: number[] = [];
+const SLOW_MS = Number(new URLSearchParams(location.search).get("slow") ?? 1500) || 1500;
+/** getTxCreatedAt and getTxHash: what reading the line asks for each item. */
+const QUEUE_READS = [selector("getTxCreatedAt(uint256)"), selector("getTxHash(uint256)")];
 
 function createProvider(account: string, owner: string) {
   const listeners = new Map<string, Set<Listener>>();
@@ -135,10 +139,17 @@ function createProvider(account: string, owner: string) {
       //   busy       only six reads a second pass, the rest are refused as a rate limit
       //   nologs     the network refuses to search old logs
       //   otherchain the wallet is on another network than the page thinks
+      //   slow       every read takes a while (?slow=<ms>, 1500 by default): what loads, and in what order
+      //   queue      the items in line cannot be read; everything else can
       const fault = (window as { __fault?: string }).__fault;
       if (fault) {
         const sends = method === "eth_sendTransaction" || method === "wallet_sendCalls";
         const asks = ["eth_accounts", "eth_requestAccounts", "eth_chainId", "wallet_switchEthereumChain", "wallet_getCapabilities"].includes(method);
+        if (fault === "slow" && !sends && !asks) await new Promise((done) => setTimeout(done, SLOW_MS));
+        if (fault === "queue" && method === "eth_call") {
+          const data = String((list[0] as { data?: string } | undefined)?.data ?? "").slice(0, 10).toLowerCase();
+          if (data === QUEUE_READS[0] || data === QUEUE_READS[1]) throw new ProviderRpcError(-32603, "Internal JSON-RPC error: 503 Service Unavailable");
+        }
         if (fault === "reject" && sends) throw new ProviderRpcError(4001, "User rejected the request.");
         if (fault === "hang" && sends) return new Promise(() => undefined);
         if (fault === "drop" && method === "eth_sendTransaction") return "0x" + "de".repeat(32);

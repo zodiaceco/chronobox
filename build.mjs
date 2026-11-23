@@ -46,7 +46,7 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
 const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
+const DEV_CONNECT = "connect-src 'self' http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */
@@ -231,6 +231,13 @@ function serve(req, res) {
     return send(400, "Bad request\n");
   }
   if (pathname.endsWith("/")) pathname += "index.html";
+  // The states that `npm run scenarios` put on the fork, for #/states. Not a file of the build.
+  if (pathname === "/scenarios.json") {
+    return fs.readFile(path.join(ROOT, ".scenarios", "scenarios.json")).then(
+      (body) => send(200, body, "application/json; charset=utf-8"),
+      () => send(404, "No scenarios yet: run npm run scenarios\n"),
+    );
+  }
   // The dev server also serves the files in brand/.
   const base = pathname.startsWith("/brand/") ? ROOT : OUT;
   const file = path.join(base, path.normalize(pathname));
@@ -299,7 +306,7 @@ async function dev() {
   if (existsSync(STATIC)) fsWatch(STATIC, { recursive: true }, rerun("static", copyStatic));
   fsWatch(path.join(SRC, "index.html"), rerun("index.html", () => writeIndex(assets)));
 
-  console.log(`Dev server: http://localhost:${port}/  (anvil wallet: ?account=0|1|2)`);
+  console.log(`Dev server: http://localhost:${port}/  (anvil wallet: ?account=0|1|2, scenarios: #/states)`);
 
   const stop = async () => {
     await Promise.all([appCtx.dispose(), walletCtx.dispose()]);
