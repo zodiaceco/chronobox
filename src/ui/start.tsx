@@ -3,7 +3,7 @@
  * offers one thing to do. After that it is the list of your Chronoboxes.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
-import { type Chain, CHAINS, chainById } from "../lib/chains.ts";
+import { type Chain, CHAINS, chainById, REPO } from "../lib/chains.ts";
 import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
@@ -264,12 +264,16 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           <strong>No tracking</strong>
         </li>
         <li>
-          <Tick />
-          <strong>Open source</strong>
+          <a class="trust-link" href={REPO} target="_blank" rel="noreferrer noopener">
+            <Tick />
+            <strong>Open source</strong>
+          </a>
         </li>
         <li>
-          <Tick />
-          <strong>Audited contracts</strong>
+          <a class="trust-link" href="https://www.zodiac.eco/security#audits" target="_blank" rel="noreferrer noopener">
+            <Tick />
+            <strong>Audited contracts</strong>
+          </a>
         </li>
       </ul>
 

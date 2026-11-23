@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { type Chain, CHAINS, chainById, chainByShort } from "./lib/chains.ts";
+import { type Chain, CHAINS, chainById, chainByShort, REPO } from "./lib/chains.ts";
 import { shortAddress } from "./lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
@@ -303,10 +303,13 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a>
-          <span title="Version and build of the code that runs now. Build the same commit to compare.">
+          <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a> ·{" "}
+          <a href={REPO} target="_blank" rel="noreferrer noopener">
+            GitHub
+          </a>
+          <span title="Build of the code that runs now. Build the same commit to compare.">
             {" "}
-            · v{__VERSION__} · {BUILD}
+            · {BUILD}
           </span>
           {UPDATED ? " · updated since your last visit" : ""}
         </span>
