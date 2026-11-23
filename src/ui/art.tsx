@@ -18,7 +18,7 @@ const R = 17;
 const PATH_START = 195;
 const PATH_END = -15;
 /** Where the sun sits in the mark itself. */
-export const MARK_DEG = 118;
+export const MARK_DEG = 160;
 
 function at(deg: number, r = R): [number, number] {
   const a = (deg * Math.PI) / 180;
