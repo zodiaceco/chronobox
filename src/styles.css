@@ -228,6 +228,11 @@ main {
   color: var(--muted);
 }
 
+.by-zodiac a {
+  display: inline-flex;
+  align-items: center;
+}
+
 .by-zodiac img {
   height: 14px;
   width: auto;
