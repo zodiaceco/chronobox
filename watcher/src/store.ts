@@ -4,6 +4,7 @@
 //   all         what --all knows about one network: the last block it searched, and the Chronoboxes it found
 //   <vault>     what the watcher knows about one Chronobox: what waits, and what it still has to send
 //   telegram    the sealed list of the chats that follow a Chronobox
+//   email       the sealed list of the email addresses that follow a Chronobox
 //
 // A lock keeps two writers apart. In the CLI there is one process, and a lock is a queue in memory. On Vercel a
 // cron run and the Telegram webhook run at the same time, in different places, and a lock is a key in Redis.
@@ -29,6 +30,8 @@ export interface Store {
   lock<T>(name: string, fn: () => Promise<T>, opts: LockOptions): Promise<T>;
   /** True the first time a key is claimed within `ttlSeconds`, false after that. For updates that Telegram may send twice. */
   claim(key: string, ttlSeconds: number): Promise<boolean>;
+  /** Counts one more under `key` and returns the count. The count starts at 1 again `ttlSeconds` after its first hit. For limits per hour. */
+  hit(key: string, ttlSeconds: number): Promise<number>;
   /** The same store, with every key and lock under `prefix`. */
   scope(prefix: string): Store;
 }
@@ -46,6 +49,22 @@ class LocalLocks {
   }
 }
 
+/** Counters for one process, as `hit` wants them. */
+class LocalCounters {
+  private counts = new Map<string, { n: number; until: number }>();
+  hit(key: string, ttlSeconds: number): number {
+    const now = Date.now();
+    const c = this.counts.get(key);
+    if (!c || c.until <= now) {
+      // Old counters go, so that the map does not grow for ever.
+      for (const [k, v] of this.counts) if (v.until <= now) this.counts.delete(k);
+      this.counts.set(key, { n: 1, until: now + ttlSeconds * 1000 });
+      return 1;
+    }
+    return ++c.n;
+  }
+}
+
 /**
  * A folder. Key `k` is the file `k.json`, and `scope` is a subfolder. Each write goes to a new file that then
  * replaces the old one, so a crash leaves the old value or the new one, never half of it. Only one process may
@@ -56,13 +75,15 @@ export class FileStore implements Store {
   private fileOf: (key: string) => string;
   private locks: LocalLocks;
   private claimed: Map<string, number>;
+  private counters: LocalCounters;
 
   /** `fileOf` puts a key somewhere else: the CLI for one Chronobox keeps its state in STATE_FILE. */
-  constructor(dir: string, fileOf?: (key: string) => string, shared?: { locks: LocalLocks; claimed: Map<string, number> }) {
+  constructor(dir: string, fileOf?: (key: string) => string, shared?: { locks: LocalLocks; claimed: Map<string, number>; counters: LocalCounters }) {
     this.dir = dir;
     this.fileOf = fileOf ?? ((key) => path.join(dir, `${key}.json`));
     this.locks = shared?.locks ?? new LocalLocks();
     this.claimed = shared?.claimed ?? new Map();
+    this.counters = shared?.counters ?? new LocalCounters();
   }
 
   async get(key: string): Promise<string | null> {
@@ -101,9 +122,14 @@ export class FileStore implements Store {
     return true;
   }
 
+  /** In memory: one process uses a folder, and a count for an hour may start again after a restart. */
+  async hit(key: string, ttlSeconds: number): Promise<number> {
+    return this.counters.hit(`${this.dir}\0${key}`, ttlSeconds);
+  }
+
   scope(prefix: string): Store {
     const dir = path.join(this.dir, prefix);
-    return new FileStore(dir, undefined, { locks: this.locks, claimed: this.claimed });
+    return new FileStore(dir, undefined, { locks: this.locks, claimed: this.claimed, counters: this.counters });
   }
 }
 
@@ -113,12 +139,14 @@ export class MemoryStore implements Store {
   private prefix: string;
   private locks: LocalLocks;
   private claimed: Map<string, number>;
+  private counters: LocalCounters;
 
-  constructor(prefix = '', shared?: { data: Map<string, string>; locks: LocalLocks; claimed: Map<string, number> }) {
+  constructor(prefix = '', shared?: { data: Map<string, string>; locks: LocalLocks; claimed: Map<string, number>; counters: LocalCounters }) {
     this.prefix = prefix;
     this.data = shared?.data ?? new Map();
     this.locks = shared?.locks ?? new LocalLocks();
     this.claimed = shared?.claimed ?? new Map();
+    this.counters = shared?.counters ?? new LocalCounters();
   }
 
   async get(key: string): Promise<string | null> { return this.data.get(this.prefix + key) ?? null; }
@@ -130,8 +158,9 @@ export class MemoryStore implements Store {
     this.claimed.set(this.prefix + key, now + ttlSeconds * 1000);
     return true;
   }
+  async hit(key: string, ttlSeconds: number): Promise<number> { return this.counters.hit(this.prefix + key, ttlSeconds); }
   scope(prefix: string): Store {
-    return new MemoryStore(this.prefix + prefix, { data: this.data, locks: this.locks, claimed: this.claimed });
+    return new MemoryStore(this.prefix + prefix, { data: this.data, locks: this.locks, claimed: this.claimed, counters: this.counters });
   }
 }
 
@@ -150,6 +179,7 @@ export class DryRunStore implements Store {
   set(key: string, value: string): Promise<void> { return this.overlay.set(key, value); }
   lock<T>(name: string, fn: () => Promise<T>, opts: LockOptions): Promise<T> { return this.overlay.lock(name, fn, opts); }
   claim(key: string, ttlSeconds: number): Promise<boolean> { return this.overlay.claim(key, ttlSeconds); }
+  hit(key: string, ttlSeconds: number): Promise<number> { return this.overlay.hit(key, ttlSeconds); }
   scope(prefix: string): Store {
     return new DryRunStore(this.inner.scope(prefix), this.overlay.scope(prefix) as MemoryStore);
   }

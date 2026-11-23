@@ -2,8 +2,8 @@
 //
 // Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can watch every
 // Chronobox without being told about each one: it finds new Chronoboxes by the Delay that they deploy through the
-// Zodiac factory, and older ones when somebody presses Start for them. The alerts of a vault go to the Telegram
-// chats that follow it, and to the webhook.
+// Zodiac factory, and older ones when somebody asks for their alerts. The alerts of a vault go to the Telegram
+// chats and the email addresses that follow it, and to the webhook.
 //
 // The watcher reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows.
 // Anybody can deploy contracts that emit any event, so logs from every contract would let anybody fill a poll.
@@ -15,7 +15,8 @@ import { MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREA
 import type { Config } from './config.ts';
 import { itemStatus, waitLine } from './status.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
-import type { Telegram } from './telegram.ts';
+import type { Email } from './email.ts';
+import type { Network, Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, errText } from './util.ts';
 import { Watcher, parseState } from './watcher.ts';
 
@@ -59,6 +60,7 @@ export type AllOptions = {
   fetch?: FetchFn;
   log?: Log;
   telegram?: Telegram;
+  email?: Email;
   /** Where the state of this network is kept. Default: the folder STATE_DIR (in memory only with --dry-run). */
   store?: Store;
   /** The time in ms, for the deadline of a poll and the order of the vaults. Tests set it. */
@@ -142,11 +144,13 @@ export class AllWatcher {
     await this.store.set('all', JSON.stringify(this.state, null, 2) + '\n');
   }
 
-  /** Tells the Telegram bot which network this watcher reads, as soon as it knows. */
+  /** Tells the Telegram bot and the email pages which network this watcher reads, as soon as it knows. */
   private announce(): void {
     const chainId = this.state.chainId;
     if (chainId === undefined) return;
-    this.opts.telegram?.addNetwork({ chainId, adopt: (vault) => this.adopt(vault), pending: (vault) => this.pending(vault) });
+    const network: Network = { chainId, adopt: (vault) => this.adopt(vault), pending: (vault) => this.pending(vault) };
+    this.opts.telegram?.addNetwork(network);
+    this.opts.email?.addNetwork(network);
   }
 
   /**
@@ -171,7 +175,7 @@ export class AllWatcher {
         }
         if (!delay) return false;
         s.vaults[vault] = { delay, active: true };
-        this.log(`new Chronobox ${vault} (Delay ${delay}), found by a question in Telegram`);
+        this.log(`new Chronobox ${vault} (Delay ${delay}), found because somebody asked for its alerts`);
         await this.save();
       }
       const known = s.vaults[vault];
@@ -198,7 +202,7 @@ export class AllWatcher {
   /** The watcher of one vault: the same code as for a single vault. */
   private watcherOf(vault: string, known: Known): Watcher {
     return new Watcher({ ...this.cfg, chronobox: vault, delay: known.delay }, {
-      fetch: this.opts.fetch, telegram: this.opts.telegram, store: this.store, key: vault, where: `The state of ${vault}`,
+      fetch: this.opts.fetch, telegram: this.opts.telegram, email: this.opts.email, store: this.store, key: vault, where: `The state of ${vault}`,
       log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`),
     });
   }
@@ -353,7 +357,7 @@ export class AllWatcher {
     const beat = this.cfg.heartbeatHours * 3600;
     const chainId = s.chainId;
     const due = Object.entries(s.vaults).filter(([vault, known]) => {
-      // An "all quiet" message makes sense only where somebody can hear it.
+      // An "all quiet" message makes sense only where somebody can hear it. Email gets none, so an address is no reason.
       const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(chainId, vault).length ?? 0) > 0;
       if (known.retryAt !== undefined && known.retryAt > this.clock()) return false;
       return known.active || (heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat);
@@ -397,6 +401,7 @@ export class AllWatcher {
     await this.save();
     // Stops that the other followers were not told of yet, because one was told in the last hour.
     await this.opts.telegram?.sendNotices().catch((e) => this.log(`telegram: could not send the notices of stops: ${errText(e)}`));
+    await this.opts.email?.sendNotices().catch((e) => this.log(`email: could not send the notices of stops: ${errText(e)}`));
     return ok;
   }
 }

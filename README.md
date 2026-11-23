@@ -145,6 +145,17 @@ What this gives and what it does not:
 - A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat that followed for a day or more stops, every other chat that follows the same Chronobox is told, once an hour at most. A stranger who follows and stops again cannot ring the phones of the others.
 - The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
 
+### Alerts by email, and your own alert service
+
+The same alert service can send the alerts by email, through Resend. `ALERTS_EMAIL` in `src/lib/chains.ts` is the page of the alert service where a person gives an email address (`<alert service>/api/email`). It is `null` in the source. With it set, "Get told" asks how the person wants to hear about a withdrawal, and "Email" opens that page. The person confirms the address with a link in one email (double opt-in). The app never sees the address.
+
+- The alert service keeps the email address, the address of the Chronobox and since when, encrypted like the list of chats. Resend gets the address and the text of each email, because it sends them.
+- Every alert by email ends with a link that stops the alerts. It is the only link in it.
+
+`ALERTS_GUIDE` is where a person reads how to run the alert service on a machine of their own. With it set, "Get told" has a third way, "Your own alert service", with one button that opens the guide ("Run it yourself" in `watcher/README.md`). It is `null` in the source.
+
+With only one of the three set, "Get told" opens on that one, as before.
+
 ## Run it
 
 Needs Node 22.18 or later.
@@ -160,7 +171,7 @@ The dev build injects a test wallet ("Anvil test wallet") that signs with anvil'
 ```bash
 npm test             # unit tests
 npm run test:fork    # the full flow against the real contracts on the fork
-npm run test:fork:alerts   # the alert service against the real contracts on the fork, with a stand-in for Telegram
+npm run test:fork:alerts   # the alert service against the real contracts on the fork, with stand-ins for Telegram and Resend (needs npm ci in watcher/)
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```
@@ -233,6 +244,7 @@ src/lib/chains.ts    contract addresses, networks, main tokens
 src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/lib/alerts.ts    the link to the Telegram bot
+src/ui/alerts.tsx    the sheet "Get told"
 src/ui/              screens
 watcher/             the alert service: a project of its own (Vercel functions, or a CLI)
 build.mjs            build, dev server, build hash

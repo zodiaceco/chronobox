@@ -256,7 +256,7 @@ export function startServer(fn: (req: http.IncomingMessage, body: string, res: h
   });
 }
 
-/** A stand-in for the REST API of Upstash Redis: GET, SET (NX, PX, EX) and the one script that frees a lock. */
+/** A stand-in for the REST API of Upstash Redis: GET, SET (NX, PX, EX), and the two scripts: the one that frees a lock and the counter. */
 export class FakeRedis {
   data = new Map<string, { value: string; until?: number }>();
   commands: string[][] = [];
@@ -284,6 +284,14 @@ export class FakeRedis {
       if (ex >= 0) until = Date.now() + Number(args[3 + ex + 1]) * 1000;
       this.data.set(key, { value: args[2], until });
       return 'OK';
+    }
+    if (cmd === 'EVAL' && /incr/.test(args[1])) {
+      // The counter of RedisStore: one more, and an expiry with the first one.
+      const [counter, ttl] = [args[3], Number(args[4])];
+      const e = this.live(counter);
+      const n = Number(e?.value ?? 0) + 1;
+      this.data.set(counter, { value: String(n), until: e?.until ?? Date.now() + ttl * 1000 });
+      return n;
     }
     if (cmd === 'EVAL') {
       // The script of RedisStore: delete the key if it still holds this token.

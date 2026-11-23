@@ -1,8 +1,10 @@
-// The alert service on Vercel: every Chronobox on each network, with the Telegram bot. No process stays on.
+// The alert service on Vercel: every Chronobox on each network, with the Telegram bot and alerts by email. No
+// process stays on.
 //
 //   poll      Vercel Cron calls it every minute. It reads every network once (in parallel), sends the alerts,
 //             and makes sure that Telegram sends new messages to the webhook.
 //   telegram  Telegram calls it with each message that somebody sends to the bot.
+//   email     The pages where a person signs up for alerts by email, confirms, and stops (email.ts).
 //   health    When the last poll ran. For an uptime monitor: it answers 503 when the polls stopped.
 //
 // State in Upstash Redis. A poll and a question of the bot can run at the same time, in different
@@ -14,20 +16,22 @@ import * as crypto from 'node:crypto';
 import { AllWatcher } from './all.ts';
 import { type Config, parseConfig } from './config.ts';
 import { DEFAULT_POLL_BUDGET_SECONDS, LOCK_TTL_MS } from './limits.ts';
+import { EMAIL_PATH, Email, PAGE_HEADERS } from './email.ts';
 import { RedisStore } from './redis.ts';
 import { BusyError, type Store } from './store.ts';
 import { Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, defaultLog, errText } from './util.ts';
 
 export type Env = Record<string, string | undefined>;
-export type Request = { method: string; headers: Record<string, string | undefined>; body: string };
-export type Reply = { status: number; body: unknown };
+export type Request = { method: string; url?: string; headers: Record<string, string | undefined>; body: string };
+/** A string `body` is sent as it is, with `headers`. Anything else as JSON. */
+export type Reply = { status: number; body: unknown; headers?: Record<string, string> };
 export type Deps = { fetch?: FetchFn; log?: Log };
 
 /** Settings that the service passes on to the watcher. RPC_URL and START_BLOCK are per network. */
 const PASSED = [
-  'WEBHOOK_URL', 'HEARTBEAT_HOURS', 'FAIL_POLLS', 'LOG_CHUNK', 'MAX_SCAN_BLOCKS', 'TELEGRAM_TOKEN', 'TELEGRAM_KEY', 'TELEGRAM_API',
-  'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
+  'WEBHOOK_URL', 'HEARTBEAT_HOURS', 'FAIL_POLLS', 'LOG_CHUNK', 'MAX_SCAN_BLOCKS', 'TELEGRAM_TOKEN', 'TELEGRAM_KEY', 'ALERTS_KEY', 'TELEGRAM_API',
+  'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];
 
 /** Where the chain id goes in RPC_URL. The RPC of Zodiac takes it as the path. */
@@ -64,10 +68,16 @@ export function serviceConfig(env: Env): ServiceConfig {
   const template = str('RPC_URL') ?? (str('RPC_SERVICE_KEY') ? `${ZODIAC_RPC},${ZODIAC_PUBLIC_RPC}` : ZODIAC_PUBLIC_RPC);
   if (!template.includes(CHAIN_ID)) throw new ConfigError(`RPC_URL must have ${CHAIN_ID} in it, where the chain id goes, for example ${ZODIAC_PUBLIC_RPC}.`);
   const rpcOf = (id: number) => str(`RPC_URL_${id}`) ?? template.split(CHAIN_ID).join(String(id));
-  if (!str('TELEGRAM_TOKEN') && !str('WEBHOOK_URL')) throw new ConfigError('Set TELEGRAM_TOKEN and TELEGRAM_KEY for the bot, WEBHOOK_URL, or both: the alerts must go somewhere.');
+  if (!str('TELEGRAM_TOKEN') && !str('RESEND_KEY') && !str('WEBHOOK_URL')) {
+    throw new ConfigError('Set TELEGRAM_TOKEN for the bot, RESEND_KEY for email (each with ALERTS_KEY), or WEBHOOK_URL: the alerts must go somewhere.');
+  }
+  // The address of this deployment that does not change: the production domain.
+  const host = (str('PUBLIC_URL') ?? (str('VERCEL_PROJECT_PRODUCTION_URL') ? `https://${str('VERCEL_PROJECT_PRODUCTION_URL')}` : undefined))?.replace(/\/+$/, '');
+  if (host && !/^https:\/\//i.test(host) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(host)) throw new ConfigError('PUBLIC_URL must start with https://.');
   const passed: Env = {};
   for (const k of PASSED) passed[k] = env[k];
-  const base = parseConfig(['--all'], { ...passed, RPC_URL: chainIds.map(rpcOf).join(';') });
+  // The links in the emails start with the same address.
+  const base = parseConfig(['--all'], { ...passed, PUBLIC_URL: host, RPC_URL: chainIds.map(rpcOf).join(';') });
   const networks = chainIds.map((chainId, i) => {
     const start = str(`START_BLOCK_${chainId}`);
     const cfg: Config = { ...base, rpcUrls: base.networks[i], chainId };
@@ -86,9 +96,6 @@ export function serviceConfig(env: Env): ServiceConfig {
   const cronSecret = str('CRON_SECRET');
   if (!cronSecret || cronSecret.length < 16) throw new ConfigError('CRON_SECRET must be a secret of 16 characters or more. Vercel Cron sends it with each call.');
 
-  // The address of this deployment that does not change: the production domain.
-  const host = str('PUBLIC_URL') ?? (str('VERCEL_PROJECT_PRODUCTION_URL') ? `https://${str('VERCEL_PROJECT_PRODUCTION_URL')}` : undefined);
-  if (host && !/^https:\/\//i.test(host) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(host)) throw new ConfigError('PUBLIC_URL must start with https://.');
   const num = (k: string, def: number) => {
     const v = str(k);
     if (v === undefined) return def;
@@ -100,7 +107,7 @@ export function serviceConfig(env: Env): ServiceConfig {
     networks,
     redis: { url, token, prefix: str('REDIS_PREFIX') ?? 'chronobox:' },
     cronSecret,
-    webhookUrl: host ? `${host.replace(/\/+$/, '')}/api/telegram` : undefined,
+    webhookUrl: host ? `${host}/api/telegram` : undefined,
     pollBudgetSeconds: num('POLL_BUDGET_SECONDS', DEFAULT_POLL_BUDGET_SECONDS),
     healthMaxAgeSeconds: num('HEALTH_MAX_AGE_SECONDS', 300),
   };
@@ -111,24 +118,27 @@ const same = (a: string, b: string) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 
-type Setup = { sc: ServiceConfig; store: Store; telegram?: Telegram; log: Log; fetch?: FetchFn };
+type Setup = { sc: ServiceConfig; store: Store; telegram?: Telegram; email?: Email; log: Log; fetch?: FetchFn };
 
 async function setup(env: Env, deps: Deps): Promise<Setup> {
   const sc = serviceConfig(env);
   const store = new RedisStore({ ...sc.redis, lockTtlMs: LOCK_TTL_MS, fetch: deps.fetch });
   const out = deps.log ?? defaultLog;
   // The secrets of the watcher never reach the log.
-  const secrets = [sc.redis.token, sc.cronSecret, sc.base.telegramToken, sc.base.telegramKey, sc.base.rpcServiceKey, sc.base.webhookUrl, ...sc.base.networks.flat()]
+  const secrets = [sc.redis.token, sc.cronSecret, sc.base.telegramToken, sc.base.alertsKey, sc.base.resendKey, sc.base.rpcServiceKey, sc.base.webhookUrl, ...sc.base.networks.flat()]
     .filter((s): s is string => Boolean(s));
   const log: Log = (m) => out(secrets.reduce((t, s) => t.split(s).join('[secret]'), m));
   const telegram = sc.base.telegramToken ? await Telegram.open(sc.base, { store, fetch: deps.fetch, log }) : undefined;
-  return { sc, store, telegram, log, fetch: deps.fetch };
+  const email = sc.base.resendKey ? await Email.open(sc.base, { store, fetch: deps.fetch, log }) : undefined;
+  // When somebody stops in one way, the people who get the alerts in the other way are told too.
+  if (telegram && email) { telegram.peers.push(email); email.peers.push(telegram); }
+  return { sc, store, telegram, email, log, fetch: deps.fetch };
 }
 
 function watchers(s: Setup): { chainId: number; w: AllWatcher }[] {
   return s.sc.networks.map(({ chainId, cfg }) => ({
     chainId,
-    w: new AllWatcher(cfg, { store: s.store.scope(`${chainId}:`), telegram: s.telegram, fetch: s.fetch, log: (m) => s.log(`chain ${chainId}: ${m}`) }),
+    w: new AllWatcher(cfg, { store: s.store.scope(`${chainId}:`), telegram: s.telegram, email: s.email, fetch: s.fetch, log: (m) => s.log(`chain ${chainId}: ${m}`) }),
   }));
 }
 
@@ -240,6 +250,27 @@ export async function telegramWebhook(env: Env, req: Request, deps: Deps = {}): 
     s.log(`telegram: could not answer a message: ${errText(e)}`);
   }
   return { status: 200, body: { ok: true } };
+}
+
+/** The pages of alerts by email: sign up, confirm, stop. They answer HTML. */
+export async function emailPages(env: Env, req: Request, deps: Deps = {}): Promise<Reply> {
+  const log = deps.log ?? defaultLog;
+  let s: Setup;
+  try {
+    s = await setup(env, deps);
+  } catch (e) {
+    return failure(e, log);
+  }
+  const email = s.email;
+  if (!email) return { status: 404, body: { error: 'no alerts by email' } };
+  try {
+    // The pages learn the networks from the watchers that have read their chain.
+    await Promise.all(watchers(s).map(({ w }) => w.load()));
+  } catch (e) {
+    return failure(e, s.log);
+  }
+  const page = await email.handle({ method: req.method, url: req.url ?? EMAIL_PATH, headers: req.headers, body: req.body });
+  return { status: page.status, body: page.html, headers: PAGE_HEADERS };
 }
 
 /** For an uptime monitor. It says only when the last poll ran and how it went: no address, no chat. */
