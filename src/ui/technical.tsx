@@ -6,7 +6,7 @@
  */
 import "../technical.css";
 import type { ComponentChildren } from "preact";
-import { CONTRACTS } from "../lib/chains.ts";
+import { CONTRACTS, DELAY_DOCS, ROLES_DOCS } from "../lib/chains.ts";
 import { BoxArt, GuardianArt, SunArt, WalletArt } from "./art.tsx";
 import { Tick } from "./common.tsx";
 
@@ -79,7 +79,7 @@ export function TechnicalPage() {
             <strong>The time lock</strong>
             <p>The only way out. Everything waits here, in line, for the full delay. Nobody can make it faster.</p>
             <p class="tech-meta">
-              Zodiac Delay · <Contract address={CONTRACTS.delayMastercopy} /> ·{" "}
+              <Ext href={DELAY_DOCS}>Zodiac Delay</Ext> · <Contract address={CONTRACTS.delayMastercopy} /> ·{" "}
               <Ext href="https://github.com/zodiaceco/zodiac-modifier-delay/blob/main/audits/ZodiacDelayModuleSep2021.pdf">Audit by G0 Group, 2021</Ext>
             </p>
           </li>
@@ -90,7 +90,7 @@ export function TechnicalPage() {
               Its one rule can only change through the time lock.
             </p>
             <p class="tech-meta">
-              Zodiac Roles 2.1.1 · <Contract address={CONTRACTS.rolesMastercopy} /> · Audits by{" "}
+              <Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext> · <Contract address={CONTRACTS.rolesMastercopy} /> · Audits by{" "}
               <Ext href="https://github.com/zodiaceco/zodiac-modifier-roles/blob/main/packages/evm/docs/Audit04_Roles-V2_1_Nov2023_G0Group.pdf">G0 Group</Ext> and{" "}
               <Ext href="https://github.com/zodiaceco/zodiac-modifier-roles/blob/main/packages/evm/docs/Audit03_RolesV2_1_Nov2023_Ominiscia.pdf">Omniscia</Ext>, 2023
             </p>
@@ -170,7 +170,7 @@ export function TechnicalPage() {
           not a backup. If you lose your wallet, the money is lost. Adding and removing a guardian wait in the time lock, like every change.
         </p>
         <p class="tech-note">
-          Built from the same contracts: a second rule in the cancel switch (Zodiac Roles 2.1.1), and a Safe 1.4.1 that needs your wallet and your
+          Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), and a Safe 1.4.1 that needs your wallet and your
           guardian together. The app checks both every time you open the Chronobox.
         </p>
       </div>
@@ -259,8 +259,8 @@ export function TechnicalPage() {
         <details class="tech-more">
           <summary>For developers</summary>
           <p>
-            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the Delay and the
-            Roles modifier, wires them, and replaces the owner with <span class="tech-mono">0x…dEaD</span>. A wallet that can batch
+            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Delay</Ext> and the{" "}
+            <Ext href={ROLES_DOCS}>Roles modifier</Ext>, wires them, and replaces the owner with <span class="tech-mono">0x…dEaD</span>. A wallet that can batch
             (EIP-5792), such as a Safe or an EIP-7702 account, creates the Chronobox, switches on the time delay and makes the deposits as one atomic transaction.
           </p>
           <p>

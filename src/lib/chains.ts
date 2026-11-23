@@ -113,6 +113,10 @@ export const ALERTS_EMAIL_SOON = true;
 /** The public repository with the code of the app, the contracts and the alert service. */
 export const REPO = "https://github.com/zodiaceco/chronobox";
 
+/** The Zodiac docs of the two modules a Chronobox is built from. */
+export const DELAY_DOCS = "https://docs.zodiac.eco/developers/delay";
+export const ROLES_DOCS = "https://docs.zodiac.eco/developers/roles";
+
 /**
  * Where a person reads how to run the alert service on a machine of their
  * own: the guide in the repository. Null means: the app does not point to it.

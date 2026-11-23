@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { DELAY_DOCS, ROLES_DOCS } from "../lib/chains.ts";
 
 /**
  * Privacy policy (#/privacy) and imprint (#/imprint). Same column as the
@@ -245,7 +246,7 @@ export function TermsPage() {
       <Block title="2. What Chronobox is">
         <p>
           Chronobox is a free app that runs in your browser. It helps you set up a vault on a blockchain from open-source contracts by
-          others: Safe and the Zodiac Delay and Roles modules. Your wallet signs every step.
+          others: Safe and the Zodiac <Ext href={DELAY_DOCS}>Delay</Ext> and <Ext href={ROLES_DOCS}>Roles</Ext> modules. Your wallet signs every step.
         </p>
         <p>We never hold your money or your keys. We cannot withdraw, cancel, freeze or recover anything in your Chronobox.</p>
         <p>Chronobox is not financial, legal or tax advice, and it is not a financial service.</p>
