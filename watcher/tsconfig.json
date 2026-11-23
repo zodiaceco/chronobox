@@ -9,6 +9,8 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "isolatedModules": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,

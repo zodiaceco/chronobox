@@ -845,7 +845,7 @@ test('--all ignores a Delay that is not a Chronobox', async () => {
 });
 
 test('--all settings', () => {
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x' }), /Set TELEGRAM_TOKEN and\/or WEBHOOK_URL/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x' }), /Set TELEGRAM_TOKEN, RESEND_KEY and\/or WEBHOOK_URL/);
   assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', WEBHOOK_URL: 'http://h', CHRONOBOX: SAFE }), /CHRONOBOX does not work with --all/);
   assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', WEBHOOK_URL: 'ftp://h' }), /WEBHOOK_URL must start/);
   assert.throws(() => parseConfig(['--all', '--ntfy-server', 'http://n'], { RPC_URL: 'http://x' }), /Unknown flag/);
@@ -1367,13 +1367,13 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
 
   // Another key, or a file that was changed: the watcher stops and says why, without the key in the message.
   const other = 'another-secret-that-is-also-long-enough-98765';
-  await assert.rejects(Telegram.open({ ...cfg, telegramKey: other }), (e: Error) => e instanceof ConfigError && /TELEGRAM_KEY does not open/.test(e.message) && !e.message.includes(other));
+  await assert.rejects(Telegram.open({ ...cfg, alertsKey: other }), (e: Error) => e instanceof ConfigError && /ALERTS_KEY does not open/.test(e.message) && !e.message.includes(other));
   const saved = fs.readFileSync(file, 'utf8');
   const parsed = JSON.parse(saved);
   const bytes = Buffer.from(parsed.sealed, 'base64');
   bytes[bytes.length - 1] ^= 1;
   fs.writeFileSync(file, JSON.stringify({ ...parsed, sealed: bytes.toString('base64') }));
-  await assert.rejects(Telegram.open(cfg), /TELEGRAM_KEY does not open/);
+  await assert.rejects(Telegram.open(cfg), /ALERTS_KEY does not open/);
   fs.writeFileSync(file, saved);
 
   // A list from before the encryption is sealed at the first start.
@@ -1388,8 +1388,8 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
 test('Telegram settings', async () => {
   const base = { RPC_URL: 'http://x', TELEGRAM_KEY: TG_KEY };
   // The key that encrypts the list of chats is not optional, and a short one is refused without being repeated.
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN }), /TELEGRAM_KEY is required with TELEGRAM_TOKEN/);
-  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: 'too-short' }), (e: Error) => /TELEGRAM_KEY is required/.test(e.message) && !/too-short/.test(e.message));
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN }), /ALERTS_KEY is required with TELEGRAM_TOKEN or RESEND_KEY/);
+  assert.throws(() => parseConfig(['--all'], { RPC_URL: 'http://x', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: 'too-short' }), (e: Error) => /ALERTS_KEY is required/.test(e.message) && !/too-short/.test(e.message));
   assert.throws(() => parseConfig([], { ...base, CHRONOBOX: SAFE, WEBHOOK_URL: 'http://h/x', TELEGRAM_TOKEN: TG_TOKEN }), /TELEGRAM_TOKEN works with --all only/);
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: 'nonsense' }), (e: Error) => /does not look like a bot token/.test(e.message) && !/nonsense/.test(e.message));
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_API: 'ftp://t' }), /TELEGRAM_API must start/);

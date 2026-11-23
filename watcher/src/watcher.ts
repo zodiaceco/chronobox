@@ -11,6 +11,7 @@ import { type DescribeCtx, type TokenMeta, describeTx } from './describe.ts';
 import { fmtDuration, fmtWhen, lowerFirst, networkName } from './format.ts';
 import { type CloseReason, type VaultEvent, expiryLead, itemStatus, replayQueue, waitLine } from './status.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
+import type { Email } from './email.ts';
 import type { Telegram } from './telegram.ts';
 import type { Alert, Item, Settings, State } from './types.ts';
 import { ConfigError, type FetchFn, type Log, defaultLog, errText } from './util.ts';
@@ -42,6 +43,7 @@ export type WatcherOptions = {
   fetch?: FetchFn;
   log?: Log;
   telegram?: Telegram;
+  email?: Email;
   /** Where the state is kept, under `key`. Default: the file STATE_FILE (in memory only with --dry-run). */
   store?: Store;
   key?: string;
@@ -58,6 +60,7 @@ export class Watcher {
   private blockTs = new Map<number, bigint>();
   private proxyKinds = new Map<string, 'delay' | 'roles'>();
   private telegram?: Telegram;
+  private email?: Email;
   private store: Store;
   private key: string;
   private where: string;
@@ -66,6 +69,7 @@ export class Watcher {
   constructor(cfg: Config, opts: WatcherOptions = {}) {
     this.cfg = cfg;
     this.telegram = opts.telegram;
+    this.email = opts.email;
     this.fetchFn = opts.fetch ?? fetch;
     this.rpc = new Rpc(cfg.rpcUrls, this.fetchFn, 20000,
       cfg.rpcServiceKey ? { host: cfg.rpcServiceHost, key: cfg.rpcServiceKey } : undefined);
@@ -95,7 +99,8 @@ export class Watcher {
     this.cfg.rpcUrls.forEach((u, i) => secrets.push([u, `[RPC #${i + 1}]`]));
     if (this.cfg.webhookUrl) secrets.push([this.cfg.webhookUrl, '[webhook]']);
     if (this.cfg.telegramToken) out = out.split(this.cfg.telegramToken).join('[telegram token]');
-    if (this.cfg.telegramKey) out = out.split(this.cfg.telegramKey).join('[telegram key]');
+    if (this.cfg.alertsKey) out = out.split(this.cfg.alertsKey).join('[alerts key]');
+    if (this.cfg.resendKey) out = out.split(this.cfg.resendKey).join('[resend key]');
     if (this.cfg.rpcServiceKey) out = out.split(this.cfg.rpcServiceKey).join('[rpc service key]');
     for (const [secret, label] of secrets) {
       out = out.split(secret).join(label);
@@ -642,6 +647,7 @@ export class Watcher {
     else {
       if (this.cfg.webhookUrl) channels.push('webhook');
       if (this.telegram) channels.push('telegram');
+      if (this.email) channels.push('email');
     }
     for (const alert of [...s.outbox]) {
       for (const ch of channels) {
@@ -670,6 +676,11 @@ export class Watcher {
     if (channel === 'telegram') {
       // Throws when a chat could not be reached. The chats that got the alert are marked in `a.done`.
       await this.telegram!.deliver(this.state.chainId ?? 0, vault, a);
+      return;
+    }
+    if (channel === 'email') {
+      // The same for the email addresses.
+      await this.email!.deliver(this.state.chainId ?? 0, vault, a);
       return;
     }
     const body: Record<string, unknown> = {

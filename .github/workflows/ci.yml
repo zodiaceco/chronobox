@@ -18,6 +18,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      # The check reads test/alerts-fork.ts, which imports the alert service, and so its React (mail.tsx, pages.tsx).
+      - run: npm ci --ignore-scripts
+        working-directory: watcher
       - run: npm run check
       - run: npm test
       - run: npm run build
@@ -56,8 +59,10 @@ jobs:
           node-version: 24
           cache: npm
       # anvil comes from the lockfile (@foundry-rs/anvil-linux-amd64), so no install script has to run.
-      # The alert service needs no install: its sources import only Node.
       - run: npm ci --ignore-scripts
+      # The alert service has its own packages: react-email for the emails, esbuild for its .tsx (jsx.mjs).
+      - run: npm ci --ignore-scripts
+        working-directory: watcher
       - name: Start the fork
         run: |
           npx anvil --fork-url "$FORK_URL" --chain-id 1 --port 8545 --silent > anvil.log 2>&1 &

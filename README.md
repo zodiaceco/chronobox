@@ -158,12 +158,20 @@ Under the list, the sheet says it in plain words: our alert service is not priva
 
 A way whose setting is `null` is not in the list. With one way left and `ALERTS_EMAIL_SOON` false, "Get told" opens on that way, without the question.
 
+### Alerts by email
+
+The same alert service can send the alerts by email, through Resend. `ALERTS_EMAIL` in `src/lib/chains.ts` is the page of the alert service where a person gives an email address (`<alert service>/api/email`). It is `null` in the source, so "Get told" shows email as "Coming soon". With it set, "Email" opens that page. The person confirms the address with a link in one email (double opt-in). The app never sees the address.
+
+- The alert service keeps the email address, the address of the Chronobox and since when, encrypted like the list of chats. Resend gets the address and the text of each email, because it sends them.
+- Every alert by email ends with a link that stops the alerts. It is the only link in it.
+
 ## Run it
 
 Needs Node 22.18 or later.
 
 ```bash
 npm ci --ignore-scripts
+(cd watcher && npm ci --ignore-scripts)   # for npm run check and the alert tests: they read the alert service
 npm run dev          # http://localhost:3130, with a test wallet for a local fork
 npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :8545
 ```
@@ -173,7 +181,7 @@ The dev build injects a test wallet ("Anvil test wallet") that signs with anvil'
 ```bash
 npm test             # unit tests
 npm run test:fork    # the full flow against the real contracts on the fork
-npm run test:fork:alerts   # the alert service against the real contracts on the fork, with a stand-in for Telegram
+npm run test:fork:alerts   # the alert service against the real contracts on the fork, with stand-ins for Telegram and Resend
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```

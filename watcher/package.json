@@ -4,17 +4,26 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "Alerts for Chronobox: watches the chain and tells the people who follow a Chronobox in Telegram.",
-  "engines": { "node": ">=22.18" },
+  "description": "Alerts for Chronobox: watches the chain and tells the people who follow a Chronobox, in Telegram and by email.",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --test test/*.test.ts",
-    "start": "node src/cli.ts"
+    "test": "node --import ./jsx.mjs --test test/*.test.ts",
+    "start": "node --import ./jsx.mjs src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@react-email/components": "1.0.12",
+    "react": "19.1.10",
+    "react-dom": "19.1.10"
   }
 }
