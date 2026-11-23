@@ -435,7 +435,9 @@ export class Watcher {
       const times = new Map<number, bigint>();
       for (const e of events) if (e.kind === 'result' && e.success && !times.has(e.block)) times.set(e.block, await this.timestampOf(e.block));
       reasons = replayQueue({
-        from: s.txNonce ?? txNonce, to: txNonce, events, delay, cooldown, expiration, now,
+        from: s.txNonce ?? txNonce, to: txNonce, events, delay, now,
+        before: { cooldown: BigInt(s.settings!.cooldown), expiration: BigInt(s.settings!.expiration) },
+        after: { cooldown, expiration },
         items: new Map(closing.map((it) => [it.nonce, { createdAt: BigInt(it.createdAt), to: it.to, value: it.value, data: it.data, operation: it.operation }])),
         timeOf: (block) => times.get(block) ?? now,
       });

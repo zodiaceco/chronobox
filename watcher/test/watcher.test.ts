@@ -491,6 +491,91 @@ test('a cancel that failed is no cancel, and what the logs cannot explain never 
   }
 });
 
+test('a withdrawal carried out before the delay got shorter is "carried out", not "removed": each by the timing of its time', async () => {
+  // The case of the finding: delay 7 days, 7 days to finish. A withdrawal, and a shorter delay (1 hour) after it.
+  chain.withCancel();
+  chain.cooldown = 7n * DAY;
+  chain.expiration = 7n * DAY;
+  const w = watcher();
+  await w.poll();
+  chain.enqueue(STRANGER, ONE_HALF_ETH); // #0
+  chain.enqueue(DELAY, 0n, '0xebb2b4a2' + u(3600)); // #1: delay 1 hour
+  await w.poll();
+  // Just after 7 days and 1 hour: both are ready. By the new delay, #0 would have run out of time long ago.
+  chain.mine(7n * DAY + 3600n + 120n);
+  sent = [];
+  chain.execute();
+  chain.execute(true);
+  await w.poll();
+  const closed = hooks().filter((h) => h.json.event === 'closed');
+  assert.deepEqual(closed.map((h) => [h.json.nonce, h.json.title]), [
+    [0, 'Done: Send 1.5 ETH to 0xbaba…baba'],
+    [1, 'Done: Change the delay to 1 hour'],
+  ]);
+  assert.match(closed[0].json.message, /The money left this Chronobox\./);
+  assert.ok(hooks().every((h) => !/No money moved/.test(h.json.message)));
+  assert.ok(hooks().some((h) => h.json.event === 'settings_changed'));
+});
+
+test('a request is "removed" only if its time had run out by the timing then, and the timing adds up', async () => {
+  chain.withCancel();
+  const w = watcher();
+  await w.poll();
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH); // #0
+  await w.poll();
+  chain.mine(2n * DAY + 30n); // #0 ready, #1 queued now
+  chain.enqueue(OWNER_WALLET, 1n); // #1
+  await w.poll();
+  // #0 runs out of time and is removed (no log), then #1 is carried out: proved by its log.
+  chain.mine(7n * DAY);
+  sent = [];
+  chain.skipExpired();
+  chain.execute();
+  await w.poll();
+  assert.deepEqual(hooks().filter((h) => h.json.event === 'closed').map((h) => [h.json.nonce, h.json.title]), [
+    [0, 'Removed: Withdraw 1.5 ETH'],
+    [1, 'Done: Withdraw 0.000000000000000001 ETH'],
+  ]);
+
+  // The timing changed without a log that the replay can read (here: the stand-in sets it). Then it cannot say
+  // that a request was removed: it may have been carried out under another timing.
+  chain.enqueue(OWNER_WALLET, 2n); // #2
+  await w.poll();
+  chain.mine(2n * DAY + 7n * DAY + 60n);
+  sent = [];
+  chain.skipExpired();
+  chain.cooldown = 3n * DAY;
+  await w.poll();
+  const closed = hooks().filter((h) => h.json.event === 'closed');
+  assert.deepEqual(closed.map((h) => [h.json.nonce, h.json.title, h.json.priority]), [[2, 'Closed: Withdraw 0.000000000000000002 ETH', 4]]);
+  assert.doesNotMatch(closed[0].json.message, /No money moved/);
+});
+
+test('a request that ran out of time before the time to finish got longer is still "removed"', async () => {
+  // Delay 2 days, 7 days to finish. #0 runs out of time and is removed; then #1 gives 30 days to finish, and #2 is
+  // carried out. By the 30 days of now, #0 would not have run out of time: only the timing then says it did.
+  chain.withCancel();
+  const w = watcher();
+  await w.poll();
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH); // #0
+  await w.poll();
+  chain.mine(8n * DAY);
+  chain.enqueue(DELAY, 0n, '0x9b56d5be' + u(30n * DAY)); // #1: 30 days to finish
+  chain.enqueue(OWNER_WALLET, 1n); // #2
+  await w.poll();
+  chain.mine(2n * DAY + 60n); // #0 is 10 days old: void. #1 and #2 are ready.
+  sent = [];
+  chain.skipExpired();
+  chain.execute();
+  chain.execute(true);
+  await w.poll();
+  assert.deepEqual(hooks().filter((h) => h.json.event === 'closed').map((h) => [h.json.nonce, h.json.title]), [
+    [0, 'Removed: Withdraw 1.5 ETH'],
+    [1, 'Done: Change this Chronobox in a way that the app does not know'],
+    [2, 'Done: Withdraw 0.000000000000000001 ETH'],
+  ]);
+});
+
 test('an execution is reported as executed, an expired item as expired and removed', async () => {
   chain.withCancel();
   const w = watcher();

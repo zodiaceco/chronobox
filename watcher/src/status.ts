@@ -1,4 +1,5 @@
 // When a request can be finished, when it is void, and why it left the queue.
+import { batchCalls } from './describe.ts';
 import { fmtWhen } from './format.ts';
 
 export type Status = { status: 'waiting' | 'ready' | 'expired'; readyAt: bigint; expiresAt: bigint | null };
@@ -33,29 +34,35 @@ export type VaultEvent =
 export type QueueTx = { createdAt: bigint; to?: string; value?: string; data?: string; operation?: number };
 
 const SET_TX_NONCE = '0x46ba2307';
+const SET_TX_COOLDOWN = '0xebb2b4a2';
+const SET_TX_EXPIRATION = '0x9b56d5be';
 
-/** The new nonce if this call is setTxNonce(n) on the Delay, else null. */
-function setTxNonceOf(call: { to: string; data: string }, delay: string): number | null {
+/** The number that a one-argument call on the Delay sets, if this is that call. */
+function argOf(call: { to: string; data: string }, delay: string, selector: string): bigint | null {
   const d = call.data.toLowerCase();
-  if (call.to.toLowerCase() !== delay || !d.startsWith(SET_TX_NONCE) || d.length !== 2 + 8 + 64) return null;
-  const n = BigInt('0x' + d.slice(10));
-  return n > 1_000_000_000n ? null : Number(n);
+  if (call.to.toLowerCase() !== delay || !d.startsWith(selector) || d.length !== 2 + 8 + 64) return null;
+  return BigInt('0x' + d.slice(10));
 }
+
+/** The timing of the Delay. Each request is judged by the timing in force when it was carried out or removed. */
+export type Timing = { cooldown: bigint; expiration: bigint };
 
 /**
  * Why each request that waited at the last poll left the queue. The Safe of a Chronobox (SafeL2) logs every call of
  * a module before it runs and its result after it, in the order of the chain. So the watcher replays them from the
- * txNonce of the last poll:
+ * txNonce and the timing of the last poll:
  *
- * - The Delay calls the Safe: the request at the head of the queue was carried out. Requests before it whose time
- *   had run out were removed first (skipExpired logs nothing, and the Delay refuses to carry out such a request).
- * - setTxNonce(n) on the Delay that worked (from the cancel contract, or from the Delay as a request of its own):
- *   every request before n was cancelled.
+ * - The Delay calls the Safe: a request was carried out. It is the one at the head of the queue, unless the call
+ *   is not that request: then it is a later one, and every request before it must have run out of time and been
+ *   removed (skipExpired logs nothing). What the logs prove comes first; a computed time never outweighs it.
+ * - setTxNonce(n) on the Delay that worked (from the cancel contract, from the Delay as a request of its own, or in
+ *   a batch): every request before n was cancelled.
+ * - setTxCooldown or setTxExpiration on the Delay that worked: the timing changes from there on.
  * - A call that failed changed nothing.
  *
- * Several of these can be in one block. Reading the state of the block before would take a request that was carried
- * out for one that was cancelled. What the replay cannot explain (a call that does not match the request, a result
- * without its call, a request without a log) is "carried out or cancelled", never "no money moved".
+ * Several of these can be in one block. What the replay cannot explain (a call that matches no request, a result
+ * without its call, a delegate call it cannot read, a timing at the end that is not the one read now, a request
+ * without a log) is "carried out or cancelled", never "no money moved".
  */
 export function replayQueue(args: {
   /** txNonce at the last poll, and now. */
@@ -64,17 +71,19 @@ export function replayQueue(args: {
   events: VaultEvent[];
   delay: string;
   items: Map<number, QueueTx>;
-  cooldown: bigint;
-  expiration: bigint;
+  /** The timing at the last poll, and as read now. */
+  before: Timing;
+  after: Timing;
   /** The time of each block that has a result in `events`. */
   timeOf: (block: number) => bigint;
   now: bigint;
 }): Map<number, CloseReason> {
-  const { delay, items, cooldown, expiration } = args;
+  const { delay, items } = args;
   const reasons = new Map<number, CloseReason>();
+  let timing = { ...args.before };
   const expiredAt = (n: number, ts: bigint) => {
     const it = items.get(n);
-    return it !== undefined && itemStatus(it.createdAt, cooldown, expiration, ts).status === 'expired';
+    return it !== undefined && itemStatus(it.createdAt, timing.cooldown, timing.expiration, ts).status === 'expired';
   };
   const same = (it: QueueTx | undefined, c: { to: string; value: bigint; data: string; operation: number }) =>
     it === undefined || it.to === undefined ||
@@ -83,8 +92,26 @@ export function replayQueue(args: {
   let cur = args.from;
   let sure = true;
   const open: Extract<VaultEvent, { kind: 'call' }>[] = [];
-  const cancel = (n: number, block: number, ts: bigint) => {
-    for (; cur < n; cur++) reasons.set(cur, { how: 'cancelled', block, ts });
+  /** What one call that worked does to the queue and the timing. False if the replay cannot know. */
+  const apply = (c: { to: string; data: string }, block: number, ts: bigint): boolean => {
+    const n = argOf(c, delay, SET_TX_NONCE);
+    if (n !== null) {
+      if (n < BigInt(cur) || n > BigInt(args.to)) return false;
+      for (; cur < Number(n); cur++) reasons.set(cur, { how: 'cancelled', block, ts });
+    }
+    const cooldown = argOf(c, delay, SET_TX_COOLDOWN);
+    if (cooldown !== null) timing = { ...timing, cooldown };
+    const expiration = argOf(c, delay, SET_TX_EXPIRATION);
+    if (expiration !== null) timing = { ...timing, expiration };
+    return true;
+  };
+  /** A call of the Safe that worked: its own effect, and the effect of each call in it, in order. */
+  const effects = (c: { to: string; value: bigint; data: string; operation: number }, block: number, ts: bigint): boolean => {
+    if (c.operation === 0) return apply(c, block, ts);
+    // A delegate call runs other code as the Safe. Only a batch of plain calls can be read.
+    const calls = batchCalls(c);
+    if (!calls) return false;
+    return calls.every((inner) => apply(inner, block, ts));
   };
   for (const e of args.events) {
     if (e.kind === 'call') { open.push(e); continue; }
@@ -95,20 +122,34 @@ export function replayQueue(args: {
     if (!call) { sure = false; break; }
     const ts = args.timeOf(e.block);
     if (e.module === delay) {
-      while (cur < args.to && expiredAt(cur, ts)) reasons.set(cur++, { how: 'expired' });
-      if (cur >= args.to || !same(items.get(cur), call)) { sure = false; break; }
-      reasons.set(cur++, { how: 'executed', block: e.block });
+      // Which request did the Delay carry out? The head, if the call is the head: the log proves it.
+      let j = cur;
+      if (!same(items.get(j), call)) {
+        j = cur + 1;
+        while (j < args.to && !same(items.get(j), call)) j++;
+        // A later one: then every request before it ran out of time, by the timing in force now.
+        if (j >= args.to) { sure = false; break; }
+        let skipped = true;
+        for (let k = cur; k < j; k++) if (!expiredAt(k, ts)) skipped = false;
+        if (!skipped) { sure = false; break; }
+        for (; cur < j; cur++) reasons.set(cur, { how: 'expired' });
+      }
+      if (j >= args.to) { sure = false; break; }
+      reasons.set(j, { how: 'executed', block: e.block });
+      cur = j + 1;
     }
-    const n = setTxNonceOf(call, delay);
-    if (n !== null) {
-      if (n < cur || n > args.to) { sure = false; break; }
-      cancel(n, e.block, ts);
-    }
+    if (!effects(call, e.block, ts)) { sure = false; break; }
   }
+  // The timing at the end must be the one read now. Else something changed it that the replay did not see.
+  if (timing.cooldown !== args.after.cooldown || timing.expiration !== args.after.expiration) sure = false;
   // The rest left without a log: removed because its time ran out. If its time did not run out, something is not as
-  // the replay thinks.
+  // the replay thinks. Without certainty, no request keeps a "removed" or a "cancelled": only what the logs proved
+  // was carried out stays.
   for (let n = cur; n < args.to; n++) {
     reasons.set(n, sure && expiredAt(n, args.now) ? { how: 'expired' } : { how: 'executed_or_cancelled' });
+  }
+  if (!sure) {
+    for (const [n, r] of reasons) if (r.how !== 'executed') reasons.set(n, { how: 'executed_or_cancelled' });
   }
   return reasons;
 }
