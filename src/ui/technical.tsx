@@ -246,7 +246,7 @@ export function TechnicalPage() {
           <li>
             <span>This build</span>
             <span class="tech-value tech-mono">
-              v{__VERSION__} · {BUILD || "unknown"}
+              {BUILD || "unknown"}
             </span>
           </li>
           <li>

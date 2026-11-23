@@ -1105,6 +1105,20 @@ a:focus-visible {
   line-height: 1.3;
 }
 
+.trust-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--gold);
+  text-underline-offset: 3px;
+}
+
+.trust-link:hover strong {
+  color: var(--gold);
+}
+
 @media (max-width: 480px) {
   .trust {
     display: grid;

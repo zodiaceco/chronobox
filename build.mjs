@@ -65,7 +65,6 @@ function appOptions() {
     sourcesContent: DEV,
     define: {
       __DEV__: JSON.stringify(DEV),
-      __VERSION__: JSON.stringify(pkg.version),
       __FILM__: JSON.stringify(filmTag()),
     },
     loader: {
