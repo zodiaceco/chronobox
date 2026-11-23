@@ -11,6 +11,7 @@ import { call } from "../src/lib/abi.ts";
 import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
 import { readMany } from "../src/lib/chronobox.ts";
 import { checksum, isAddress, sameAddress, toBigInt } from "../src/lib/hex.ts";
+import { type ListToken, listSymbol, tokenListModule } from "./token-list-module.ts";
 
 const PER_CHAIN = 200;
 const input = process.argv[2];
@@ -18,7 +19,7 @@ if (!input) throw new Error("Usage: node tools/token-list.ts <tokens.json>");
 type Entry = { address: string; symbol: string; decimals: number; rank: number | null };
 const source = JSON.parse(readFileSync(input, "utf8")) as Record<string, Entry[]>;
 
-const lines: string[] = [];
+const lists: { chainId: number; tokens: ListToken[] }[] = [];
 for (const chain of CHAINS) {
   if (chain.testnet) continue;
   const rpc = async (method: string, params: unknown[] = []) => {
@@ -32,8 +33,9 @@ for (const chain of CHAINS) {
   const candidates = (source[String(chain.id)] ?? [])
     .filter((t) => t.rank !== null && isAddress(t.address) && Number.isInteger(t.decimals) && t.decimals >= 0 && t.decimals <= 36)
     .sort((a, b) => a.rank! - b.rank!)
-    .map((t) => ({ ...t, symbol: t.symbol.replace(/[^\x21-\x7E]/g, "").replace(/[:,]/g, "").slice(0, 12) }))
-    .filter((t) => t.symbol && !seen.has(t.address.toLowerCase()) && !!seen.add(t.address.toLowerCase()))
+    // A symbol goes into source code that runs in the app. One with any other character is left out, not repaired.
+    .filter((t) => listSymbol(t.symbol) !== null || (console.log("  left out", chain.name, JSON.stringify(t.symbol), t.address, "(symbol)"), false))
+    .filter((t) => !seen.has(t.address.toLowerCase()) && !!seen.add(t.address.toLowerCase()))
     // One token for each symbol: the largest. A second "USDC" next to the real one would only mislead.
     .filter((t) => !symbols.has(t.symbol.toLowerCase()) && !!symbols.add(t.symbol.toLowerCase()))
     .slice(0, PER_CHAIN + 80);
@@ -61,40 +63,8 @@ for (const chain of CHAINS) {
   }
   console.log(chain.name, "candidates", candidates.length, "kept", list.length, "| all", list.length, "balances in one read:", whole);
   if (list.some((t) => chain.tokens.some((main) => sameAddress(main.address, t.address)))) throw new Error("A main token is in the long list");
-  lines.push(`  ${chain.id}: "${list.map((t) => `${t.symbol}:${t.decimals}:${checksum(t.address)}`).join(",")}",`);
+  lists.push({ chainId: chain.id, tokens: list });
 }
 
-writeFileSync(
-  new URL("../src/lib/token-list.ts", import.meta.url),
-  `/**
- * The long list of tokens for each network, largest first. Written by
- * tools/token-list.ts, not by hand. The app shows a token from this list
- * only when an address holds some of it. The main tokens are in chains.ts.
- *
- * One entry is symbol:decimals:address.
- */
-import type { Token } from "./chains.ts";
-import type { Address } from "./hex.ts";
+writeFileSync(new URL("../src/lib/token-list.ts", import.meta.url), tokenListModule(lists));
 
-const LISTS: Record<number, string> = {
-${lines.join("\n")}
-};
-
-const parsed = new Map<number, Token[]>();
-
-export function moreTokens(chainId: number): Token[] {
-  let list = parsed.get(chainId);
-  if (!list) {
-    list = (LISTS[chainId] ?? "")
-      .split(",")
-      .filter(Boolean)
-      .map((entry) => {
-        const [symbol, decimals, address] = entry.split(":");
-        return { address: address as Address, symbol, decimals: Number(decimals) };
-      });
-    parsed.set(chainId, list);
-  }
-  return list;
-}
-`,
-);
