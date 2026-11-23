@@ -43,6 +43,7 @@ import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
+import { RowIcon, type RowIconName } from "./row-icons.tsx";
 
 type VaultData = {
   inspection: Inspection;
@@ -401,31 +402,34 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
       {locked ? (
         <ul class="rows">
-          <Row label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" strong />
-          <Row label="Delay" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
+          <Row icon="address" label="Address" value={copied ? "Copied" : shortAddress(safe)} onClick={copyAddress} hint="Copy" strong />
+          <Row icon="delay" label="Delay" value={formatDuration(inspection.cooldown)} onClick={isController ? () => setSheet("delay") : undefined} />
           <Row
+            icon="wallet"
             label="Wallet"
             value={isController ? (inspection.guardian && pendingSwap(chain.id, safe) ? "Asking your guardian" : shortAddress(inspection.controller!)) : <AddressText address={inspection.controller!} />}
             onClick={isController ? () => setSheet("wallet") : undefined}
           />
           {inspection.roles ? (
             <Row
+              icon="guardian"
               label="Guardian"
               value={isGuardian ? "You" : inspection.guardian ? shortAddress(inspection.guardian) : guardianWaiting ? "Starts soon" : isController ? "Add" : "None"}
               onClick={isController || inspection.guardian ? () => setSheet("guardian") : undefined}
             />
           ) : null}
           <Row
+            icon="checks"
             label="Safety checks"
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
             onClick={() => setSheet("checks")}
           />
-          {ALERTS ? <Row label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
-          <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
+          {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
+          <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
-          <Row label="Safety checks" value={`${passed} of ${inspection.checks.length} passed`} onClick={() => setSheet("checks")} />
+          <Row icon="checks" label="Safety checks" value={`${passed} of ${inspection.checks.length} passed`} onClick={() => setSheet("checks")} />
         </ul>
       ) : null}
 
@@ -550,9 +554,11 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
 /** One line in the list under the balance. With an action it is a button. */
 /** `strong` marks the one row that people come for: the address of the Chronobox. */
-function Row(props: { label: string; value: ComponentChildren; hint?: string; onClick?: () => void; strong?: boolean }) {
+function Row(props: { label: string; value: ComponentChildren; icon?: RowIconName; hint?: string; onClick?: () => void; strong?: boolean }) {
+  const kind = `row${props.icon ? " row-with-icon" : ""}${props.strong ? " row-strong" : ""}`;
   const inner = (
     <>
+      {props.icon ? <RowIcon name={props.icon} /> : null}
       <span class="row-label">{props.label}</span>
       <span class="row-value">{props.value}</span>
       {props.onClick ? (
@@ -569,11 +575,11 @@ function Row(props: { label: string; value: ComponentChildren; hint?: string; on
   return (
     <li>
       {props.onClick ? (
-        <button type="button" class={props.strong ? "row row-strong" : "row"} onClick={props.onClick}>
+        <button type="button" class={kind} onClick={props.onClick}>
           {inner}
         </button>
       ) : (
-        <div class="row">{inner}</div>
+        <div class={kind}>{inner}</div>
       )}
     </li>
   );
