@@ -311,6 +311,6 @@ test("the link to the Telegram bot carries the network and the address, and matc
   assert.equal(telegramLink("@ChronoboxAlertsBot", 1, safe), "https://t.me/ChronoboxAlertsBot?start=1-0x29fcb43b46531bca003ddc8fcb67ffe91900c762");
   // Telegram allows letters, digits, "-" and "_" after "start=", up to 64 characters.
   assert.match(telegramStart(11155111, safe), /^[-_A-Za-z0-9]{1,64}$/);
-  const watcher = await import("../watcher/watch.ts");
+  const watcher = await import("../watcher/src/telegram.ts");
   assert.equal(watcher.telegramStart(11155111, safe), telegramStart(11155111, safe));
 });

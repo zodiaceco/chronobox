@@ -88,11 +88,10 @@ export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da8
  * example "ChronoboxAlertsBot". Null means: this build has no alerts, and a
  * Chronobox does not show "Get told".
  *
- * The alert service is a separate program (watcher/watch.ts with --all and
- * TELEGRAM_TOKEN, see watcher/README.md). It is not part of this app and must
- * run on a machine that stays on. Set a name here only when it runs: without
- * it the bot does not answer. The app never connects to Telegram. It only
- * builds a link to the bot.
+ * The alert service is a project of its own (watcher/, see watcher/README.md),
+ * deployed to Vercel as a second project. Set a name here only when it runs
+ * with that bot: without it the bot does not answer. The app never connects
+ * to Telegram. It only builds a link to the bot.
  */
 export const ALERTS_TELEGRAM: string | null = null;
 

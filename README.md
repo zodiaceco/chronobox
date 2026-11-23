@@ -112,7 +112,7 @@ Read these. They are the honest edge of what a delay can do.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** Chronobox has no recovery of its own. If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian cannot help. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
-- **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below). It is built, but this version does not switch it on. Use the calendar file, and look at your Chronobox regularly.
+- **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own. It is built, but this version does not switch it on. Use the calendar file, and look at your Chronobox regularly.
 
 
 
@@ -129,11 +129,11 @@ Each queued withdrawal has an **Add to calendar** link: one reminder when it bec
 
 ### Alerts in Telegram
 
-Alerts have two parts. The app has one button. The alert service is a separate program, `watcher/watch.ts`. It is not part of the website, and the host of the website does not run it. Somebody must run it on a machine that stays on. Without it, the button leads to a bot that does not answer.
+Alerts have two parts. The app has one button. The alert service is a project of its own, in `watcher/`. It is not part of the website: it is deployed as a second Vercel project, with Vercel Cron, a Telegram webhook and Upstash Redis, and the website stays a static site. It can also run on a machine that stays on. Without it, the button leads to a bot that does not answer.
 
-`watcher/watch.ts` is a single file with no dependencies. It watches every Chronobox on a network and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
+The alert service has no runtime dependencies. It watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
 
-`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. Set it only when the watcher runs with that bot. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
+`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. Set it only when the alert service runs with that bot. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
 The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
 
@@ -234,10 +234,10 @@ src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/lib/alerts.ts    the link to the Telegram bot
 src/ui/              screens
-watcher/             the alert service: one file, no dependencies
+watcher/             the alert service: a project of its own (Vercel functions, or a CLI)
 build.mjs            build, dev server, build hash
 test/fork.ts         end-to-end proof on a fork
-test/alerts-fork.ts  the alert service on a fork
+test/alerts-fork.ts  the alert service on a fork (it uses watcher/src)
 brand/               logo and icons
 ```
 

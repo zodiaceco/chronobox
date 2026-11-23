@@ -33,7 +33,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
-import { AllWatcher, Telegram, parseConfig } from "../watcher/watch.ts";
+import { AllWatcher, Telegram, parseConfig } from "../watcher/src/index.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 6 to 8. The browser dev wallet uses 0 to 2 and test/fork.ts uses 3 to 5.

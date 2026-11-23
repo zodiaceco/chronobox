@@ -1,0 +1,20 @@
+{
+  "name": "chronobox-watcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Alerts for Chronobox: watches the chain and tells the people who follow a Chronobox in Telegram.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "start": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

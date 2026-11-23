@@ -2,14 +2,24 @@
 
 A Chronobox is a Safe. Everything goes through a Zodiac Delay, controlled by one wallet, and waits the full delay: a withdrawal, a change of the delay, a change of the wallet. The wallet can cancel what waits, through a Zodiac Roles modifier with that one permission. Cancel is worth nothing if nobody knows that something waits. That is what this watcher is for.
 
-The watcher reads the chain every minute and sends a message when something happens. It runs in two ways:
+The watcher reads the chain every minute and sends a message when something happens. It is a project of its own, in this folder. It is not part of the Chronobox website and has its own `package.json`. It runs in three ways:
 
-- **As an alert service (`--all`).** It watches every Chronobox on one or more networks and runs a Telegram bot. A person opens the bot from the Chronobox app, presses Start, and gets the alerts of that Chronobox in Telegram.
-- **For one Chronobox.** It watches the address you give it and posts every alert to a webhook of yours.
+- **As the alert service on Vercel.** It watches every Chronobox on one or more networks and runs a Telegram bot. A person opens the bot from the Chronobox app, presses Start, and gets the alerts of that Chronobox in Telegram. Nothing has to stay on: Vercel Cron starts a poll every minute, and Telegram calls a webhook with each message to the bot. The state is in Upstash Redis. See "The alert service on Vercel".
+- **As the same alert service on a machine that stays on (`--all`).** The CLI, with the state in files. The bot asks Telegram for its messages, so it needs no domain and no open port.
+- **For one Chronobox.** The CLI watches the address you give it and posts every alert to a webhook of yours.
 
-The watcher is a program of its own. It is not part of the Chronobox website, and it does not start when the website is published. Somebody must run it on a machine that stays on: a small server, or a computer at home. A host that runs code only when a request comes in (Vercel, Netlify and others like them) cannot run it. If the app shows the button "Get alerts in Telegram" and no watcher runs, the bot does not answer and nobody gets an alert.
+If the app shows the button "Get alerts in Telegram" and no watcher runs, the bot does not answer and nobody gets an alert.
 
-It is one file with no packages and no keys. It needs Node.js 22.18 or newer. Run `node watch.ts --help` for all settings. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
+It has no runtime dependencies and needs no keys of a wallet. It needs Node.js 22.18 or newer. `npm run build` makes two things: the functions for Vercel in `.vercel/output/`, and the CLI as one file, `dist/watch.mjs`. Run `node dist/watch.mjs --help` (or `node src/cli.ts --help`) for all settings of the CLI. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
+
+```sh
+npm install
+npm test          # unit tests, with stand-ins for the chain, Telegram and Redis
+npm run check     # TypeScript
+npm run build     # .vercel/output/ and dist/watch.mjs
+```
+
+`npm run test:fork:alerts` in the folder above runs the alert service against the real contracts on a fork.
 
 ## What it reports
 
@@ -29,35 +39,105 @@ Each message is sent once, also across restarts. A message that could not be del
 
 The watcher names three requests of the app by their shape: a new wallet, a new guardian, and the end of a guardian. It reads what the request contains, but it cannot prove that the request is exactly the one the app builds. The app can, because it builds the request again and compares every byte. So these messages say "open your Chronobox to check that the request is what it looks like", and they are always the loudest kind.
 
-## The alert service (`--all`)
+## The alert service on Vercel
+
+The service is a second Vercel project, made from the same repository. The website stays a static site with no backend.
+
+```
+Vercel Cron, every minute ──▶ /api/poll       reads every network, sends the alerts
+Telegram, each message ──────▶ /api/telegram   answers /start, /stop, /list, /privacy
+an uptime monitor ───────────▶ /api/health     503 when the polls stopped
+                                    │
+                              Upstash Redis: what the watcher knows, the sealed list of chats, the locks
+```
+
+### Set it up
 
 1. In Telegram, write to [BotFather](https://t.me/BotFather): `/newbot`, a name, a username. It answers with a token.
-2. Make a key for the list of chats. Do this one time, and keep the key:
+2. Make two secrets, one for the list of chats and one for Vercel Cron. Keep the first one: without it the list is lost.
 
    ```sh
    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
    ```
 
-3. Start the watcher with the token and the key:
+3. In Vercel, make a new project from this repository. Set **Root Directory** to `watcher`. `vercel.json` sets the rest: no framework, `npm ci`, `npm run build`.
+4. In the project, under Storage, connect an Upstash Redis database. That sets `KV_REST_API_URL` and `KV_REST_API_TOKEN` (or `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`).
+5. Set the environment variables, for **Production only**. A preview deployment then has no secrets, cannot reach the bot, and answers every call with an error.
+
+   | Variable | |
+   |---|---|
+   | `CHAINS` | The networks to watch, for example `1,100,8453,42161`. |
+   | `RPC_URL` | Optional. The RPC for every network, with `{chainId}` where the chain id goes. A comma separates fallbacks. Default: the RPC of Zodiac (see below). |
+   | `RPC_URL_<chain id>` | Optional. The RPC of one network, in place of `RPC_URL`, for a provider with a host name per chain. |
+   | `TELEGRAM_TOKEN` | The token from step 1. |
+   | `TELEGRAM_KEY` | The first secret from step 2. It encrypts the list of chats. |
+   | `CRON_SECRET` | The second secret. Vercel Cron sends it with each call, and `/api/poll` refuses a call without it. |
+   | `RPC_TOKEN_SECRET` | Optional. The `RPC_TOKEN_SECRET` of the internal RPC of Zodiac (see below). |
+   | `RPC_TOKEN_HOST`, `RPC_TOKEN_SUBJECT` | Optional. Where the token goes (default `rpc.zodiac.eco`) and whom it names (default `chronobox-watcher`). |
+   | `WEBHOOK_URL` | Optional. Gets every alert of every Chronobox as a JSON POST. |
+   | `START_BLOCK_<chain id>` | Optional. The first block to search for Chronoboxes. Default: the newest block at the first poll. |
+   | `PUBLIC_URL` | Optional. The address where Telegram reaches the bot. Default: the production domain of the project. |
+   | `HEARTBEAT_HOURS`, `FAIL_POLLS`, `LOG_CHUNK`, `MAX_SCAN_BLOCKS` | Optional, as in the CLI. |
+   | `POLL_BUDGET_SECONDS` | Optional. After this time a poll reads no further Chronobox, and the next poll goes on (default 60). |
+   | `HEALTH_MAX_AGE_SECONDS` | Optional. `/api/health` answers 503 when the last poll is older (default 300). |
+   | `REDIS_PREFIX` | Optional. Every key starts with it (default `chronobox:`). |
+
+6. Deploy to production. Within a minute the first poll runs. It tells Telegram to send the messages of the bot to `/api/telegram`, with a secret that Telegram sends back each time. The poll does that again when the address, the token or the key changes.
+7. Open `/api/health`. It says when the last poll ran and if every network could be read.
+8. Only then: in the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot and build. A Chronobox then shows "Get told" with one button, "Get alerts in Telegram".
+9. Point an uptime monitor at `/api/health`. Cloudflare can do it with a Worker on a cron trigger, or any uptime service can. It is on another provider than the service, so it also notices when Vercel or its cron stops. "All quiet" tells the people who follow a Chronobox that the alerts work. The monitor tells you.
+
+### The RPC of Zodiac
+
+Zodiac runs its own RPC (a Cloudflare Worker in front of Alchemy, `deployables/rpc` in zodiac-os), on two hosts:
+
+- `rpc.zodiac.eco` answers only with `Authorization: Bearer <token>`: a short-lived HS256 JWT signed with the worker's `RPC_TOKEN_SECRET`. A `server` token gets the limit of our own servers (12000 calls a minute). With `RPC_TOKEN_SECRET` set, the watcher signs such a token (10 minutes, renewed before it runs out) and sends it only to `RPC_TOKEN_HOST`. Every function of the service names the same subject.
+- `public-rpc.zodiac.eco` answers anyone, with a limit per IP address. Vercel functions share their addresses with others, so it is the fallback, not the first choice.
+
+Without `RPC_URL`, the service uses both: `https://rpc.zodiac.eco/{chainId},https://public-rpc.zodiac.eco/{chainId}` when `RPC_TOKEN_SECRET` is set, else the public host only. So this is all it takes:
+
+```
+CHAINS=1,100,8453,42161
+RPC_TOKEN_SECRET=<the RPC_TOKEN_SECRET of the production worker>
+```
+
+Each RPC must be on the chain it is used for. The service checks that, and stops a network whose RPC is on another chain.
+
+A refused token (a wrong secret) does not stop the alerts: the watcher goes on with the fallback, and the internal host logs the 401. Whoever holds `RPC_TOKEN_SECRET` can sign any token for that RPC, so it is as sensitive as the other secrets: Production only.
+
+### How it runs
+
+- **One poll per minute** reads every network at the same time. A Chronobox where nothing waits is not read, so a poll is short. One poll searches `MAX_SCAN_BLOCKS` blocks at most. A service that is far behind (the first start with `START_BLOCK`, or after an outage) catches up over several polls.
+- **Locks.** Vercel can start a poll while the last one still runs, and Telegram calls the webhook at any time. So a poll takes the lock of its network, and a poll that finds it taken stops at once: the one before it does the work. A Start waits for the lock (up to 30 seconds), because it reads the Chronobox. A change of the list of chats takes the lock of the list. A lock is a key in Redis that runs out after 130 seconds, longer than a function may run (`src/limits.ts`). A function that was killed blocks the next ones until then.
+- **Each message is answered once.** Telegram sends a message again when the answer was slow. The webhook notes each message for a day and does not answer it twice.
+- **Each alert is sent once.** As in the CLI, a chat that got an alert is noted, and only the others are tried again. If a function is killed between sending and saving, a message can come twice. It is never lost.
+- **The webhook and long polling exclude each other.** A bot can do only one. When the service sets its webhook, a CLI that reads the same bot gets an error (409). Give the service its own bot, or stop the CLI.
+
+The functions are bundled by `build.mjs` and deployed as they are (the Build Output of Vercel). The cron job is in `.vercel/output/config.json`, made from `src/limits.ts`.
+
+## The alert service on a machine (`--all`)
+
+1. Make a bot and a key, as in steps 1 and 2 above.
+2. Start the watcher with the token and the key:
 
    ```sh
    export RPC_URL=https://your-rpc,https://backup-rpc
    export TELEGRAM_TOKEN=123456:AA...
    export TELEGRAM_KEY=<the key from step 2>
    export STATE_DIR=/var/lib/chronobox-watcher
-   node watch.ts --all
+   node dist/watch.mjs --all
    ```
 
-4. Only when the watcher runs: in the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot and build. A Chronobox then shows "Get told" with one button, "Get alerts in Telegram".
+3. Only when the watcher runs: set `ALERTS_TELEGRAM` in the app, as above.
 
-How it finds the Chronoboxes:
+How it finds the Chronoboxes (on Vercel too):
 
 - A new Chronobox by the Delay that it deploys (the `ModuleProxyCreation` event of the Zodiac factory), and an older one when it asks for something (`TransactionAdded`, read from every contract on the chain), or when somebody presses Start for it.
 - It accepts an address only if it is a Safe whose single owner is the burn address and whose modules are that Delay, or that Delay and a Roles modifier.
 - A Chronobox where nothing waits cannot change until somebody asks for something. So the watcher reads a Chronobox only when something waits there, when something new was asked for, or when its "All quiet" message is due and a chat follows it. One log request per poll covers all quiet ones.
 - The first start begins at the newest block. Set `START_BLOCK` to search from an older block.
 
-How a person subscribes:
+How a person subscribes (on Vercel too):
 
 - The app builds the link `https://t.me/<bot>?start=<chain id>-<address>`. Telegram shows the bot and a Start button. The bot gets `/start <chain id>-<address>` together with the number of the chat. Nobody fills in a form, and the app sends nothing.
 - The bot checks on the chain that the address is a Chronobox. Then it keeps the pair (chat, Chronobox) and answers with what waits there right now.
@@ -77,21 +157,21 @@ A semicolon separates the networks, a comma the fallbacks of one network. Each n
 
 Things to know:
 
-- The bot needs no domain and no open port. It asks Telegram for new messages (long polling).
+- On a machine, the bot needs no domain and no open port. It asks Telegram for new messages (long polling). If the bot had a webhook (from the service on Vercel), remove it first: `curl https://api.telegram.org/bot<token>/deleteWebhook`.
 - The RPC must answer `eth_getLogs` without an address filter. Lower `LOG_CHUNK` if it limits the block range.
 - With `--once` the bot reads its messages one time per run, so an answer takes as long as the pause between two runs. Run the watcher as a service.
 - `CHRONOBOX`, `DELAY` and `STATE_FILE` do not work with `--all`. `WEBHOOK_URL` works, and gets the alerts of every Chronobox.
-- Not tested yet with the real Telegram. The checks are the unit tests and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
+- Not tested yet with the real Telegram, and not deployed to Vercel yet. The checks are the unit tests (with stand-ins for the chain, Telegram and Redis) and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
 
 ### What the service keeps
 
 - Public chain data: the Chronoboxes it found and what waits in them.
-- `STATE_DIR/telegram.json`: for each chat that pressed Start, the number of the chat and the Chronoboxes it follows. No name, no username, no phone number, no message.
+- The list of chats (`STATE_DIR/telegram.json`, or the key `chronobox:telegram` in Redis): for each chat that pressed Start, the number of the chat and the Chronoboxes it follows. No name, no username, no phone number, no message.
 - That list is personal data. It links a Telegram account to a Chronobox, and so to an amount of money.
-- The list is encrypted on disk with `TELEGRAM_KEY` (AES-256-GCM). The file holds no address and no chat number that somebody can read without the key. So the file, a backup of it or the disk alone are worth nothing.
-- Keep the key and the token away from `STATE_DIR` and its backups: in the secret store of your host, or in a file that only the service can read. With the list and the token, somebody could write to every person as the real bot.
+- The list is encrypted with `TELEGRAM_KEY` (AES-256-GCM). It holds no address and no chat number that somebody can read without the key. So the file, the Redis database, a backup of either, or the disk alone are worth nothing.
+- Keep the key and the token away from where the list is: in the secret store of your host, or in a file that only the service can read. On Vercel the key is in the environment of the project, and the list is at Upstash, two different companies. With the list and the token, somebody could write to every person as the real bot.
 - The key does not protect against a person who controls the running watcher. The watcher must know which chats follow a Chronobox when it sends an alert, so it holds the list and the key. Only a sealed enclave could hide the list from the person who runs the machine. That is not built.
-- If the key is lost, the list is lost: remove `telegram.json`, and every person must press Start again. A wrong key stops the watcher with a clear message. It does not start with an empty list.
+- If the key is lost, the list is lost: remove `telegram.json` (or the key `chronobox:telegram` in Redis), and every person must press Start again. A wrong key stops the watcher with a clear message (on Vercel: every call answers 500 with it). It does not start with an empty list.
 - The watcher does not write the number of a chat, the token or the key to its log.
 - Telegram knows the phone number of each account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 
@@ -100,7 +180,7 @@ Things to know:
 Make a test bot with BotFather, put its username in `ALERTS_TELEGRAM`, start the fork (`npm run fork`) and the app (`npm run dev`), and run:
 
 ```sh
-RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... TELEGRAM_KEY=<32 characters or more> node watch.ts --all
+RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... TELEGRAM_KEY=<32 characters or more> node src/cli.ts --all
 ```
 
 Then press "Get alerts in Telegram" in a Chronobox. On the local fork the network is Ethereum (chain 1), so the link starts with `1-`.
@@ -111,13 +191,13 @@ Then press "Get alerts in Telegram" in a Chronobox. On the local fork the networ
 export RPC_URL=https://your-rpc,https://backup-rpc
 export CHRONOBOX=0xYourChronobox
 export WEBHOOK_URL=https://your-server.example/chronobox
-node watch.ts
+node dist/watch.mjs
 ```
 
 Test your setup first. `--dry-run` prints the messages and sends nothing:
 
 ```sh
-RPC_URL=https://your-rpc CHRONOBOX=0xYourChronobox node watch.ts --once --dry-run
+RPC_URL=https://your-rpc CHRONOBOX=0xYourChronobox node dist/watch.mjs --once --dry-run
 ```
 
 The first run sends one "Watching this Chronobox" message with what waits, the wallet, and who can cancel. The watcher remembers what it sent in `chronobox-watch-state.json` in the current folder (change it with `STATE_FILE`).
@@ -134,7 +214,7 @@ If you want the alerts of your own Chronobox in Telegram without anybody else's 
 
 ## Run it as a service
 
-Put `watch.ts` in `/opt/chronobox-watcher/` and create `/etc/systemd/system/chronobox-watcher.service`:
+Build (`npm run build`), put `dist/watch.mjs` in `/opt/chronobox-watcher/` and create `/etc/systemd/system/chronobox-watcher.service`:
 
 ```ini
 [Unit]
@@ -146,7 +226,7 @@ Wants=network-online.target
 WorkingDirectory=/opt/chronobox-watcher
 EnvironmentFile=/etc/chronobox-watcher.env
 Environment=STATE_DIR=/var/lib/chronobox-watcher
-ExecStart=/usr/bin/node /opt/chronobox-watcher/watch.ts --all
+ExecStart=/usr/bin/node /opt/chronobox-watcher/watch.mjs --all
 Restart=always
 RestartSec=30
 DynamicUser=yes
@@ -177,7 +257,7 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 ## Privacy
 
 - Your RPC provider sees what the watcher reads and its IP address. Use your own node, or an RPC you trust, if that matters to you.
-- The watcher never writes your RPC URL, your webhook URL, the bot token or the key of the chat list into a message or its log.
+- The watcher never writes your RPC URL, your webhook URL, the bot token, the key of the chat list, the Redis token or the cron secret into a message or its log.
 - For the Telegram bot, see "What the service keeps" above.
 
 ## Limits
@@ -191,3 +271,25 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 - The Delay of a Chronobox has no event for a cancel. The watcher reads a cancel from the module calls of the Safe (`SafeModuleTransaction`, which a SafeL2 emits). A Safe that is not a SafeL2 has no such event, and a cancel there is reported as "Closed".
 - To tell a cancel from a request that was carried out, it reads the state one block before each cancel. If your RPC no longer has that block, a request whose wait was over at the time is reported as "carried out, or cancelled".
 - All times in a message are UTC. The watcher does not know where the reader lives.
+
+## The code
+
+```
+src/chain.ts       pinned contract constants, ABI helpers, JSON-RPC client with fallbacks
+src/describe.ts    what a request does, in the words of the app
+src/status.ts      when a request is ready or void, and why it left the queue
+src/format.ts      names of networks, times, durations, amounts
+src/watcher.ts     the watcher of one Chronobox: read, compare, alert, deliver
+src/all.ts         --all: every Chronobox on one network
+src/telegram.ts    the bot: the sealed list of chats, the commands, delivery
+src/store.ts       where the state is kept: files, memory, dry run; and the locks
+src/redis.ts       the same in Upstash Redis
+src/config.ts      the settings of the CLI
+src/cli.ts         the CLI (dist/watch.mjs)
+src/service.ts     the service on Vercel: poll, telegram, health
+src/vercel.ts      a handler of the service as a Vercel function
+src/api/           the three functions
+src/limits.ts      how long a function may run, and what depends on it
+build.mjs          .vercel/output/ and dist/watch.mjs
+test/              unit tests, and stand-ins for the chain, Telegram and Redis
+```
