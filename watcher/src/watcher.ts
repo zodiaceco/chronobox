@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import {
   BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
   TOPIC_TX_NONCE_SET, ZERO_ADDRESS, cleanSymbol, decodeAbiString, decodeAddressArray, decodeAddresses, decodeCancel,
-  decodeTransactionAdded, encAddr, encUint, hex, proxyCode, toAddr, toBig, word,
+  decodeAddress, decodeTransactionAdded, decodeUint, encAddr, encUint, hex, proxyCode, toAddr, toBig, word,
 } from './chain.ts';
 import type { Config } from './config.ts';
 import { type DescribeCtx, type TokenMeta, describeTx } from './describe.ts';
@@ -112,10 +112,10 @@ export class Watcher {
     return this.rpc.call('eth_call', [{ to, data }, tag]);
   }
   private async callUint(to: string, data: string, tag: string): Promise<bigint> {
-    return toBig(word(await this.call(to, data, tag), 0));
+    return decodeUint(await this.call(to, data, tag));
   }
   private async callAddr(to: string, data: string, tag: string): Promise<string> {
-    return toAddr(word(await this.call(to, data, tag), 0));
+    return decodeAddress(await this.call(to, data, tag));
   }
   async modules(of: string, tag: string): Promise<string[]> {
     const all: string[] = [];
@@ -173,7 +173,7 @@ export class Watcher {
   private async tokenMeta(token: string, tag: string): Promise<TokenMeta> {
     try {
       const [sym, dec] = await Promise.all([this.call(token, SEL.symbol, tag), this.call(token, SEL.decimals, tag)]);
-      const decimals = Number(toBig(word(dec, 0)));
+      const decimals = Number(decodeUint(dec));
       if (!Number.isInteger(decimals) || decimals > 36) return null;
       return { symbol: cleanSymbol(decodeAbiString(sym)), decimals };
     } catch (e) {
@@ -294,7 +294,9 @@ export class Watcher {
       this.state.problemOpen = false;
       this.state.problemSince = undefined;
     } catch (e) {
-      if (e instanceof ConfigError) { await this.persist(); throw e; }
+      // With --all, a vault that does not answer like a Chronobox is a problem of that vault only: its readers
+      // are told, as when the chain cannot be read. Anybody can deploy a contract that answers anything.
+      if (e instanceof ConfigError && !this.cfg.all) { await this.persist(); throw e; }
       ok = false;
       const s = this.state;
       s.failCount++;

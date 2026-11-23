@@ -4,12 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, MemoryStore, MAX_QUEUE, MODULE_PROXY_FACTORY, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, MemoryStore, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
 import {
-  DAY, DELAY, GUARDIAN, MockChain, OTHER_PROXY, OWNER_WALLET, ROLES, SAFE, STRANGER, TOKEN, handle, startServer, u,
+  DAY, DELAY, GUARDIAN, MockChain, encAddrArray, T0, OTHER_PROXY, OWNER_WALLET, ROLES, SAFE, STRANGER, TOKEN, handle, startServer, u,
 } from './mocks.ts';
 import { main } from '../src/cli.ts';
 // ---------------------------------------------------------------------------
@@ -735,10 +735,10 @@ test('--all: a poll out of time goes on where it stopped, so busy vaults cannot 
   for (let i = 0; i < 5; i++) await w.poll({ deadline: now + 5 });
   assert.deepEqual(read, [vaults[0], vaults[1], vaults[2], vaults[3], vaults[0]], 'each in turn, then from the start');
   // Skipped vaults are reported with how long the oldest waits.
-  assert.deepEqual(w.report, { late: 3, overdueSeconds: 0, queued: 0 });
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 0, queued: 0, failing: 0 });
   now += 600_000;
   await w.poll({ deadline: now + 5 });
-  assert.deepEqual(w.report, { late: 3, overdueSeconds: 600, queued: 0 });
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 600, queued: 0, failing: 0 });
 
   // A read that never ends (the function is killed): the next run starts with the vault after it.
   read.length = 0;
@@ -751,6 +751,102 @@ test('--all: a poll out of time goes on where it stopped, so busy vaults cannot 
   for (const [k, v] of store.data) after.data.set(k, v); // the lock ran out; the state is what was saved
   await open(after).poll({ deadline: now + 5 });
   assert.deepEqual(read, [vaults[2], vaults[3]]);
+});
+
+// A Delay from the factory (genuine code) in front of a contract that only says it is a Chronobox. Anybody can
+// deploy one: the contract answers what it likes.
+const FAKE_DELAY = '0x' + 'fd'.repeat(20);
+const FAKE_SAFE = '0x' + 'fa'.repeat(20);
+function fakeChronobox(c: MockChain) {
+  const a = c.answers;
+  c.codes[FAKE_DELAY] = proxyCode(MASTER_COPY.delay);
+  for (const sel of [SEL.owner, SEL.avatar, SEL.target]) a[`${FAKE_DELAY}:${sel}`] = encAddr(FAKE_SAFE);
+  for (const sel of [SEL.txCooldown, SEL.txExpiration, SEL.txNonce]) a[`${FAKE_DELAY}:${sel}`] = u(0);
+  // One request waits, so the vault is read on every poll.
+  a[`${FAKE_DELAY}:${SEL.queueNonce}`] = u(1);
+  a[`${FAKE_DELAY}:${SEL.getTxCreatedAt}`] = u(T0 + 1n);
+  a[`${FAKE_DELAY}:${SEL.getModulesPaginated}`] = encAddrArray([OWNER_WALLET], SENTINEL).slice(2);
+  a[`${FAKE_SAFE}:${SEL.getOwners}`] = u(32) + u(1) + encAddr(BURN_ADDRESS);
+  a[`${FAKE_SAFE}:${SEL.getModulesPaginated}`] = encAddrArray([FAKE_DELAY], SENTINEL).slice(2);
+}
+
+test('the decoders refuse answers that are not the ABI', () => {
+  const good = encAddrArray([DELAY, ROLES], SENTINEL);
+  assert.deepEqual(decodeAddressArray(good), { array: [DELAY, ROLES], next: SENTINEL });
+  // Two modules declared, one given: before, the second one was "0x", and the RPC refused it later.
+  const short = '0x' + u(64) + encAddr(SENTINEL) + u(2) + encAddr(DELAY);
+  for (const bad of [short, '0x', '0x' + u(64), '0x' + u(1) + encAddr(SENTINEL) + u(0), '0x' + u(64) + 'ff'.repeat(32) + u(0),
+    '0x' + u(64) + encAddr(SENTINEL) + u(1) + 'ff'.repeat(32), '0x' + u(2n ** 200n) + encAddr(SENTINEL)]) {
+    assert.throws(() => decodeAddressArray(bad), BadAnswerError, bad);
+  }
+  assert.throws(() => decodeAddresses('0x' + u(32) + u(3) + encAddr(BURN_ADDRESS)), BadAnswerError);
+  // A bad answer counts as a revert: the address is not the contract the watcher thought.
+  assert.ok(new BadAnswerError('x') instanceof RevertError);
+});
+
+test('--all: a Delay whose Safe answers garbage, or whose check always fails, does not block the queue', async () => {
+  const w = all();
+  await w.poll();
+  fakeChronobox(chain);
+  chain.answers[`${FAKE_SAFE}:${SEL.getModulesPaginated}`] = u(64) + encAddr(SENTINEL) + u(2) + encAddr(FAKE_DELAY);
+  const BROKEN = '0x' + 'bd'.repeat(20);
+  chain.codeErrors.add(BROKEN);
+  chain.otherCreated.push({ delay: FAKE_DELAY, block: chain.head + 1 }, { delay: BROKEN, block: chain.head + 1 });
+  chain.mine(12n);
+  chain.create();
+  assert.equal(await w.poll(), true);
+  // The real one is found in this poll; the garbage is no Chronobox; the broken one waits at the back.
+  assert.deepEqual(Object.keys(w.state.vaults), [SAFE]);
+  assert.deepEqual(hooks().map((h) => [h.json.event, h.json.vault]), [['watching', SAFE]]);
+  assert.deepEqual(w.state.queue, [BROKEN]);
+  // While the chain cannot be read, a failed check says nothing about the Delay.
+  chain.down = true;
+  await w.poll();
+  chain.down = false;
+  assert.deepEqual(w.state.tries, { [BROKEN]: 1 });
+  await w.poll();
+  await w.poll();
+  assert.deepEqual(w.state.queue, []);
+  assert.equal(w.state.tries, undefined);
+  assert.match(logs.join('\n'), new RegExp(`gave up on the new Delay ${BROKEN} after 3 tries`));
+});
+
+test('--all: a known vault that stops answering like a Chronobox is its own problem, not the network\'s', async () => {
+  let now = 1_000_000;
+  const w = new AllWatcher(allConfig(), { log: (m) => logs.push(m), clock: () => now });
+  await w.poll();
+  fakeChronobox(chain);
+  chain.otherCreated.push({ delay: FAKE_DELAY, block: chain.head + 1 });
+  chain.mine(12n);
+  chain.create();
+  await w.poll();
+  assert.deepEqual(Object.keys(w.state.vaults).sort(), [FAKE_SAFE, SAFE].sort(), 'it passed the check: it says what a Chronobox says');
+  // Now its Delay answers garbage. (A real Delay cannot; this stands for anything that makes one vault unreadable.)
+  chain.answers[`${FAKE_DELAY}:${SEL.txCooldown}`] = '';
+  sent = [];
+  assert.equal(await w.poll(), true, 'the network is fine');
+  assert.equal(w.report.failing, 1);
+  assert.equal(w.state.vaults[FAKE_SAFE].failures, 1);
+  // It waits a minute, then two, then four.
+  await w.poll();
+  assert.equal(w.report.failing, 0, 'not read again yet');
+  now += 61_000;
+  await w.poll();
+  assert.equal(w.state.vaults[FAKE_SAFE].failures, 2);
+  now += 121_000;
+  // Meanwhile the real one gets its alerts.
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  assert.equal(await w.poll(), true);
+  assert.deepEqual(hooks().map((h) => [h.json.event, h.json.vault]).sort(), [['queued', SAFE], ['watcher_problem', FAKE_SAFE]].sort(),
+    'after 3 failed reads, whoever follows the broken one is told that alerts can be late');
+  assert.equal(w.state.vaults[FAKE_SAFE].retryAt, now + 240_000);
+  // It answers again: back to normal.
+  chain.answers[`${FAKE_DELAY}:${SEL.txCooldown}`] = u(0);
+  now += 241_000;
+  await w.poll();
+  assert.equal(w.state.vaults[FAKE_SAFE].failures, undefined);
+  assert.match(hooks().at(-1)!.json.title, /Alerts work again/);
 });
 
 // ---------------------------------------------------------------------------

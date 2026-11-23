@@ -38,6 +38,10 @@ export class MockChain {
   otherCreated: { delay: string; block: number }[] = [];
   /** The addresses of each eth_getLogs request. */
   logQueries: string[][] = [];
+  /** Fixed answers of eth_call, by "<to>:<selector>": hex without 0x, or "revert". For contracts that answer anything. */
+  answers: Record<string, string> = {};
+  /** eth_getCode fails for these, as an RPC that cannot answer. */
+  codeErrors = new Set<string>();
   create() { this.mine(12n); this.created = this.head; this.mine(12n); }
   codes: Record<string, string> = {
     [DELAY]: proxyCode(MASTER_COPY.delay),
@@ -82,7 +86,7 @@ export class MockChain {
 }
 
 export const u = (n: number | bigint) => encUint(n);
-function encAddrArray(arr: string[], next: string) {
+export function encAddrArray(arr: string[], next: string) {
   return '0x' + u(64) + encAddr(next) + u(arr.length) + arr.map(encAddr).join('');
 }
 function encString(s: string) {
@@ -166,6 +170,8 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       const ok = (r: string) => ({ result: r.startsWith('0x') ? r : '0x' + r });
       const block = params[1] && params[1] !== 'latest' ? Number(BigInt(params[1])) : chain.head;
       if (block < chain.head && chain.noArchive) return { error: { code: -32000, message: 'missing trie node' } };
+      const fixed = chain.answers[`${to}:${sel}`];
+      if (fixed !== undefined) return fixed === 'revert' ? { error: { code: 3, message: 'execution reverted' } } : ok(fixed);
       if (to === DELAY) {
         if (sel === SEL.txCooldown) return ok(u(chain.cooldown));
         if (sel === SEL.txExpiration) return ok(u(chain.expiration));
@@ -183,7 +189,13 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       if (to === TOKEN && sel === SEL.decimals) return ok(u(6));
       return { error: { code: 3, message: 'execution reverted' } };
     }
-    case 'eth_getCode': return { result: chain.codes[params[0].toLowerCase()] ?? '0x' };
+    case 'eth_getCode': {
+      const addr = String(params[0]).toLowerCase();
+      // As a real RPC: an address that is not 20 bytes is refused, and that is no revert.
+      if (!/^0x[0-9a-f]{40}$/.test(addr)) return { error: { code: -32602, message: 'invalid argument 0: hex string has length 0, want 40 for common.Address' } };
+      if (chain.codeErrors.has(addr)) return { error: { code: -32000, message: 'upstream timeout' } };
+      return { result: chain.codes[addr] ?? '0x' };
+    }
   }
   return { error: { code: -32601, message: 'method not found' } };
 }

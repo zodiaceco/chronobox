@@ -95,25 +95,57 @@ export const wordAtByte = (data: string, byte: number) => strip(data).slice(byte
 export const toBig = (w: string) => (w ? BigInt('0x' + w) : 0n);
 export const toAddr = (w: string) => '0x' + w.slice(-40).toLowerCase();
 
+/** The 32-byte word at `byte` of an answer, or BadAnswerError when the answer is too short. */
+function wordAt(r: string, byte: number, what: string): string {
+  const w = r.slice(byte * 2, byte * 2 + 64);
+  if (w.length !== 64) throw new BadAnswerError(`${what}: the answer is too short`);
+  return w;
+}
+
+/** An address word: 12 zero bytes, then 20 bytes. Anything else is not an address. */
+export function addressWord(w: string, what = 'address'): string {
+  if (!/^0{24}[0-9a-fA-F]{40}$/.test(w)) throw new BadAnswerError(`${what}: not an address`);
+  return '0x' + w.slice(24).toLowerCase();
+}
+
+/** An offset or a length in an answer: small, and inside it. */
+function sizeAt(r: string, byte: number, what: string, max: number): number {
+  const v = toBig(wordAt(r, byte, what));
+  if (v > BigInt(max)) throw new BadAnswerError(`${what}: ${v} is out of range`);
+  return Number(v);
+}
+
+/** The address[] at byte `off` of an answer, with at most `max` entries. */
+function addressList(r: string, off: number, max: number, what: string): string[] {
+  if (off % 32 !== 0) throw new BadAnswerError(`${what}: the offset is not a whole word`);
+  const len = sizeAt(r, off, what, max);
+  const out: string[] = [];
+  for (let i = 0; i < len; i++) out.push(addressWord(wordAt(r, off + 32 + i * 32, what), what));
+  return out;
+}
+
+/** The answer of getModulesPaginated: (address[] array, address next). The watcher asks for 100 at most. */
 export function decodeAddressArray(ret: string): { array: string[]; next: string } {
-  const off = Number(toBig(word(ret, 0)));
-  const next = toAddr(word(ret, 1));
-  const len = Number(toBig(wordAtByte(ret, off)));
-  const array: string[] = [];
-  // The watcher asks for 100 at most. A longer list is not the answer of a Safe.
-  if (!(len <= 100)) return { array, next: ZERO_ADDRESS };
-  for (let i = 0; i < len; i++) array.push(toAddr(wordAtByte(ret, off + 32 + i * 32)));
-  return { array, next };
+  const r = strip(ret);
+  const off = sizeAt(r, 0, 'modules', r.length / 2);
+  const next = addressWord(wordAt(r, 32, 'modules'), 'modules');
+  return { array: addressList(r, off, 100, 'modules'), next };
 }
 
 /** A returned address[] (for example Safe.getOwners). */
 export function decodeAddresses(ret: string): string[] {
-  const off = Number(toBig(word(ret, 0)));
-  const len = Number(toBig(wordAtByte(ret, off)));
-  const out: string[] = [];
-  if (!(len <= 1000)) return out;
-  for (let i = 0; i < len; i++) out.push(toAddr(wordAtByte(ret, off + 32 + i * 32)));
-  return out;
+  const r = strip(ret);
+  return addressList(r, sizeAt(r, 0, 'addresses', r.length / 2), 1000, 'addresses');
+}
+
+/** The first word of an answer as a number. */
+export function decodeUint(ret: string): bigint {
+  return toBig(wordAt(strip(ret), 0, 'number'));
+}
+
+/** The first word of an answer as an address. */
+export function decodeAddress(ret: string): string {
+  return addressWord(wordAt(strip(ret), 0, 'address'));
 }
 
 /** The new nonce if this SafeModuleTransaction log is the call setTxNonce on the Delay, else null. */
@@ -145,9 +177,11 @@ export function decodeAbiString(ret: string): string {
     // bytes32 symbol (older tokens)
     return utf8(r).replace(/\0+$/, '');
   }
-  const off = Number(toBig(r.slice(0, 64)));
-  const len = Number(toBig(wordAtByte(r, off)));
-  return utf8(r.slice((off + 32) * 2, (off + 32 + len) * 2));
+  const off = sizeAt(r, 0, 'text', r.length / 2);
+  const len = sizeAt(r, off, 'text', r.length / 2);
+  const body = r.slice((off + 32) * 2, (off + 32 + len) * 2);
+  if (body.length !== len * 2) throw new BadAnswerError('text: the answer is too short');
+  return utf8(body);
 }
 
 function utf8(h: string): string {
@@ -165,6 +199,12 @@ export function cleanSymbol(s: string): string {
 
 /** A view call reverted: the address is not the contract the watcher thought. */
 export class RevertError extends Error {}
+
+/**
+ * A contract answered something that is not the ABI it should answer. It counts as a revert: the address is not the
+ * contract the watcher thought. Anybody can deploy a contract that answers anything.
+ */
+export class BadAnswerError extends RevertError {}
 
 export class Rpc {
   urls: string[];

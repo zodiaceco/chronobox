@@ -27,6 +27,9 @@ type Known = {
   lookedAt?: number;
   /** Since when this vault is due and was skipped because the poll ran out of time (ms). */
   waitingSince?: number;
+  /** Reads in a row that failed while the chain could be read, and when to try again (ms). */
+  failures?: number;
+  retryAt?: number;
 };
 
 export type AllState = {
@@ -36,12 +39,19 @@ export type AllState = {
   vaults: Record<string, Known>;
   /** Delays from the factory that were not checked yet. Saved with lastBlock, so no search is done twice. */
   queue?: string[];
+  /** Checks of a Delay in the queue that failed while the chain could be read. */
+  tries?: Record<string, number>;
 };
 
 /** The most Delays that wait to be checked. More is a flood; the rest is dropped (see `scan`). */
 export const MAX_QUEUE = 1000;
 /** Delays checked at the same time. */
 const CHECK_PARALLEL = 8;
+/** A Delay whose check fails this often, while the chain can be read, is dropped. */
+const CHECK_TRIES = 3;
+/** A vault whose read fails while the chain can be read waits 1, 2, 4 ... minutes before the next read, an hour at most. */
+const RETRY_FIRST_MS = 60_000;
+const RETRY_MAX_MS = 3_600_000;
 /** Delays per eth_getLogs request for the requests of known Chronoboxes. */
 const ADDRESSES_PER_QUERY = 100;
 
@@ -63,6 +73,8 @@ export type PollReport = {
   overdueSeconds: number;
   /** Delays from the factory that still wait to be checked. */
   queued: number;
+  /** Vaults whose read failed in this poll while the chain could be read. They wait longer each time. */
+  failing: number;
 };
 
 export type PollOptions = {
@@ -78,7 +90,7 @@ export class AllWatcher {
   state: AllState = { version: 1, vaults: {} };
   log: Log;
   /** Set by each poll. */
-  report: PollReport = { late: 0, overdueSeconds: 0, queued: 0 };
+  report: PollReport = { late: 0, overdueSeconds: 0, queued: 0, failing: 0 };
   private opts: AllOptions;
   private probe: Watcher;
   private store: Store;
@@ -264,34 +276,46 @@ export class AllWatcher {
   }
 
   /**
-   * Checks the Delays in the queue, a few at a time, until the queue is empty or `deadline` is past. One batch
-   * always runs, so the queue goes down on every poll. Saved after each batch. Returns the number found.
+   * Checks the Delays in the queue, a few at a time, until each one that was there has had its turn or `deadline` is
+   * past. One batch always runs, so the queue goes down on every poll. Saved after each batch. Call it only when the
+   * chain could be read in this poll: then a check that fails is a problem of that Delay (anybody can deploy a Delay
+   * whose Safe answers anything). It goes to the back of the queue, and after CHECK_TRIES it is dropped.
    */
   private async check(deadline: number | undefined): Promise<number> {
     const s = this.state;
     let found = 0;
+    let turns = (s.queue ?? []).length;
     let first = true;
-    while ((s.queue ?? []).length > 0) {
+    while (turns > 0) {
       if (!first && deadline !== undefined && this.clock() >= deadline) break;
       first = false;
-      const batch = s.queue!.slice(0, CHECK_PARALLEL);
+      const batch = s.queue!.slice(0, Math.min(CHECK_PARALLEL, turns));
+      turns -= batch.length;
       const results = await Promise.allSettled(batch.map((delay) => this.probe.chronoboxOf(delay, 'latest')));
-      const failed = results.findIndex((r) => r.status === 'rejected');
-      // The chain cannot be read now. What was not checked stays in the queue.
-      const done = failed < 0 ? batch.length : failed;
-      for (let i = 0; i < done; i++) {
-        const vault = (results[i] as PromiseFulfilledResult<string | null>).value;
-        if (!vault || s.vaults[vault]) continue;
-        s.vaults[vault] = { delay: batch[i], active: true };
+      const again: string[] = [];
+      results.forEach((r, i) => {
+        const delay = batch[i];
+        if (r.status === 'rejected') {
+          const tries = ((s.tries ??= {})[delay] ?? 0) + 1;
+          if (tries >= CHECK_TRIES) {
+            delete s.tries[delay];
+            this.log(`gave up on the new Delay ${delay} after ${tries} tries: ${errText(r.reason)}`);
+          } else {
+            s.tries[delay] = tries;
+            again.push(delay);
+          }
+          return;
+        }
+        if (s.tries) delete s.tries[delay];
+        const vault = r.value;
+        if (!vault || s.vaults[vault]) return;
+        s.vaults[vault] = { delay, active: true };
         found++;
-        this.log(`new Chronobox ${vault} (Delay ${batch[i]})`);
-      }
-      s.queue = s.queue!.slice(done);
+        this.log(`new Chronobox ${vault} (Delay ${delay})`);
+      });
+      s.queue = [...s.queue!.slice(batch.length), ...again];
+      if (s.tries && Object.keys(s.tries).length === 0) delete s.tries;
       await this.save();
-      if (failed >= 0) {
-        this.log(`could not check a new Delay: ${errText((results[failed] as PromiseRejectedResult).reason)}`);
-        break;
-      }
     }
     return found;
   }
@@ -323,19 +347,22 @@ export class AllWatcher {
     // New Delays first, so that a new Chronobox is read in this poll. They get a quarter of the time at most (one
     // batch always), so that a flood of Delays cannot take the time of the Chronoboxes that are known.
     const started = this.clock();
-    await this.check(opts.deadline === undefined ? undefined : started + Math.max(0, opts.deadline - started) / 4);
+    // Only when the chain could be read: else a failed check says nothing about the Delay.
+    if (ok) await this.check(opts.deadline === undefined ? undefined : started + Math.max(0, opts.deadline - started) / 4);
     await this.opts.telegram?.ready();
     const beat = this.cfg.heartbeatHours * 3600;
     const chainId = s.chainId;
     const due = Object.entries(s.vaults).filter(([vault, known]) => {
       // An "all quiet" message makes sense only where somebody can hear it.
       const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(chainId, vault).length ?? 0) > 0;
+      if (known.retryAt !== undefined && known.retryAt > this.clock()) return false;
       return known.active || (heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat);
     });
     // The vaults that waited longest first. A poll that runs out of time goes on there the next time, so vaults
     // that are always busy cannot keep the others from being read.
     due.sort(([, a], [, b]) => (a.lookedAt ?? 0) - (b.lookedAt ?? 0));
     let late = 0;
+    let failing = 0;
     let oldest = this.clock();
     for (const [vault, known] of due) {
       if (opts.deadline !== undefined && this.clock() > opts.deadline) {
@@ -344,15 +371,27 @@ export class AllWatcher {
         oldest = Math.min(oldest, known.waitingSince);
         continue;
       }
+      // A vault that cannot be read is a problem of that vault, not of the network: anybody can deploy a Safe that
+      // answers anything. Its readers are told (Watcher), and it waits longer each time, while the chain can be read.
+      let read = false;
       try {
-        if (!(await this.look(vault, known))) ok = false;
+        read = await this.look(vault, known);
       } catch (e) {
-        if (e instanceof ConfigError) throw e;
-        ok = false;
         this.log(`${vault}: ${errText(e)}`);
       }
+      if (read) {
+        delete known.failures;
+        delete known.retryAt;
+      } else {
+        failing++;
+        if (ok) {
+          known.failures = (known.failures ?? 0) + 1;
+          known.retryAt = this.clock() + Math.min(RETRY_FIRST_MS * 2 ** (known.failures - 1), RETRY_MAX_MS);
+        }
+      }
     }
-    this.report = { late, overdueSeconds: late ? Math.round((this.clock() - oldest) / 1000) : 0, queued: 0 };
+    this.report = { late, overdueSeconds: late ? Math.round((this.clock() - oldest) / 1000) : 0, queued: 0, failing };
+    if (failing) this.log(`${failing} Chronobox${failing === 1 ? '' : 'es'} could not be read`);
     if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll (the oldest waits ${this.report.overdueSeconds}s)`);
     this.report.queued = (s.queue ?? []).length;
     await this.save();

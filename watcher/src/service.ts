@@ -174,6 +174,8 @@ export type NetworkResult = {
   overdueSeconds?: number;
   /** New Delays that still wait to be checked. */
   queued?: number;
+  /** Vaults that could not be read while the chain could. A problem of those vaults; their readers are told. */
+  failing?: number;
 };
 
 /** Vercel Cron, every minute. */
@@ -194,8 +196,8 @@ export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Rep
   const results: NetworkResult[] = await Promise.all(watchers(s).map(async ({ chainId, w }) => {
     try {
       const ok = await w.poll({ deadline });
-      const { late, overdueSeconds, queued } = w.report;
-      return { chainId, ok, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}) };
+      const { late, overdueSeconds, queued, failing } = w.report;
+      return { chainId, ok, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}), ...(failing ? { failing } : {}) };
     } catch (e) {
       // The poll before this one still runs. It does this work.
       if (e instanceof BusyError) return { chainId, ok: true, skipped: true as const };
