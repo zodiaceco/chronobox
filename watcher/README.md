@@ -14,12 +14,14 @@ It has no runtime dependencies and needs no keys of a wallet. It needs Node.js 2
 
 ```sh
 npm install
-npm test          # unit tests, with stand-ins for the chain, Telegram and Redis
+npm test          # unit tests, with stand-ins for the chain, Telegram and Redis, and the property test below
 npm run check     # TypeScript
 npm run build     # .vercel/output/ and dist/watch.mjs
 ```
 
 `npm run test:fork:alerts` in the folder above runs the alert service against the real contracts on a fork.
+
+The property test plays 150 random runs on the stand-in chain: requests, time, executions, skipExpired, cancels, cancels that fail, timing changes, several of them in one block, polls at any point. The chain keeps what really happened to each request, and every message must fit it: a request that was carried out is never "Cancelled" or "Removed", and "Done" is said only of one that was. A failure prints its seed and steps. More runs, or others: `FUZZ_RUNS=5000 FUZZ_SEED=1 npm test`.
 
 ## What it reports
 
@@ -272,7 +274,7 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 - It names a new wallet, a new guardian and the end of a guardian by their shape, and does not prove them. See "What it reports".
 - With only `DELAY` set (no `CHRONOBOX`) it does not look for the cancel contract and does not report who can cancel.
 - It reports who can cancel, and who can change that. It does not read what the cancel contract allows them to do. The app checks that, from the whole history of the contract.
-- The Delay of a Chronobox has no event for a cancel or for a request that was carried out. The watcher reads both from the Safe of the Chronobox, a SafeL2: it logs each call of a module (`SafeModuleTransaction`) and its result (`ExecutionFromModuleSuccess` or `…Failure`), in the order of the chain. The watcher replays them from the last poll, so a request that was carried out and a cancel in the same block are told apart, and a cancel that failed counts for nothing. A logged call that is exactly a request the watcher knows always means "carried out": a computed time never outweighs it. A request it could not read (more than 50 waiting at the first start) proves nothing and matches nothing: it counts as removed only if its time had provably run out, and otherwise the replay is unsure. A request counts as removed only if its time had run out by the delay and the time to finish in force then; the replay follows each change of them in order, and they must end as the ones read now. It needs no old state from the RPC.
+- The Delay of a Chronobox has no event for a cancel or for a request that was carried out. The watcher reads both from the Safe of the Chronobox, a SafeL2: it logs each call of a module (`SafeModuleTransaction`) and its result (`ExecutionFromModuleSuccess` or `…Failure`), in the order of the chain. The watcher replays them from the last poll, so a request that was carried out and a cancel in the same block are told apart, and a cancel that failed counts for nothing. The request that was carried out is the first one from the head that is exactly the call and still valid then; each one before it must have run out of time (two requests can be alike). A request it could not read (more than 50 waiting at the first start) proves nothing and matches nothing: it counts as removed only if its time had provably run out, and otherwise the replay is unsure. A request whose time had run out when a cancel covered it is "Removed": it was void either way. A request counts as removed only if its time had run out by the delay and the time to finish in force then; the replay follows each change of them in order, and they must end as the ones read now. It needs no old state from the RPC.
 - What the replay cannot explain (a call that does not match the request, a Safe that is not a SafeL2) is reported as "carried out, or cancelled", never as "No money moved". For money, that message is as loud as money that goes to another address.
 - All times in a message are UTC. The watcher does not know where the reader lives.
 

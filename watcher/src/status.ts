@@ -52,11 +52,10 @@ export type Timing = { cooldown: bigint; expiration: bigint };
  * a module before it runs and its result after it, in the order of the chain. So the watcher replays them from the
  * txNonce and the timing of the last poll:
  *
- * - The Delay calls the Safe: a request was carried out. It is the one at the head of the queue, unless the call
- *   is not that request: then it is a later one, and every request before it must have run out of time and been
- *   removed (skipExpired logs nothing). What the logs prove comes first; a computed time never outweighs it.
+ * - The Delay calls the Safe: a request was carried out. It is the first one from the head that is exactly that call
+ *   and still valid then; every request before it ran out of time and was removed (skipExpired logs nothing).
  * - setTxNonce(n) on the Delay that worked (from the cancel contract, from the Delay as a request of its own, or in
- *   a batch): every request before n was cancelled.
+ *   a batch): every request before n was cancelled, or removed if its time had run out already.
  * - setTxCooldown or setTxExpiration on the Delay that worked: the timing changes from there on.
  * - A call that failed changed nothing.
  *
@@ -99,7 +98,9 @@ export function replayQueue(args: {
     const n = argOf(c, delay, SET_TX_NONCE);
     if (n !== null) {
       if (n < BigInt(cur) || n > BigInt(args.to)) return false;
-      for (; cur < Number(n); cur++) reasons.set(cur, { how: 'cancelled', block, ts });
+      // A request whose time had run out was void anyway: removed by skipExpired before (no log), or by this cancel.
+      // Either way "removed" is true, and the logs cannot tell which.
+      for (; cur < Number(n); cur++) reasons.set(cur, expiredAt(cur, ts) ? { how: 'expired' } : { how: 'cancelled', block, ts });
     }
     const cooldown = argOf(c, delay, SET_TX_COOLDOWN);
     if (cooldown !== null) timing = { ...timing, cooldown };
@@ -124,12 +125,19 @@ export function replayQueue(args: {
     if (!call) { sure = false; break; }
     const ts = args.timeOf(e.block);
     if (e.module === delay) {
-      // Which request did the Delay carry out? From the head on: a request that is exactly the call was carried out
-      // (the log proves it, whatever the time says). Before it, each one must have run out of time and been removed.
-      // The first one that is neither (it was not read, or it is something else) leaves the replay unsure.
+      // Which request did the Delay carry out? The Delay carries out only the head, and only while its time has not
+      // run out; skipExpired removed the void ones before it (no log). So: the first request from the head on that is
+      // exactly the call and still valid then. Each one before it must be void then, also one that is the same call
+      // (two requests can be alike). The first that is neither void nor the call (a request the watcher could not
+      // read, or something else) leaves the replay unsure. The timing is the one in force then: the replay follows
+      // each change of it, and it must end as the one read now.
       let j = cur;
-      while (j < args.to && !same(items.get(j), call) && expiredAt(j, ts)) j++;
-      if (j >= args.to || !same(items.get(j), call)) { sure = false; break; }
+      for (; j < args.to; j++) {
+        const gone = expiredAt(j, ts);
+        if (!gone && same(items.get(j), call)) break;
+        if (!gone) { j = args.to; break; }
+      }
+      if (j >= args.to) { sure = false; break; }
       for (; cur < j; cur++) reasons.set(cur, { how: 'expired' });
       reasons.set(j, { how: 'executed', block: e.block });
       cur = j + 1;

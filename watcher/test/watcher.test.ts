@@ -1337,3 +1337,124 @@ test('the CLI: --dry-run writes nothing, --once writes STATE_FILE, and each netw
     console.log = log;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Property: whatever happens on the chain, the watcher does not contradict it.
+//
+// Random runs on the stand-in chain, with only what the real Delay allows: requests (withdrawals, a new delay, a new
+// time to finish, a cancel of its own), time, executions, skipExpired, cancels, cancels that fail, several of them in
+// one block, polls at any point, and sometimes more requests at the first start than the watcher reads. The chain
+// keeps the truth of each request; every message must fit it. FUZZ_RUNS and FUZZ_SEED change the runs.
+
+/** mulberry32: small, and the same numbers for the same seed everywhere. */
+function random(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('property: a request that was carried out is never "cancelled" or "removed", and each message fits what happened', async () => {
+  const runs = Number(process.env.FUZZ_RUNS ?? 150);
+  const first = Number(process.env.FUZZ_SEED ?? 20261123);
+  let messages = 0;
+  let unsure = 0;
+  let unsureRead = 0; // in runs where the watcher read every request
+  for (let r = 0; r < runs; r++) {
+    const seed = first + r;
+    const rand = random(seed);
+    const pick = <T>(xs: T[]): T => xs[Math.floor(rand() * xs.length)];
+    chain = new MockChain();
+    chain.withCancel();
+    chain.cooldown = pick([3600n, DAY, 2n * DAY]);
+    chain.expiration = pick([0n, DAY, 7n * DAY]);
+    sent = [];
+    const steps: string[] = [`cooldown ${chain.cooldown}, expiration ${chain.expiration}`];
+    const w = new Watcher(config({ stateFile: path.join(dir, `property-${r}.json`) }), { log: () => undefined });
+    const unread = rand() < 0.2;
+    if (unread) {
+      const n = 51 + Math.floor(rand() * 4);
+      for (let i = 0; i < n; i++) chain.enqueue(OWNER_WALLET, BigInt(i + 1));
+      steps.push(`${n} requests before the first start`);
+    }
+    await w.poll();
+    let polledAt = chain.head;
+    for (let step = 0; step < 40; step++) {
+      const x = rand();
+      const head = chain.txNonce;
+      const size = chain.queue.length;
+      const status = (n: number) => itemStatus(chain.queue[n].createdAt, chain.cooldown, chain.expiration, chain.now()).status;
+      // Logs may go into the newest block only while the watcher has not read it.
+      const same = chain.head !== polledAt && rand() < 0.5;
+      if (x < 0.22) {
+        const kind = pick(['mine', 'mine', 'stranger', 'delay', 'expiration', 'nonce']);
+        if (kind === 'mine') chain.enqueue(OWNER_WALLET, BigInt(1 + Math.floor(rand() * 1000)));
+        if (kind === 'stranger') chain.enqueue(STRANGER, BigInt(1 + Math.floor(rand() * 1000)));
+        if (kind === 'delay') chain.enqueue(DELAY, 0n, '0xebb2b4a2' + u(pick([3600n, DAY, 2n * DAY, 7n * DAY])));
+        if (kind === 'expiration') chain.enqueue(DELAY, 0n, '0x9b56d5be' + u(pick([0n, DAY, 7n * DAY, 30n * DAY])));
+        if (kind === 'nonce') chain.enqueue(DELAY, 0n, '0x46ba2307' + u(size + 1 + Math.floor(rand() * 3)));
+        steps.push(`queue #${size} ${kind}`);
+      } else if (x < 0.42) {
+        const t = pick([60n, 3600n, DAY, 2n * DAY, 3n * DAY, 8n * DAY]);
+        chain.mine(t);
+        steps.push(`wait ${t}s`);
+      } else if (x < 0.57) {
+        if (head >= size || status(head) !== 'ready') continue;
+        // A cancel of its own must be valid when it runs, or the Delay refuses the whole execution.
+        const d = chain.queue[head].data.toLowerCase();
+        if (chain.queue[head].to === DELAY && d.startsWith('0x46ba2307')) {
+          const n = Number(BigInt('0x' + d.slice(10)));
+          if (n <= head + 1 || n > size) continue;
+        }
+        chain.execute(same);
+        steps.push(`execute #${head}${same ? ' (same block)' : ''}`);
+      } else if (x < 0.67) {
+        // skipExpired removes every request in a row whose time ran out (never with no time limit).
+        let n = 0;
+        while (chain.expiration !== 0n && head + n < size && status(head + n) === 'expired') n++;
+        if (n === 0) continue;
+        chain.skipExpired(n);
+        steps.push(`skipExpired #${head}..#${head + n - 1}`);
+      } else if (x < 0.77) {
+        if (head >= size) continue;
+        const n = head + 1 + Math.floor(rand() * (size - head));
+        chain.cancel(n, same);
+        steps.push(`cancel to #${n}${same ? ' (same block)' : ''}`);
+      } else if (x < 0.8) {
+        chain.failedCancel(head);
+        steps.push('a cancel that fails');
+      } else {
+        await w.poll();
+        polledAt = chain.head;
+        steps.push('poll');
+      }
+    }
+    chain.mine(60n);
+    await w.poll();
+
+    const fail = (why: string) => {
+      const said = hooks().filter((h) => h.json.nonce !== undefined).map((h) => `#${h.json.nonce} ${h.json.event}: ${h.json.title}`);
+      throw new Error(`FUZZ_SEED=${seed} FUZZ_RUNS=1: ${why}\nsteps:\n  ${steps.join('\n  ')}\nsaid:\n  ${said.join('\n  ')}`);
+    };
+    const closing = hooks().filter((h) => h.json.event === 'closed' || h.json.event === 'cancelled');
+    for (let n = 0; n < chain.txNonce; n++) {
+      const told = closing.filter((h) => h.json.nonce === n);
+      if (told.length !== 1) fail(`#${n} left the queue and got ${told.length} closing messages`);
+      const truth = chain.outcomes[n];
+      const { title, message } = told[0].json;
+      messages++;
+      if (/^Closed/.test(title)) { unsure++; if (!unread) unsureRead++; continue; }
+      if (truth === 'executed' && (/No money moved|Nothing changed/.test(message) || !/^Done/.test(title))) fail(`#${n} was carried out, and the watcher said "${title}"`);
+      if (/^Done/.test(title) && truth !== 'executed') fail(`#${n} was ${truth}, and the watcher said "${title}"`);
+      if (/^Cancelled/.test(title) && truth !== 'cancelled') fail(`#${n} was ${truth}, and the watcher said "${title}"`);
+      // "Removed" is also true of a request that was cancelled when its time had run out already: it was void.
+      if (/^Removed/.test(title) && truth === 'executed') fail(`#${n} was ${truth}, and the watcher said "${title}"`);
+    }
+    if (closing.length !== chain.txNonce) fail(`${closing.length} closing messages for ${chain.txNonce} requests that left`);
+  }
+  console.log(`property: ${runs} runs, ${messages} requests left the queue, ${unsure} of them "carried out or cancelled" (${unsureRead} in runs where every request was read)`);
+});
