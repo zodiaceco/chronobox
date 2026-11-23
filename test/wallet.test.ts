@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
 import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
-import { BatchUnknown, type Provider, RpcTimeout, StoppedAsking, WalletMoved, answerOrStop, assertWallet, errorText, isRejection, isTemporary, rpcOf, sendBatch, switchChain } from "../src/lib/wallet.ts";
+import { BatchUnknown, type Provider, RpcTimeout, StoppedAsking, WalletMoved, answerOrStop, assertWallet, errorText, isRejection, isTemporary, rpcOf, sendBatch, switchChain, waitForBatch } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const B = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -217,6 +217,17 @@ test("a batch is not sent twice, and an unknown outcome is not called a failure"
   await sendBatch(strict, A as any, 1, calls);
   assert.equal("data" in sent.calls[0], false);
   assert.equal(sent.atomicRequired, true);
+});
+
+test("a batch the wallet still holds is waited for, not sent again", async () => {
+  const wallet = provider({
+    wallet_sendCalls: () => ({ id: "0xfirst" }),
+    wallet_getCallsStatus: ([id]) => (id === "0xfirst" ? { status: 200, receipts: [{ blockNumber: "0x2", status: "0x1" }] } : null),
+  });
+  assert.deepEqual(await waitForBatch(wallet, "0xfirst"), { blockNumber: 2n });
+  assert.equal(wallet.calls.filter((m) => m === "wallet_sendCalls").length, 0);
+  // "Stop waiting" leaves the batch with the wallet.
+  await assert.rejects(waitForBatch(provider({ wallet_getCallsStatus: () => ({ status: 100 }) }), "0xfirst", undefined, () => true), BatchUnknown);
 });
 
 test("errors reach the person in plain words", () => {

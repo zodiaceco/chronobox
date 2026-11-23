@@ -720,9 +720,23 @@ async function modulesOf(rpc: Rpc, address: Address): Promise<Address[] | null> 
   return sameAddress(next as Address, SENTINEL) ? (list as Address[]) : null;
 }
 
-async function safeSlot(rpc: Rpc, safe: Address, slot: Hex | bigint): Promise<Hex> {
-  const [bytes] = await read(rpc, safe, "getStorageAt(uint256,uint256)", [typeof slot === "bigint" ? slot : toBigInt(slot), 1n], ["bytes"]);
-  return bytes as Hex;
+/**
+ * One storage slot, read from the chain state itself. Never through the contract: the Safe's
+ * getStorageAt runs in its singleton, and a fake singleton can answer anything.
+ */
+async function storageAt(rpc: Rpc, address: Address, slot: Hex | bigint): Promise<Hex> {
+  const value = (await rpc("eth_getStorageAt", [address, toQuantity(typeof slot === "bigint" ? slot : toBigInt(slot)), "latest"])) as Hex;
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]*$/.test(value)) throw new Error(`Bad answer to eth_getStorageAt for ${address}`);
+  return value;
+}
+
+/**
+ * The singleton of a SafeProxy: the code that every call to the Safe runs. It sits in slot 0 of
+ * the proxy. The proxy code alone proves nothing, any singleton can stand behind it. Until this
+ * is the official one, no answer of the Safe's own functions can be trusted.
+ */
+async function singletonOf(rpc: Rpc, safe: Address): Promise<Address> {
+  return checksum(strip(await storageAt(rpc, safe, 0n)).padStart(64, "0").slice(-40));
 }
 
 /**
@@ -735,18 +749,20 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
   const predicted = sameAddress(council, predictCouncil(safe, wallet, guardian));
   if (size(code) === 0) return predicted ? false : null;
   if (keccak(code) !== SAFE_PROXY_CODE_HASH) return null;
-  const [singleton, owners, threshold, modules, guard, handler] = await Promise.all([
-    safeSlot(rpc, council, 0n),
+  // First the code behind the proxy. Before that, its answers about owners mean nothing.
+  if (!sameAddress(await singletonOf(rpc, council), CONTRACTS.safeSingleton)) {
+    return predicted ? `The Safe ${council} does not run the official Safe code` : null;
+  }
+  const [owners, threshold, modules, guard, handler] = await Promise.all([
     read(rpc, council, "getOwners()", [], ["address[]"]).then((r) => r[0] as Address[]),
     read(rpc, council, "getThreshold()", [], ["uint256"]).then((r) => r[0] as bigint),
     modulesOf(rpc, council),
-    safeSlot(rpc, council, GUARD_SLOT),
-    safeSlot(rpc, council, FALLBACK_SLOT),
+    storageAt(rpc, council, GUARD_SLOT),
+    storageAt(rpc, council, FALLBACK_SLOT),
   ]);
   const both = owners.length === 2 && owners.some((o) => sameAddress(o, wallet)) && owners.some((o) => sameAddress(o, guardian));
   // A Safe with other owners is not the shared Safe of this pair. The other order of the pair may fit.
   if (!both) return predicted ? `The owners of the Safe ${council} are not the wallet and the guardian` : null;
-  if (!sameAddress(("0x" + strip(singleton).slice(-40)) as Address, CONTRACTS.safeSingleton)) return `The Safe ${council} does not run the official Safe code`;
   if (threshold !== 2n) return `The Safe ${council} does not need both owners`;
   if (modules === null || modules.length > 0 || toBigInt(guard) !== 0n || toBigInt(handler) !== 0n) return `Something extra is attached to the Safe ${council}`;
   return true;
@@ -802,22 +818,26 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     return result;
   }
 
-  const [singleton, owners, threshold, modules, guard, handler] = await Promise.all([
-    safeSlot(rpc, safe, 0n),
+  // The proxy code is the same for every Safe, whatever singleton stands behind it. Every call to
+  // the Safe runs that singleton, so it is read from the chain state and checked before the Safe is
+  // asked anything. A fake singleton could answer every question below the way a Chronobox would.
+  const singleton = await singletonOf(rpc, safe);
+  const singletonOk = add(
+    "singleton",
+    sameAddress(singleton, CONTRACTS.safeSingleton),
+    "It runs the official Safe code",
+    sameAddress(singleton, CONTRACTS.safeSingleton) ? CONTRACTS.safeSingleton : `Runs ${singleton}, not ${CONTRACTS.safeSingleton}`,
+  );
+  if (!singletonOk) return result;
+
+  const [owners, threshold, modules, guard, handler] = await Promise.all([
     read(rpc, safe, "getOwners()", [], ["address[]"]).then((r) => r[0] as Address[]),
     read(rpc, safe, "getThreshold()", [], ["uint256"]).then((r) => r[0] as bigint),
     modulesOf(rpc, safe),
-    safeSlot(rpc, safe, GUARD_SLOT),
-    safeSlot(rpc, safe, FALLBACK_SLOT),
+    storageAt(rpc, safe, GUARD_SLOT),
+    storageAt(rpc, safe, FALLBACK_SLOT),
   ]);
   result.owners = owners;
-
-  const singletonOk = add(
-    "singleton",
-    sameAddress(("0x" + strip(singleton).slice(-40)) as Address, CONTRACTS.safeSingleton),
-    "It runs the official Safe code",
-    CONTRACTS.safeSingleton,
-  );
   const cleanOk = add(
     "extras",
     toBigInt(guard) === 0n && toBigInt(handler) === 0n,
@@ -826,7 +846,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   );
 
   // Step 1 done, step 2 not done: a plain Safe that one wallet still owns.
-  if (singletonOk && cleanOk && modules !== null && modules.length === 0 && owners.length === 1 && threshold === 1n && !sameAddress(owners[0], CONTRACTS.burn)) {
+  if (cleanOk && modules !== null && modules.length === 0 && owners.length === 1 && threshold === 1n && !sameAddress(owners[0], CONTRACTS.burn)) {
     result.state = "open";
     return result;
   }
@@ -978,7 +998,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     }
   }
 
-  if (singletonOk && cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk && cancelOk) {
+  if (cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk && cancelOk) {
     result.state = cancelUnknown ? "unverified" : "locked";
   }
   return result;

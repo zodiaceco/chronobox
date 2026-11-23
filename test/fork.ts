@@ -342,6 +342,36 @@ try {
   assert.equal((await inspect(rpc, safe, wrongHints)).state, "locked");
   ok("a wrong remembered block does not break the check");
 
+  step("9c. A genuine SafeProxy in front of a fake singleton is caught");
+  // The proxy code is the same whatever singleton stands behind it. This singleton runs the real
+  // Safe code for everything, so owners, modules and the Delay all look right, but it lies when it
+  // is asked for slot 0: it says it is the official singleton. Such a Safe could move funds at once.
+  const FAKE_SINGLETON: Address = "0x00000000000000000000000000000000005afe00";
+  await rpc("anvil_setCode", [
+    FAKE_SINGLETON,
+    "0x60003560e01c635624b25b146046575b366000600037600060003660007329fcb43b46531bca003ddc8fcb67ffe91900c7625af43d600060003e6041573d6000fd5b3d6000f35b600435600f57602060005260206020527329fcb43b46531bca003ddc8fcb67ffe91900c76260405260606000f3",
+  ]);
+  const realSingleton = (await rpc("eth_getStorageAt", [safe, "0x0", "latest"])) as Hex;
+  await rpc("anvil_setStorageAt", [safe, "0x0", "0x" + word(FAKE_SINGLETON)]);
+  try {
+    const [lie] = decode(["bytes"], await rpc("eth_call", [{ to: safe, data: call("getStorageAt(uint256,uint256)", [0n, 1n]) }, "latest"]));
+    assert.ok(sameAddress(("0x" + (lie as string).slice(-40)) as Address, CONTRACTS.safeSingleton), "the fake singleton lies about slot 0");
+    const asked: string[] = [];
+    const watched: Rpc = async (method, params = []) => {
+      if (method === "eth_call" && sameAddress((params as any[])[0]?.to, safe)) asked.push((params as any[])[0].data.slice(0, 10));
+      return rpc(method, params);
+    };
+    const forged = await inspect(watched, safe);
+    assert.equal(forged.state, "invalid");
+    assert.deepEqual(forged.checks.filter((check) => !check.ok).map((check) => check.id), ["singleton"]);
+    assert.deepEqual(asked, [], "nothing is asked of the Safe before its singleton is known");
+    ok("a vault whose singleton fakes its answers is invalid, and the Safe was not asked anything");
+  } finally {
+    await rpc("anvil_setStorageAt", [safe, "0x0", realSingleton]);
+  }
+  assert.equal((await inspect(rpc, safe)).state, "locked");
+  ok("with the real singleton back, the vault is locked again");
+
   step("10. A tampered setup is caught");
   // What a fake copy of the app could do: the normal setup plus one extra.
   const BACKDOOR = keccak("0x6261636b646f6f72");

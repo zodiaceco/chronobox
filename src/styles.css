@@ -2400,6 +2400,16 @@ button.row:focus-visible {
   font-weight: 500;
 }
 
+/* A row with a small picture in front of its name. */
+.row-with-icon {
+  grid-template-columns: 20px auto 1fr auto;
+}
+
+.row-icon {
+  flex: none;
+  color: var(--fg);
+}
+
 .row-strong,
 button.row-strong:hover {
   background: var(--blue-wash);
