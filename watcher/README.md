@@ -7,6 +7,8 @@ The watcher reads the chain every minute and sends a message when something happ
 - **As an alert service (`--all`).** It watches every Chronobox on one or more networks and runs a Telegram bot. A person opens the bot from the Chronobox app, presses Start, and gets the alerts of that Chronobox in Telegram.
 - **For one Chronobox.** It watches the address you give it and posts every alert to a webhook of yours.
 
+The watcher is a program of its own. It is not part of the Chronobox website, and it does not start when the website is published. Somebody must run it on a machine that stays on: a small server, or a computer at home. A host that runs code only when a request comes in (Vercel, Netlify and others like them) cannot run it. If the app shows the button "Get alerts in Telegram" and no watcher runs, the bot does not answer and nobody gets an alert.
+
 It is one file with no packages and no keys. It needs Node.js 22.18 or newer. Run `node watch.ts --help` for all settings. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
 
 ## What it reports
@@ -46,7 +48,7 @@ The watcher names three requests of the app by their shape: a new wallet, a new 
    node watch.ts --all
    ```
 
-4. In the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot and build. A Chronobox then shows "Get told" with one button, "Get alerts in Telegram".
+4. Only when the watcher runs: in the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot and build. A Chronobox then shows "Get told" with one button, "Get alerts in Telegram".
 
 How it finds the Chronoboxes:
 
@@ -75,7 +77,7 @@ A semicolon separates the networks, a comma the fallbacks of one network. Each n
 
 Things to know:
 
-- The bot needs no domain and no open port. It asks Telegram for new messages (long polling). It does need a machine that stays on: a serverless host that runs code only for a request cannot do this.
+- The bot needs no domain and no open port. It asks Telegram for new messages (long polling).
 - The RPC must answer `eth_getLogs` without an address filter. Lower `LOG_CHUNK` if it limits the block range.
 - With `--once` the bot reads its messages one time per run, so an answer takes as long as the pause between two runs. Run the watcher as a service.
 - `CHRONOBOX`, `DELAY` and `STATE_FILE` do not work with `--all`. `WEBHOOK_URL` works, and gets the alerts of every Chronobox.

@@ -129,9 +129,11 @@ Each queued withdrawal has an **Add to calendar** link: one reminder when it bec
 
 ### Alerts in Telegram
 
+Alerts have two parts. The app has one button. The alert service is a separate program, `watcher/watch.ts`. It is not part of the website, and the host of the website does not run it. Somebody must run it on a machine that stays on. Without it, the button leads to a bot that does not answer.
+
 `watcher/watch.ts` is a single file with no dependencies. It watches every Chronobox on a network and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
 
-`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
+`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. Set it only when the watcher runs with that bot. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
 The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
 
