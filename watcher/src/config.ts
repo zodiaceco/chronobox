@@ -1,4 +1,5 @@
 // The settings of the CLI, from flags and environment variables.
+import { isIP } from 'node:net';
 import { ConfigError } from './util.ts';
 
 export type Config = {
@@ -35,8 +36,10 @@ export type Config = {
   emailFrom?: string;
   // Where this watcher is on the web (no path). The links in the emails start with it.
   publicUrl?: string;
-  // The CLI: the port of the sign-up page.
+  // The CLI: where the sign-up page listens, and which peers may name the visitor in X-Forwarded-For.
   port: number;
+  bindAddress: string;
+  trustedProxies: string[];
   // The service key of the watcher for the internal RPC of Zodiac, sent only to rpcServiceHost.
   rpcServiceKey?: string;
   rpcServiceHost: string;
@@ -79,6 +82,9 @@ With --all (instead of CHRONOBOX, DELAY and STATE_FILE):
   PUBLIC_URL       --public-url       where this watcher is on the web, for example https://alerts.example.org. The links in the
                                       emails start with it. Required with RESEND_KEY
   PORT             --port             the port of the sign-up page (default 8787). Put a proxy with TLS in front of it
+  BIND_ADDRESS     --bind-address     where the sign-up page listens (default 127.0.0.1: the proxy is on this machine)
+  TRUSTED_PROXIES  --trusted-proxies  the addresses of the proxies, with commas, whose X-Forwarded-For names the visitor
+                                      (default 127.0.0.1,::1). From any other address, the address itself is the visitor
   ALERTS_KEY       --alerts-key       a secret of 32 characters or more. It encrypts the lists of chats and of email addresses
                                       in STATE_DIR. Required with TELEGRAM_TOKEN or RESEND_KEY. Keep it away from STATE_DIR and
                                       its backups. TELEGRAM_KEY is its older name, and still works
@@ -119,7 +125,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   const cfg: Config = {
     rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './chronobox-watch-state.json',
     failPolls: 3, logChunk: 2000, maxScanBlocks: 50000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org', rpcServiceHost: 'rpc.zodiac.eco',
-    resendApi: 'https://api.resend.com', port: 8787, ...bools,
+    resendApi: 'https://api.resend.com', port: 8787, bindAddress: '127.0.0.1', trustedProxies: ['127.0.0.1', '::1'], ...bools,
   };
   if (bools.help) return cfg;
 
@@ -191,6 +197,13 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   cfg.failPolls = num('FAIL_POLLS', 3, 1, true);
   cfg.logChunk = num('LOG_CHUNK', 2000, 1, true);
   cfg.port = num('PORT', 8787, 0, true);
+  cfg.bindAddress = str('BIND_ADDRESS') ?? cfg.bindAddress;
+  const proxies = str('TRUSTED_PROXIES');
+  if (proxies !== undefined) {
+    cfg.trustedProxies = proxies.split(',').map((s) => s.trim()).filter(Boolean);
+    const bad = cfg.trustedProxies.find((ip) => !isIP(ip));
+    if (bad) throw new ConfigError(`TRUSTED_PROXIES must be IP addresses with commas between them. "${bad}" is not one.`);
+  }
   cfg.stateFile = str('STATE_FILE') ?? cfg.stateFile;
   if (cfg.all && str('START_BLOCK') !== undefined) cfg.startBlock = num('START_BLOCK', 0, 0, true);
   cfg.maxScanBlocks = num('MAX_SCAN_BLOCKS', 50000, 0, true);
@@ -207,6 +220,6 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
 const KNOWN_KEYS = [
   'RPC_URL', 'CHRONOBOX', 'DELAY', 'WEBHOOK_URL', 'POLL_SECONDS',
   'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK', 'STATE_DIR', 'START_BLOCK', 'MAX_SCAN_BLOCKS',
-  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'ALERTS_KEY', 'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'PUBLIC_URL', 'PORT',
+  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'ALERTS_KEY', 'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'PUBLIC_URL', 'PORT', 'BIND_ADDRESS', 'TRUSTED_PROXIES',
   'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];

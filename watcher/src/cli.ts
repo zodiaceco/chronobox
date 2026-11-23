@@ -65,10 +65,10 @@ export async function main(argv: string[], env: Record<string, string | undefine
   }
   if (email && !cfg.once) {
     try {
-      await servePages(email, cfg.port);
-      w.log(`email: the sign-up page is on port ${cfg.port} at ${EMAIL_PATH}. The links in the emails start with ${cfg.publicUrl}${EMAIL_PATH}`);
+      const at = await servePages(email, { port: cfg.port, host: cfg.bindAddress, trustedProxies: cfg.trustedProxies });
+      w.log(`email: the sign-up page is on ${at.host}:${at.port} at ${EMAIL_PATH}. The links in the emails start with ${cfg.publicUrl}${EMAIL_PATH}`);
     } catch (e) {
-      console.error(`Configuration error: cannot open PORT ${cfg.port}: ${errText(e)}`);
+      console.error(`Configuration error: cannot listen on ${cfg.bindAddress}:${cfg.port} (BIND_ADDRESS, PORT): ${errText(e)}`);
       return 2;
     }
   } else if (email) {

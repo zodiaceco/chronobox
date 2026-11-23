@@ -64,8 +64,12 @@ export class ResendError extends Error {
   }
 }
 
-/** A request to the pages, as the service and the CLI hand it over. */
-export type PageRequest = { method: string; url: string; headers: Record<string, string | undefined>; body: string; remote?: string };
+/**
+ * A request to the pages, as the service and the CLI hand it over. `visitor` is who sent it, for the limit per
+ * visitor: the CLI knows it from the socket (`servePages`). Without it, the last address in X-Forwarded-For counts,
+ * which is right only behind a proxy that sets that header itself: Vercel does.
+ */
+export type PageRequest = { method: string; url: string; headers: Record<string, string | undefined>; body: string; visitor?: string };
 
 export const PAGE_HEADERS: Record<string, string> = {
   'content-type': 'text/html; charset=utf-8',
@@ -95,14 +99,29 @@ function sealKey(secret: string): Buffer {
   return key;
 }
 
+/** The last address in X-Forwarded-For: the one that the nearest proxy saw. What comes before it, the visitor wrote. */
+function lastForwarded(headers: Record<string, string | undefined>): string | undefined {
+  return (headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean).at(-1);
+}
+
+/** "::ffff:127.0.0.1" is 127.0.0.1. */
+const plainIp = (ip: string) => ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, '');
+
+/** The proxies that the CLI trusts by default: one on the same machine. */
+export const LOOPBACK = ['127.0.0.1', '::1'];
+
 /**
- * The visitor, for the limit per visitor: the address that the nearest proxy saw. Vercel sets X-Forwarded-For to
- * that one address. A proxy like nginx adds it at the end, after what the visitor sent, so the last entry is the
- * one to trust.
+ * The visitor of a request that came to the CLI: the address of the socket, unless that is a trusted proxy. Only
+ * then does X-Forwarded-For count. Anybody else could write any address into it, and get a new limit each time.
  */
+export function visitorFromSocket(remote: string | undefined, headers: Record<string, string | undefined>, trusted: string[]): string {
+  const peer = plainIp(remote ?? '');
+  if (!trusted.map(plainIp).includes(peer)) return peer;
+  return lastForwarded(headers) ?? peer;
+}
+
 function visitorOf(req: PageRequest): string {
-  const forwarded = (req.headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-  return forwarded.at(-1) ?? req.remote ?? '';
+  return req.visitor ?? lastForwarded(req.headers) ?? '';
 }
 
 export type EmailOptions = {
@@ -564,11 +583,21 @@ export class Email implements Peer {
 /** What a step of the pages gets from its request. */
 type Route = { field: (name: string) => string; form: URLSearchParams; visitor: string };
 
+export type ServeOptions = {
+  /** 0: any free one. */
+  port: number;
+  /** Where to listen. The proxy with TLS in front of it is on the same machine, so the default is loopback only. */
+  host?: string;
+  /** The peers whose X-Forwarded-For counts (see visitorFromSocket). Default: loopback. */
+  trustedProxies?: string[];
+};
+
 /**
- * The CLI: serves the pages on a port, at EMAIL_PATH, and "ok" at /health. Put a proxy with TLS in front of it.
- * Resolves with the port (useful with 0: any free one) and a function that closes the server.
+ * The CLI: serves the pages at EMAIL_PATH, and "ok" at /health. Put a proxy with TLS in front of it. Resolves with
+ * the address and the port that it listens on, and a function that closes the server.
  */
-export function servePages(email: Email, port: number): Promise<{ port: number; close: () => void }> {
+export function servePages(email: Email, opts: ServeOptions): Promise<{ host: string; port: number; close: () => void }> {
+  const trusted = opts.trustedProxies ?? LOOPBACK;
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
       res.writeHead(200, { 'content-type': 'text/plain', 'cache-control': 'no-store' }).end('ok');
@@ -586,13 +615,15 @@ export function servePages(email: Email, port: number): Promise<{ port: number; 
     req.on('end', async () => {
       const headers: Record<string, string | undefined> = {};
       for (const [k, v] of Object.entries(req.headers)) headers[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : v;
-      const out = await email.handle({ method: req.method ?? 'GET', url: req.url ?? '/', headers, body, remote: req.socket.remoteAddress });
+      const visitor = visitorFromSocket(req.socket.remoteAddress, headers, trusted);
+      const out = await email.handle({ method: req.method ?? 'GET', url: req.url ?? '/', headers, body, visitor });
       res.writeHead(out.status, PAGE_HEADERS).end(out.html);
     });
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(port, () => resolve({
+    server.listen(opts.port, opts.host ?? '127.0.0.1', () => resolve({
+      host: (server.address() as { address: string }).address,
       port: (server.address() as { port: number }).port,
       close: () => { server.closeAllConnections(); server.close(); },
     }));

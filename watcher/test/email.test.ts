@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   AllWatcher, ConfigError, EMAIL_PATH, EMAIL_PENDING_MS, EMAIL_PER_VISITOR_HOUR, Email, MemoryStore, NOTICE_GAP_MS, NOTICE_MIN_FOLLOW_MS,
-  type PageRequest, Telegram, fmtWhen, parseConfig, servePages, stopText, telegramStart,
+  type PageRequest, Telegram, fmtWhen, parseConfig, servePages, stopText, telegramStart, visitorFromSocket,
 } from '../src/index.ts';
 import { DAY, MockChain, OWNER_WALLET, SAFE, STRANGER, handle, startServer } from './mocks.ts';
 
@@ -471,8 +471,9 @@ test('Email: the list opens only with its key, and survives a restart', async ()
 test('Email: the pages of the CLI, over HTTP', async () => {
   const { email, ready } = await withEmail();
   await ready();
-  const pages = await servePages(email, 0);
+  const pages = await servePages(email, { port: 0 });
   try {
+    assert.equal(pages.host, '127.0.0.1', 'loopback only, unless BIND_ADDRESS says otherwise');
     const base = `http://127.0.0.1:${pages.port}`;
     assert.equal(await (await fetch(`${base}/health`)).text(), 'ok');
     const r = await fetch(`${base}${EMAIL_PATH}?c=1-${SAFE}`);
@@ -487,6 +488,33 @@ test('Email: the pages of the CLI, over HTTP', async () => {
     const long = await fetch(`${base}${EMAIL_PATH}`, { method: 'POST', body: 'x'.repeat(20000) });
     assert.equal(long.status, 413);
   } finally { pages.close(); }
+});
+
+test('Email: the CLI trusts X-Forwarded-For only from its proxy, so a direct client cannot pose as many visitors', async () => {
+  const { ready, email } = await withEmail();
+  await ready();
+  // As if the port were reachable directly: the peer (here 127.0.0.1) is not a trusted proxy.
+  const pages = await servePages(email, { port: 0, trustedProxies: [] });
+  try {
+    let refused = 0;
+    for (let i = 0; i < EMAIL_PER_VISITOR_HOUR + 1; i++) {
+      const r = await fetch(`http://127.0.0.1:${pages.port}${EMAIL_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': `198.51.100.${i}` },
+        body: new URLSearchParams({ c: `1-${SAFE}`, email: `p${i}@example.org` }),
+      });
+      if (r.status === 429) refused++;
+    }
+    assert.equal(refused, 1, 'a header that rotates is one visitor, the socket');
+  } finally { pages.close(); }
+
+  // The rule itself.
+  const h = { 'x-forwarded-for': '10.0.0.1, 198.51.100.9' };
+  assert.equal(visitorFromSocket('203.0.113.5', h, ['127.0.0.1', '::1']), '203.0.113.5', 'not a proxy: the header does not count');
+  assert.equal(visitorFromSocket('127.0.0.1', h, ['127.0.0.1', '::1']), '198.51.100.9', 'the proxy: the last address it added');
+  assert.equal(visitorFromSocket('::ffff:127.0.0.1', h, ['127.0.0.1']), '198.51.100.9');
+  assert.equal(visitorFromSocket('127.0.0.1', {}, ['127.0.0.1']), '127.0.0.1');
+  assert.equal(visitorFromSocket('10.1.2.3', h, ['10.1.2.3']), '198.51.100.9', 'a proxy on another machine, named in TRUSTED_PROXIES');
 });
 
 test('Email: the limits per visitor live in the store, so that they hold across functions', async () => {
@@ -512,6 +540,12 @@ test('Email settings', () => {
   assert.equal(c.port, 8787);
   assert.equal(c.resendApi, 'https://api.resend.com');
   assert.equal(parseConfig(['--all', '--port', '9000'], full).port, 9000);
+  assert.equal(c.bindAddress, '127.0.0.1');
+  assert.deepEqual(c.trustedProxies, ['127.0.0.1', '::1']);
+  const behind = parseConfig(['--all'], { ...full, BIND_ADDRESS: '0.0.0.0', TRUSTED_PROXIES: '10.0.0.2, fd00::2' });
+  assert.equal(behind.bindAddress, '0.0.0.0');
+  assert.deepEqual(behind.trustedProxies, ['10.0.0.2', 'fd00::2']);
+  assert.throws(() => parseConfig(['--all'], { ...full, TRUSTED_PROXIES: 'my-proxy' }), /TRUSTED_PROXIES must be IP addresses/);
   // Email alone is enough.
   assert.equal(parseConfig(['--all'], full).resendKey, RESEND_KEY);
   // The older name of the key still works.
