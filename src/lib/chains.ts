@@ -84,16 +84,16 @@ export type Chain = {
 export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da81505d736Efd61c8d";
 
 /**
- * The name of the Telegram bot of the alert service, without the "@", for
- * example "ChronoboxAlertsBot". Null means: this build has no alerts, and a
- * Chronobox does not show "Get told".
+ * The name of the Telegram bot of the alert service, without the "@". Null
+ * means: this build has no alerts, and a Chronobox does not show "Get told".
  *
  * The alert service is a project of its own (watcher/, see watcher/README.md),
- * deployed to Vercel as a second project. Set a name here only when it runs
- * with that bot: without it the bot does not answer. The app never connects
- * to Telegram. It only builds a link to the bot.
+ * deployed to Vercel as a second project. The name must be the bot that it
+ * runs with: else the bot does not answer. The app never connects to
+ * Telegram. It only builds a link to the bot, and that link is the only place
+ * where people learn which bot is the real one.
  */
-export const ALERTS_TELEGRAM: string | null = null;
+export const ALERTS_TELEGRAM: string | null = "zodiac_chronobox_bot";
 
 /**
  * The suggested contribution in US dollars, by how much money is in play:

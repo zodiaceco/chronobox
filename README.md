@@ -112,7 +112,7 @@ Read these. They are the honest edge of what a delay can do.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds.** Chronobox has no recovery of its own. If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian cannot help. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
-- **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own. It is built, but this version does not switch it on. Use the calendar file, and look at your Chronobox regularly.
+- **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own, and a Telegram account. Without them, use the calendar file, and look at your Chronobox regularly.
 
 
 
@@ -133,7 +133,7 @@ Alerts have two parts. The app has one button. The alert service is a project of
 
 The alert service has no runtime dependencies. It watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
 
-`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot. It is `null` in the source, so this version shows no alerts. Set it only when the alert service runs with that bot. With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
+`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
 The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
 
