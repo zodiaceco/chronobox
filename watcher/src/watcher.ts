@@ -17,6 +17,11 @@ import type { Alert, Item, Settings, State } from './types.ts';
 import { ConfigError, type FetchFn, type Log, defaultLog, errText } from './util.ts';
 
 const FIRST_START_LOOKUP_LIMIT = 50;
+/**
+ * Gas for each call that reads a token's symbol or decimals. A real token needs a few thousand, a proxy a few ten
+ * thousand. A contract that wants more is not a token worth waiting for.
+ */
+export const TOKEN_META_GAS = 200_000;
 
 export function emptyState(): State {
   return { version: 1, items: {}, outbox: [], failCount: 0, problemOpen: false, seq: 0 };
@@ -175,15 +180,27 @@ export class Watcher {
     return out;
   }
 
-  private async tokenMeta(token: string, tag: string): Promise<TokenMeta> {
+  /**
+   * The symbol and decimals of a token, only to word an alert. Strictly best effort: the address comes from a queued
+   * request, so whoever controls the wallet chooses it, and it can be a contract made to fail. Each call gets a fixed
+   * amount of gas, so a contract that burns gas fails at once instead of running into the limits of the network.
+   * Any failure of the token is "not known" (null), and the alert goes out without it. Only a network that does not
+   * answer at all stops the poll: after a failure, the Delay is asked again at the same block, and if that fails
+   * too, the problem is the network, not the token.
+   */
+  private async tokenMeta(token: string, delay: string, tag: string): Promise<TokenMeta> {
+    const ask = (data: string): Promise<string> => this.rpc.call('eth_call', [{ to: token, data, gas: hex(TOKEN_META_GAS) }, tag]);
     try {
-      const [sym, dec] = await Promise.all([this.call(token, SEL.symbol, tag), this.call(token, SEL.decimals, tag)]);
+      const [sym, dec] = await Promise.all([ask(SEL.symbol), ask(SEL.decimals)]);
       const decimals = Number(decodeUint(dec));
       if (!Number.isInteger(decimals) || decimals > 36) return null;
       return { symbol: cleanSymbol(decodeAbiString(sym)), decimals };
     } catch (e) {
       if (e instanceof RevertError) return null;
-      throw e;
+      // Throws when the network is down: then the poll fails and runs again, as with any other read.
+      await this.call(delay, SEL.txNonce, tag);
+      this.log(`token ${token}: no symbol or decimals (${errText(e)}); the alert goes out without them`);
+      return null;
     }
   }
 
@@ -214,7 +231,7 @@ export class Watcher {
     const tx = decodeTransactionAdded(log);
     let tokenMeta: TokenMeta = null;
     if (tx.operation === 0 && tx.data.toLowerCase().startsWith(SEL.transfer) && tx.value === 0n) {
-      tokenMeta = await this.tokenMeta(tx.to, tag);
+      tokenMeta = await this.tokenMeta(tx.to, ctx.delay, tag);
     }
     const d = describeTx(tx, { ...ctx, tokenMeta });
     return {

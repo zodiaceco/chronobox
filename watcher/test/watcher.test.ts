@@ -288,6 +288,44 @@ test('transfers to other addresses are unusual, ERC-20 withdrawals are decoded',
   assert.match(msgs[2].json.message, /^Somebody asked this Chronobox to send 1 USDC to 0xbaba…baba\. /);
 });
 
+test('a token made to fail cannot hold back alerts: its request goes out without symbol, and so does the next', async () => {
+  const w = watcher();
+  await w.poll();
+  sent = [];
+  // A stolen wallet queues a "withdrawal" of a contract whose symbol burns all the gas the network allows.
+  const POISON = '0x' + '9e'.repeat(20);
+  chain.answers[`${POISON}:${SEL.symbol}`] = 'limit';
+  chain.answers[`${POISON}:${SEL.decimals}`] = 'limit';
+  chain.enqueue(POISON, 0n, SEL.transfer + encAddr(OWNER_WALLET) + u(1n));
+  assert.equal(await w.poll(), true);
+  assert.deepEqual(hooks().map((h) => h.json.event), ['queued']);
+  assert.doesNotMatch(hooks()[0].json.message, /USDC/);
+  assert.equal(chain.gasAsked[`${POISON}:${SEL.symbol}`], '0x30d40', 'each metadata call has a fixed amount of gas');
+  assert.ok(logs.some((l) => l.includes(POISON) && /no symbol or decimals/.test(l)));
+
+  // The line moves on: a real withdrawal after it is told as usual.
+  sent = [];
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  assert.equal(await w.poll(), true);
+  assert.deepEqual(hooks().map((h) => h.json.event), ['queued']);
+  assert.match(hooks()[0].json.message, /1\.5 ETH/);
+});
+
+test('a network that goes down while a token is read is a network problem: the request is told once it is back', async () => {
+  const w = watcher();
+  await w.poll();
+  sent = [];
+  chain.answers[`${TOKEN}:${SEL.symbol}`] = 'outage';
+  chain.enqueue(TOKEN, 0n, SEL.transfer + encAddr(OWNER_WALLET) + u(2_500_000n));
+  assert.equal(await w.poll(), false, 'not "no symbol": the poll fails and runs again');
+  assert.equal(sent.length, 0);
+  chain.down = false;
+  delete chain.answers[`${TOKEN}:${SEL.symbol}`];
+  assert.equal(await w.poll(), true);
+  assert.deepEqual(hooks().map((h) => h.json.event), ['queued']);
+  assert.match(hooks()[0].json.message, /withdraw 2\.5 USDC/);
+});
+
 test('failed delivery is retried and not marked as sent', async () => {
   const w = watcher();
   await w.poll();

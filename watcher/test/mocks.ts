@@ -38,8 +38,14 @@ export class MockChain {
   otherCreated: { delay: string; block: number }[] = [];
   /** The addresses of each eth_getLogs request. */
   logQueries: string[][] = [];
-  /** Fixed answers of eth_call, by "<to>:<selector>": hex without 0x, or "revert". For contracts that answer anything. */
+  /**
+   * Fixed answers of eth_call, by "<to>:<selector>": hex without 0x, or "revert". For contracts that answer anything.
+   * "limit": the node gives up on the call (out of gas, or its own time limit), as for a contract made to burn gas.
+   * "outage": the network goes down at this call, and stays down until `down` is set back.
+   */
   answers: Record<string, string> = {};
+  /** The gas that each eth_call asked for, by "<to>:<selector>". */
+  gasAsked: Record<string, string | undefined> = {};
   /** eth_getCode fails for these, as an RPC that cannot answer. */
   codeErrors = new Set<string>();
   create() { this.mine(12n); this.created = this.head; this.mine(12n); }
@@ -212,7 +218,10 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       const ok = (r: string) => ({ result: r.startsWith('0x') ? r : '0x' + r });
       const block = params[1] && params[1] !== 'latest' ? Number(BigInt(params[1])) : chain.head;
       if (block < chain.head && chain.noArchive) return { error: { code: -32000, message: 'missing trie node' } };
+      chain.gasAsked[`${to}:${sel}`] = params[0].gas;
       const fixed = chain.answers[`${to}:${sel}`];
+      if (fixed === 'limit') return { error: { code: -32000, message: params[0].gas ? 'out of gas' : 'execution aborted (timeout = 5s)' } };
+      if (fixed === 'outage') { chain.down = true; return { error: { code: -32603, message: 'upstream connect error' } }; }
       if (fixed !== undefined) return fixed === 'revert' ? { error: { code: 3, message: 'execution reverted' } } : ok(fixed);
       if (to === DELAY) {
         if (sel === SEL.txCooldown) return ok(u(chain.cooldown));
