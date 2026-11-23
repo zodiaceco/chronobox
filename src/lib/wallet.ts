@@ -252,6 +252,11 @@ export async function sendBatch(
   onWaiting?: () => void,
   shouldStop?: () => boolean,
 ): Promise<{ blockNumber: bigint | null }> {
+  return waitForBatch(provider, await sendCalls(provider, account, chainId, calls), onWaiting, shouldStop);
+}
+
+/** Gives the calls to the wallet as one atomic batch. Returns the id of the batch. */
+export async function sendCalls(provider: Provider, account: Address, chainId: number, calls: TxRequest[]): Promise<string> {
   // A call that only sends ETH has no data. Wallets reject "0x" there, so the field is left out.
   const list = calls.map((c) => ({ to: c.to, ...(c.data === "0x" ? {} : { data: c.data }), value: toQuantity(c.value ?? 0n) }));
   const base = { from: account, chainId: toQuantity(chainId), calls: list };
@@ -272,6 +277,20 @@ export async function sendBatch(
   }
   const id = typeof result === "string" ? result : (result as { id?: string })?.id;
   if (!id) throw new Error("Your wallet did not confirm that it took the request. Look in your wallet before you try again.");
+  return id;
+}
+
+/**
+ * Waits until the batch with this id is on chain. A batch that the wallet still
+ * holds is waited for again, not sent again: some wallets (Ambire) put a second
+ * request into the same transaction as the first.
+ */
+export async function waitForBatch(
+  provider: Provider,
+  id: string,
+  onWaiting?: () => void,
+  shouldStop?: () => boolean,
+): Promise<{ blockNumber: bigint | null }> {
   onWaiting?.();
   const rpc = rpcOf(provider);
   let misses = 0;
@@ -327,7 +346,7 @@ const REASONS: [RegExp, string][] = [
   [/GS013/, "The Chronobox refused this step. Reload the page and look at its state before you try again."],
   [/GS02[0-9]|GS03[0-9]/, "Your wallet is not allowed to do this with this Chronobox."],
   [/not authorized|NotAuthorized|NoMembership|ConditionViolation/i, "Your wallet is not allowed to do this with this Chronobox."],
-  [/create2 call failed/i, "This Chronobox exists already. Reload the page."],
+  [/create2 call failed/i, "This Chronobox exists already, or your wallet has the setup twice in one request. Reject the request in your wallet, reload the page and start again."],
 ];
 
 /** A short, plain message for an error that came from a wallet or an RPC. */
