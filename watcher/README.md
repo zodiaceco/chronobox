@@ -4,28 +4,58 @@ A Chronobox is a Safe. Everything goes through a Zodiac Delay, controlled by one
 
 The watcher reads the chain every minute and sends a message when something happens. It is a project of its own, in this folder. It is not part of the Chronobox website and has its own `package.json`. It runs in three ways:
 
-- **As the alert service on Vercel.** It watches every Chronobox on one or more networks and runs a Telegram bot. A person opens the bot from the Chronobox app, presses Start, and gets the alerts of that Chronobox in Telegram. Nothing has to stay on: Vercel Cron starts a poll every minute, and Telegram calls a webhook with each message to the bot. The state is in Upstash Redis. See "The alert service on Vercel".
-- **As the same alert service on a machine that stays on (`--all`).** The CLI, with the state in files. The bot asks Telegram for its messages, so it needs no domain and no open port.
+- **As the alert service on Vercel.** It watches every Chronobox on one or more networks. A person gets the alerts of a Chronobox in Telegram (they open the bot from the Chronobox app and press Start) or by email (they give an address on a page of the service and confirm it). Nothing has to stay on: Vercel Cron starts a poll every minute, Telegram calls a webhook with each message to the bot, and the email pages are a function. The state is in Upstash Redis. See "The alert service on Vercel".
+- **As the same alert service on a machine that stays on (`--all`).** The CLI, with the state in files. The bot asks Telegram for its messages, so Telegram needs no domain and no open port. Email does: see "Alerts by email".
 - **For one Chronobox.** The CLI watches the address you give it and posts every alert to a webhook of yours.
 
 If the app shows the button "Get alerts in Telegram" and no watcher runs, the bot does not answer and nobody gets an alert.
 
-It has no runtime dependencies and needs no keys of a wallet. It needs Node.js 22.18 or newer. `npm run build` makes two things: the functions for Vercel in `.vercel/output/`, and the CLI as one file, `dist/watch.mjs`. Run `node dist/watch.mjs --help` (or `node src/cli.ts --help`) for all settings of the CLI. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
+It needs no keys of a wallet, and Node.js 22.18 or newer. Its only runtime packages are react-email and React, for the HTML of the emails (`src/mail.tsx`) and of the email pages (`src/pages.tsx`). `npm run build` makes two things, each with those packages bundled in: the functions for Vercel in `.vercel/output/`, and the CLI as one file, `dist/watch.mjs`. Run `node dist/watch.mjs --help` (or `npm start -- --help`) for all settings of the CLI.
+
+Node runs the sources as they are, by type stripping. That does not read JSX, so `jsx.mjs` lets esbuild compile the `.tsx` files as they load: `npm test` and `npm start` use it, and so does `node --import ./jsx.mjs src/cli.ts`. Each setting works as an environment variable (`POLL_SECONDS=30`) or as a flag (`--poll-seconds 30`).
 
 ```sh
 npm install
-npm test          # unit tests, with stand-ins for the chain, Telegram and Redis, and the property test below
+npm test          # unit tests, with stand-ins for the chain, Telegram, Resend and Redis, and the property test below
 npm run check     # TypeScript
-npm run build     # .vercel/output/ and dist/watch.mjs
+npm run build     # .vercel/output/ and dist/watch.mjs; it renders one email from a bundle, to check the bundle
 ```
 
 `npm run test:fork:alerts` in the folder above runs the alert service against the real contracts on a fork.
 
 The property test plays 150 random runs on the stand-in chain: requests, time, executions, skipExpired, cancels, cancels that fail, timing changes, several of them in one block, polls at any point. The chain keeps what really happened to each request, and every message must fit it: a request that was carried out is never "Cancelled" or "Removed", and "Done" is said only of one that was. A failure prints its seed and steps. More runs, or others: `FUZZ_RUNS=5000 FUZZ_SEED=1 npm test`.
 
+## Run it yourself
+
+You do not need the alert service of anybody else. The watcher is open source, and you can run it yourself. Then it writes only to you (and to whoever you give your bot to), nobody else keeps a list that links you to your Chronobox, and it does not need us.
+
+| | Alerts in Telegram | Alerts for your own tools |
+|---|---|---|
+| **What it is** | Your own Telegram bot sends you a message. | Every alert goes to a web address of yours (a webhook), as JSON. |
+| **Good for** | You, on your phone. | A script, a home automation, the chat of a team. |
+| **It watches** | Every Chronobox on the network. You follow yours with one message to your bot. | Only your Chronobox. |
+| **You need** | A bot from BotFather, a key for the list of chats, and an RPC. | An RPC for the network of your Chronobox. |
+| **How** | [The alert service on a machine](#the-alert-service-on-a-machine---all), or [on Vercel](#the-alert-service-on-vercel) | [One Chronobox, to a webhook](#one-chronobox-to-a-webhook) |
+
+With your own bot, the button "Get alerts in Telegram" in the Chronobox app does not lead to it. Open your bot in Telegram and send it the network and the address of your Chronobox:
+
+```
+/start 1-0xYourChronobox
+```
+
+The number is the chain ID: 1 for Ethereum, 8453 for Base, 42161 for Arbitrum One, 100 for Gnosis. The bot answers with what waits in your Chronobox right now.
+
+Where it runs: on Vercel (nothing has to stay on), or on a machine that stays on, in a terminal for a first try or [as a service](#run-it-as-a-service). With cron (`--once`), Telegram answers late; use cron for the webhook.
+
+Before you rely on it:
+
+- Try it first with `--dry-run`. It prints the messages and sends nothing.
+- Ask your Chronobox for a small withdrawal and cancel it. You must get two messages.
+- The watcher says "All quiet" once a day (in Telegram and to the webhook). If that message stops, the watcher has stopped.
+
 ## What it reports
 
-The messages use the words of the Chronobox app. No message has a link in it.
+The messages use the words of the Chronobox app. No message in Telegram has a link in it. An email has one: the link that stops the alerts.
 
 - **New request**: somebody asked the Chronobox for something. The message says what it is, when its wait ends, and what to do if it was not you. A withdrawal to the wallet of the Chronobox is the quiet kind. Money that would go to another address is marked. Every change of the Chronobox is the loudest kind: a new delay, a new wallet, a guardian, or anything that the app does not make.
 - **Wait over**: the wait of a request is over, and it can be finished.
@@ -46,17 +76,18 @@ The watcher names three requests of the app by their shape: a new wallet, a new 
 The service is a second Vercel project, made from the same repository. The website stays a static site with no backend.
 
 ```
-Vercel Cron, every minute ──▶ /api/poll       reads every network, sends the alerts
+Vercel Cron, every minute ──▶ /api/poll       reads every network, sends the alerts (Telegram, Resend, webhook)
 Telegram, each message ──────▶ /api/telegram   answers /start, /stop, /list, /privacy
+a person, in a browser ──────▶ /api/email      sign up for email, confirm, stop
 an uptime monitor ───────────▶ /api/health     503 when the polls stopped
                                     │
-                              Upstash Redis: what the watcher knows, the sealed list of chats, the locks
+                              Upstash Redis: what the watcher knows, the sealed lists of chats and of addresses, the locks
 ```
 
 ### Set it up
 
 1. In Telegram, write to [BotFather](https://t.me/BotFather): `/newbot`, a name, a username. It answers with a token.
-2. Make two secrets, one for the list of chats and one for Vercel Cron. Keep the first one: without it the list is lost.
+2. Make two secrets, one for the lists of chats and of email addresses (`ALERTS_KEY`) and one for Vercel Cron. Keep the first one: without it the lists are lost.
 
    ```sh
    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
@@ -72,13 +103,15 @@ an uptime monitor ───────────▶ /api/health     503 when 
    | `RPC_URL` | Optional. The RPC for every network, with `{chainId}` where the chain id goes. A comma separates fallbacks. Default: the RPC of Zodiac (see below). |
    | `RPC_URL_<chain id>` | Optional. The RPC of one network, in place of `RPC_URL`, for a provider with a host name per chain. |
    | `TELEGRAM_TOKEN` | The token from step 1. |
-   | `TELEGRAM_KEY` | The first secret from step 2. It encrypts the list of chats. |
+   | `ALERTS_KEY` | The first secret from step 2. It encrypts the lists of chats and of email addresses. `TELEGRAM_KEY` is its older name, and still works. |
+   | `RESEND_KEY` | Optional. With it, alerts by email: see "Alerts by email" below. |
+   | `EMAIL_FROM` | With `RESEND_KEY`. The sender, for example `Chronobox alerts <alerts@example.org>`, on a domain that Resend has verified. |
    | `CRON_SECRET` | The second secret. Vercel Cron sends it with each call, and `/api/poll` refuses a call without it. |
    | `RPC_SERVICE_KEY` | Optional. The service key of chronobox for the internal RPC of Zodiac (see below). |
    | `RPC_SERVICE_HOST` | Optional. Where the key goes (default `rpc.zodiac.eco`). |
    | `WEBHOOK_URL` | Optional. Gets every alert of every Chronobox as a JSON POST. |
    | `START_BLOCK_<chain id>` | Optional. The first block to search for Chronoboxes. Default: the newest block at the first poll. |
-   | `PUBLIC_URL` | Optional. The address where Telegram reaches the bot. Default: the production domain of the project. |
+   | `PUBLIC_URL` | Optional. The address where Telegram reaches the bot, and where the links in the emails lead. No path. Default: the production domain of the project. |
    | `HEARTBEAT_HOURS`, `FAIL_POLLS`, `LOG_CHUNK`, `MAX_SCAN_BLOCKS` | Optional, as in the CLI. |
    | `POLL_BUDGET_SECONDS` | Optional. After this time a poll reads no further Chronobox, and the next poll goes on (default 60). |
    | `HEALTH_MAX_AGE_SECONDS` | Optional. `/api/health` answers 503 when the last poll is older (default 300). |
@@ -86,7 +119,7 @@ an uptime monitor ───────────▶ /api/health     503 when 
 
 6. Deploy to production. Within a minute the first poll runs. It tells Telegram to send the messages of the bot to `/api/telegram`, with a secret that Telegram sends back each time. The poll does that again when the address, the token or the key changes.
 7. Open `/api/health`. It says when the last poll ran and if every network could be read.
-8. Only then: in the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot and build. A Chronobox then shows "Get told" with one button, "Get alerts in Telegram".
+8. Only then: in the Chronobox app, set `ALERTS_TELEGRAM` in `src/lib/chains.ts` to the username of the bot, and with email `ALERTS_EMAIL` to `<PUBLIC_URL>/api/email`, and build. With one way set, a Chronobox shows "Get told" with one button. With more, "Get told" first asks which way.
 9. Point an uptime monitor at `/api/health`. Cloudflare can do it with a Worker on a cron trigger, or any uptime service can. It is on another provider than the service, so it also notices when Vercel or its cron stops. "All quiet" tells the people who follow a Chronobox that the alerts work. The monitor tells you.
 
 ### The RPC of Zodiac
@@ -113,11 +146,45 @@ A refused key, or a service over its limit, does not stop the alerts: the watche
 - **Fair order.** A poll reads the Chronoboxes that waited longest first, and notes the time of each read before it begins. A poll that runs out of time (`POLL_BUDGET_SECONDS`) goes on there the next time, so Chronoboxes that always have something waiting cannot keep the others from being read, and one whose read kills the function goes to the back of the line. The poll reports how many it skipped and how long the oldest waits, and `/api/health` answers 503 when one waits longer than `HEALTH_MAX_AGE_SECONDS`.
 - **One vault cannot stop the others.** Anybody can deploy a Safe that answers anything, and pass for a Chronobox. Answers that are not exactly the ABI (too short, an address that is no address) count as "not a Chronobox". A vault that cannot be read while the chain can is a problem of that vault: whoever follows it gets "Alerts can be late" after `FAIL_POLLS` tries, it waits 1, 2, 4 … minutes (an hour at most) between tries, and the poll reports it as `failing` without failing the network. A new Delay whose check fails goes to the back of the queue and is dropped after 3 tries.
 - **Locks.** Vercel can start a poll while the last one still runs, and Telegram calls the webhook at any time. So a poll takes the lock of its network, and a poll that finds it taken stops at once: the one before it does the work. A Start waits for the lock (up to 30 seconds), because it reads the Chronobox. A change of the list of chats takes the lock of the list. A lock is a key in Redis that runs out after 130 seconds, longer than a function may run (`src/limits.ts`). A function that was killed blocks the next ones until then.
+- **Email pages.** Each request to `/api/email` is a new function. The request that waits for a confirmation, the list of addresses and the limits per visitor are all in Redis, so the steps of one person can land in different functions.
 - **Each message is answered once.** Telegram sends a message again when the answer was slow. The webhook notes each message for a day and does not answer it twice.
 - **Each alert is sent once.** As in the CLI, a chat that got an alert is noted, and only the others are tried again. If a function is killed between sending and saving, a message can come twice. It is never lost.
 - **The webhook and long polling exclude each other.** A bot can do only one. When the service sets its webhook, a CLI that reads the same bot gets an error (409). Give the service its own bot, or stop the CLI.
 
 The functions are bundled by `build.mjs` and deployed as they are (the Build Output of Vercel). The cron job is in `.vercel/output/config.json`, made from `src/limits.ts`.
+
+## Alerts by email
+
+With `RESEND_KEY` the service also sends the alerts by email, through [Resend](https://resend.com). It works with the Telegram bot or without it, on Vercel and on a machine. Each email has a plain text part and an HTML part (`src/mail.tsx`, rendered with react-email).
+
+```sh
+RESEND_KEY=re_...
+EMAIL_FROM="Chronobox alerts <alerts@example.org>"   # a domain that Resend has verified
+PUBLIC_URL=https://alerts.example.org                 # where the service is on the web; the links in the emails start with it
+ALERTS_KEY=<the key from step 2>
+```
+
+Then, only when the service runs: in the Chronobox app, set `ALERTS_EMAIL` in `src/lib/chains.ts` to `<PUBLIC_URL>/api/email` and build.
+
+A person signs up in two steps (double opt-in). The app is not part of it: it only opens the first page.
+
+1. The page `<PUBLIC_URL>/api/email?c=<chain id>-<address>` asks for an email address. The service checks on the chain that the address is a Chronobox.
+2. The service sends one email with a link. Nothing else goes to that address yet.
+3. The link opens a page with one button, "Confirm". Only the button confirms. A program that opens the links in an email for the person does not press it.
+4. From then on the alerts of that Chronobox go to that address. Each one ends with a link that stops them, and mail programs show their own button for it (`List-Unsubscribe`, one click).
+
+Things to know:
+
+- **On a machine, email needs an address on the web. Telegram does not.** The CLI serves the pages on `127.0.0.1:PORT` (default 8787) at `/api/email`, so only a program on the same machine reaches them. Put a proxy with TLS there, for example Caddy or nginx, that adds the visitor to `X-Forwarded-For`. `GET /health` answers `ok`. With `--once` there is no page; the addresses on the list still get their alerts.
+- **Only the proxy names the visitor.** The CLI reads `X-Forwarded-For` only from a trusted proxy: `127.0.0.1` and `::1` by default. From any other address, that address is the visitor, whatever the header says, so a client that reaches the port directly cannot pose as many visitors. A proxy on another machine: set `BIND_ADDRESS` (for example `0.0.0.0`) and name the proxy in `TRUSTED_PROXIES` (IP addresses, with commas).
+- A request that nobody confirms is deleted after one day. The confirmation email also has a link "Not you? Cancel": it opens a page with a button that deletes every request to that address that is not confirmed. Only who reads that mailbox has the link. So a stranger who fills the three open requests of somebody else's address cannot block that person's own sign-up: they cancel, and ask again. Confirmed alerts stay as they are.
+- The page gives the same answer for every address, so nobody can use it to find out who is on the list.
+- Somebody can type the address of another person. That person gets one email and nothing more. An address gets one confirmation in ten minutes for a Chronobox and holds three open requests at most. One visitor can ask for ten an hour, and all visitors together for 300. The limits are counters in the store (Redis on Vercel), with a keyed hash of the visitor, not the IP address.
+- The visitor is the last address in `X-Forwarded-For`: the one that the nearest proxy saw. On Vercel the platform sets that header, so it counts there. In the CLI it counts only from a trusted proxy (above).
+- "All quiet" and "Watching" do not go out by email. An inbox is not the place for a message every day. So a person with email only does not notice when the service stops.
+- When an address stops, the other addresses and the Telegram chats of that Chronobox are told, and the other way round, by the same rules as in Telegram: only a follow of a day or more counts, and once an hour at most.
+- An alert that waits for an address notes who got it by a keyed hash, as for Telegram. That hash is also the idempotency key at Resend, so a retry is not sent twice.
+- Not tested yet with the real Resend or a real inbox. The checks are the unit tests and `npm run test:fork:alerts`, with a stand-in for Resend.
 
 ## The alert service on a machine (`--all`)
 
@@ -127,7 +194,7 @@ The functions are bundled by `build.mjs` and deployed as they are (the Build Out
    ```sh
    export RPC_URL=https://your-rpc,https://backup-rpc
    export TELEGRAM_TOKEN=123456:AA...
-   export TELEGRAM_KEY=<the key from step 2>
+   export ALERTS_KEY=<the key from step 2>
    export STATE_DIR=/var/lib/chronobox-watcher
    node dist/watch.mjs --all
    ```
@@ -136,7 +203,7 @@ The functions are bundled by `build.mjs` and deployed as they are (the Build Out
 
 How it finds the Chronoboxes (on Vercel too):
 
-- A new Chronobox by the Delay that it deploys (the `ModuleProxyCreation` event of the Zodiac factory, for the master copy of the Delay), and any Chronobox when somebody presses Start for it.
+- A new Chronobox by the Delay that it deploys (the `ModuleProxyCreation` event of the Zodiac factory, for the master copy of the Delay), and any Chronobox when somebody presses Start or signs up for it.
 - It reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows. Anybody can deploy contracts that emit any event, so a search over every contract would let anybody fill a poll. That is why an older Chronobox is not found when it asks for something. Set `START_BLOCK` to the block of the first Chronobox to find them all from the factory.
 - A new Delay waits in a queue until it is checked. The queue is saved together with the search, before any check, so a search is never done twice. Each poll checks a batch of 8 at least, and new Delays get a quarter of its time at most, so a flood of Delays from the factory cannot take the time of the Chronoboxes that are known. The queue holds 1000 at most; more is dropped and logged. A Chronobox among them is still found when somebody presses Start for it.
 - It accepts an address only if it is a Safe whose single owner is the burn address and whose modules are that Delay, or that Delay and a Roles modifier.
@@ -149,7 +216,7 @@ How a person subscribes (on Vercel too):
 - The bot checks on the chain that the address is a Chronobox. Then it keeps the pair (chat, Chronobox) and answers with what waits there right now.
 - From then on every alert of that Chronobox goes to that chat. "All quiet" arrives without a sound. Money to another address is marked with a warning sign, and a change of the Chronobox with an alarm sign, because Telegram cannot ring louder.
 - `/stop` ends all alerts of a chat and deletes it. `/stop <address>` ends one. `/list` shows what the chat follows. `/privacy` says what the bot keeps. A chat can follow 20 Chronoboxes at most.
-- When a chat stops, every other chat that follows the same Chronobox is told. Alerts must not go off in silence. But anybody can follow a public Chronobox, so only a follow of a day or more tells the others, and they are told once an hour at most: more stops in that hour come together in the next message ("3 chats … have stopped them"), which the poll sends. A stop is never dropped, so a stranger cannot hide a real one for more than an hour.
+- When a chat stops, every other chat and every email address that follows the same Chronobox is told. Alerts must not go off in silence. But anybody can follow a public Chronobox, so only a follow of a day or more tells the others, and they are told once an hour at most: more stops in that hour come together in the next message ("3 chats … have stopped them"), which the poll sends. A stop is never dropped, so a stranger cannot hide a real one for more than an hour.
 - A chat that blocks the bot is removed. A message that fails is tried again on the next poll, and a chat that already got it does not get it twice.
 - The bot works in a group too: add it to the group and send the same `/start` command there.
 
@@ -173,13 +240,15 @@ Things to know:
 
 - Public chain data: the Chronoboxes it found and what waits in them.
 - The list of chats (`STATE_DIR/telegram.json`, or the key `chronobox:telegram` in Redis): for each chat that pressed Start, the number of the chat, the Chronoboxes it follows, and since when. For each Chronobox, how many chats stopped that the others were not told of yet. No name, no username, no phone number, no message.
-- That list is personal data. It links a Telegram account to a Chronobox, and so to an amount of money.
-- The list is encrypted with `TELEGRAM_KEY` (AES-256-GCM). It holds no address and no chat number that somebody can read without the key. So the file, the Redis database, a backup of either, or the disk alone are worth nothing.
+- The list of email addresses (`STATE_DIR/email.json`, or the key `chronobox:email` in Redis): for each address that confirmed, the address, the Chronobox, and since when; the requests of the last day that are not confirmed yet; and the stops that the others were not told of yet. Nothing else.
+- These lists are personal data. They link a Telegram account or an email address to a Chronobox, and so to an amount of money.
+- Resend gets every email address and the text of every email, because it sends them. Name it where you tell people what happens to their data.
+- The lists are encrypted with `ALERTS_KEY` (AES-256-GCM). It holds no address and no chat number that somebody can read without the key. So the file, the Redis database, a backup of either, or the disk alone are worth nothing.
 - Keep the key and the token away from where the list is: in the secret store of your host, or in a file that only the service can read. On Vercel the key is in the environment of the project, and the list is at Upstash, two different companies. With the list and the token, somebody could write to every person as the real bot.
 - The key does not protect against a person who controls the running watcher. The watcher must know which chats follow a Chronobox when it sends an alert, so it holds the list and the key. Only a sealed enclave could hide the list from the person who runs the machine. That is not built.
 - If the key is lost, the list is lost: remove `telegram.json` (or the key `chronobox:telegram` in Redis), and every person must press Start again. A wrong key stops the watcher with a clear message (on Vercel: every call answers 500 with it). It does not start with an empty list.
-- An alert that waits for a chat or the webhook is kept with the state of its Chronobox, which is not encrypted. It notes which chats got it by a keyed hash of the alert, the Chronobox and the chat (made from `TELEGRAM_KEY`), never by the number of the chat. Without the key nobody can tell which chats they are, and two alerts do not show that the same chat got both.
-- The watcher does not write the number of a chat, the token or the key to its log.
+- An alert that waits for a chat or the webhook is kept with the state of its Chronobox, which is not encrypted. It notes which chats got it by a keyed hash of the alert, the Chronobox and the chat (made from `ALERTS_KEY`), never by the number of the chat. The same for an email address. Without the key nobody can tell which chats or addresses they are, and two alerts do not show that the same one got both.
+- The watcher does not write the number of a chat, an email address, an IP address, the token or a key to its log.
 - Telegram knows the phone number of each account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 
 ### Try it on your machine
@@ -187,7 +256,7 @@ Things to know:
 Make a test bot with BotFather, put its username in `ALERTS_TELEGRAM`, start the fork (`npm run fork`) and the app (`npm run dev`), and run:
 
 ```sh
-RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... TELEGRAM_KEY=<32 characters or more> node src/cli.ts --all
+RPC_URL=http://127.0.0.1:8545 TELEGRAM_TOKEN=123456:AA... ALERTS_KEY=<32 characters or more> npm start -- --all
 ```
 
 Then press "Get alerts in Telegram" in a Chronobox. On the local fork the network is Ethereum (chain 1), so the link starts with `1-`.
@@ -217,7 +286,7 @@ With `WEBHOOK_URL`, every alert is a JSON POST:
 
 `event` is one of `watching`, `queued`, `ready`, `expires_soon`, `expired`, `cancelled`, `closed`, `settings_changed`, `heartbeat`, `watcher_problem`, `watcher_recovered`. `priority` goes from 2 (All quiet) to 5 (a change of the Chronobox). Any answer other than 2xx counts as failed and is tried again.
 
-If you want the alerts of your own Chronobox in Telegram without anybody else's service, run the alert service above on your own machine with your own bot.
+If you want the alerts of your own Chronobox in Telegram without anybody else's service, run the alert service above on your own machine with your own bot. See "Run it yourself".
 
 ## Run it as a service
 
@@ -248,7 +317,7 @@ Everybody on the machine can read a unit file, so the secrets go into `/etc/chro
 ```sh
 RPC_URL=https://your-rpc,https://backup-rpc
 TELEGRAM_TOKEN=123456:AA...
-TELEGRAM_KEY=...
+ALERTS_KEY=...
 ```
 
 The state goes to `/var/lib/chronobox-watcher/`, the folder systemd creates for the service. Then:
@@ -264,8 +333,8 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 ## Privacy
 
 - Your RPC provider sees what the watcher reads and its IP address. Use your own node, or an RPC you trust, if that matters to you.
-- The watcher never writes your RPC URL, your webhook URL, the bot token, the key of the chat list, the Redis token or the cron secret into a message or its log.
-- For the Telegram bot, see "What the service keeps" above.
+- The watcher never writes your RPC URL, your webhook URL, the bot token, the Resend key, the key of the lists, the Redis token or the cron secret into a message or its log.
+- For the Telegram bot and email, see "What the service keeps" above.
 
 ## Limits
 
@@ -289,14 +358,19 @@ src/format.ts      names of networks, times, durations, amounts
 src/watcher.ts     the watcher of one Chronobox: read, compare, alert, deliver
 src/all.ts         --all: every Chronobox on one network
 src/telegram.ts    the bot: the sealed list of chats, the commands, delivery
+src/email.ts       email: the sealed list of addresses, the steps of the pages and their route table, delivery through Resend
+src/pages.tsx      the pages of email (sign up, confirm, stop), rendered on the server, without script
+src/mail.tsx       the HTML of the emails, with react-email
+src/notices.ts     when somebody stops, the others are told: the rules, shared by Telegram and email
 src/store.ts       where the state is kept: files, memory, dry run; and the locks
 src/redis.ts       the same in Upstash Redis
 src/config.ts      the settings of the CLI
 src/cli.ts         the CLI (dist/watch.mjs)
-src/service.ts     the service on Vercel: poll, telegram, health
+src/service.ts     the service on Vercel: poll, telegram, email, health
 src/vercel.ts      a handler of the service as a Vercel function
-src/api/           the three functions
+src/api/           the four functions
 src/limits.ts      how long a function may run, and what depends on it
 build.mjs          .vercel/output/ and dist/watch.mjs
-test/              unit tests, and stand-ins for the chain, Telegram and Redis
+jsx.mjs            lets Node run the .tsx files as they are (esbuild), for the tests and npm start
+test/              unit tests, and stand-ins for the chain, Telegram, Resend and Redis
 ```

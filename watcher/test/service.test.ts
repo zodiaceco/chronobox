@@ -4,7 +4,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {
-  BusyError, ConfigError, RedisStore, Telegram, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
+  BusyError, ConfigError, EMAIL_PER_VISITOR_HOUR, RedisStore, Telegram, emailPages, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
   type Env, type Request,
 } from '../src/index.ts';
 import { vercelFunction } from '../src/vercel.ts';
@@ -25,6 +25,8 @@ let redisServer: { url: string; close: () => Promise<void> };
 let tg: { url: string; close: () => Promise<void> };
 let said: { chat: number; text: string }[] = [];
 let tgCalls: { method: string; args: any }[] = [];
+let resend: { url: string; close: () => Promise<void> };
+let mails: { to: string; subject: string; text: string }[] = [];
 const logs: string[] = [];
 const deps = { log: (m: string) => { logs.push(m); } };
 
@@ -46,8 +48,13 @@ before(async () => {
     if (m[2] === 'sendMessage') said.push({ chat: args.chat_id, text: args.text });
     answer({ ok: true, result: true });
   });
+  resend = await startServer((_req, body, res) => {
+    const m = JSON.parse(body);
+    mails.push({ to: m.to[0], subject: m.subject, text: m.text });
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: 'mail' }));
+  });
 });
-after(async () => { await rpc.close(); await redisServer.close(); await tg.close(); });
+after(async () => { await rpc.close(); await redisServer.close(); await tg.close(); await resend.close(); });
 
 beforeEach(() => {
   chain = new MockChain();
@@ -56,6 +63,7 @@ beforeEach(() => {
   redis.commands = [];
   said = [];
   tgCalls = [];
+  mails = [];
   logs.length = 0;
 });
 
@@ -219,13 +227,13 @@ test('a network whose RPC is on another chain is a configuration error, and the 
   assert.match(nets[1].error, /The RPC of chain 5 is on chain 1/);
 });
 
-test('a wrong TELEGRAM_KEY stops the service with a clear error, without the key', async () => {
+test('a wrong ALERTS_KEY stops the service with a clear error, without the key', async () => {
   await poll(env(), cron(), deps);
   await telegramWebhook(env(), message(ANNA, START), deps);
   const other = 'another-secret-that-is-also-long-enough-98765';
   const r = await poll(env({ TELEGRAM_KEY: other }), cron(), deps);
   assert.equal(r.status, 500);
-  assert.match((r.body as any).message, /TELEGRAM_KEY does not open/);
+  assert.match((r.body as any).message, /ALERTS_KEY does not open/);
   assert.doesNotMatch(JSON.stringify(r.body), new RegExp(other));
 });
 
@@ -273,6 +281,58 @@ test('Redis locks: a held lock is busy, a lock left behind runs out, only the ho
   // The token is not in an error.
   const wrong = new RedisStore({ url: redisServer.url, token: 'wrong-token', prefix: 't:' });
   await assert.rejects(wrong.get('k'), (e: Error) => !e.message.includes('wrong-token'));
+});
+
+test('the email pages: one function, the state in Redis, and the limit per visitor across calls', async () => {
+  const e = env({ RESEND_KEY: 're_service_test_key_0123456789', RESEND_API: resend.url, EMAIL_FROM: 'Alerts <alerts@example.org>' });
+  const page = (method: string, url: string, fields?: Record<string, string>, ip = '203.0.113.5') =>
+    emailPages(e, { method, url, headers: { 'x-forwarded-for': ip }, body: fields ? new URLSearchParams(fields).toString() : '' }, deps);
+  await poll(e, cron(), deps);
+  chain.create();
+  await poll(e, cron(), deps);
+
+  const form = await page('GET', `/api/email?c=1-${SAFE}`);
+  assert.equal(form.status, 200);
+  assert.equal(typeof form.body, 'string');
+  assert.equal(form.headers?.['content-type'], 'text/html; charset=utf-8');
+  assert.match(form.body as string, /<h1>Alerts by email<\/h1>/);
+
+  // Each call is a new function: the request and the confirmation meet in Redis.
+  await page('POST', '/api/email', { c: `1-${SAFE}`, email: 'anna@example.org' });
+  assert.equal(mails.length, 1);
+  const link = /https:\/\/alerts\.example\/api\/email\?confirm=([\w-]+)/.exec(mails[0].text)!;
+  assert.ok(link, 'the link starts with PUBLIC_URL');
+  assert.match((await page('POST', '/api/email', { confirm: link[1] })).body as string, /<h1>Done<\/h1>/);
+  const sealed = redis.get('chronobox:email')!;
+  assert.doesNotMatch(sealed, /anna|example\.org/);
+
+  // The alerts go out from the poll.
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_ETH);
+  await poll(e, cron(), deps);
+  assert.deepEqual(mails.slice(1).map((m) => [m.to, m.subject]), [['anna@example.org', 'New request: Withdraw 1 ETH']]);
+
+  // The limit per visitor holds across calls, and Redis keeps no IP address.
+  let refused = 0;
+  for (let i = 0; i < EMAIL_PER_VISITOR_HOUR + 1; i++) {
+    if ((await page('POST', '/api/email', { c: `1-${SAFE}`, email: `p${i}@example.org` }, '198.51.100.7')).status === 429) refused++;
+  }
+  assert.equal(refused, 1, 'the eleventh request of one visitor within the hour');
+  assert.doesNotMatch(JSON.stringify([...redis.data.keys()]), /198\.51|203\.0/);
+  assert.doesNotMatch(logs.join('\n'), /anna|re_service_test_key/);
+
+  // Without RESEND_KEY there are no pages.
+  assert.equal((await emailPages(env(), { method: 'GET', headers: {}, body: '' }, deps)).status, 404);
+});
+
+test('the Vercel function answers a page as it is', async () => {
+  const fn = vercelFunction(async (_env, req) => ({ status: 200, body: `<p>${req.url}</p>`, headers: { 'content-type': 'text/html; charset=utf-8' } }));
+  const server = http.createServer((req, res) => { void fn(req, res); });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const res = await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/email?c=1`);
+  assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8');
+  assert.equal(await res.text(), '<p>/api/email?c=1</p>');
+  await new Promise((r) => server.close(r));
 });
 
 test('the Vercel function answers JSON', async () => {

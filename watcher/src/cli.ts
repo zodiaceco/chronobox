@@ -1,5 +1,6 @@
-// The watcher as a program on a machine that stays on: for one Chronobox, or with --all for every Chronobox
-// and a Telegram bot that asks Telegram for its messages (long polling). State in files.
+// The watcher as a program on a machine that stays on: for one Chronobox, or with --all for every Chronobox,
+// a Telegram bot that asks Telegram for its messages (long polling), and the pages of alerts by email on PORT.
+// State in files.
 //
 // Run: node src/cli.ts --help   (Node 22.18+), or the bundle: node dist/watch.mjs --help
 import * as fs from 'node:fs';
@@ -7,6 +8,7 @@ import * as path from 'node:path';
 import process from 'node:process';
 import { AllWatcher } from './all.ts';
 import { type Config, HELP, parseConfig } from './config.ts';
+import { EMAIL_PATH, Email, servePages } from './email.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
 import { Telegram } from './telegram.ts';
 import { ConfigError, errText } from './util.ts';
@@ -23,14 +25,18 @@ export async function main(argv: string[], env: Record<string, string | undefine
   if (cfg.help) { process.stdout.write(HELP); return 0; }
   let watchers: (Watcher | AllWatcher)[];
   let telegram: Telegram | undefined;
+  let email: Email | undefined;
   try {
     if (cfg.all) {
       const root: Store = cfg.dryRun ? new DryRunStore(new FileStore(cfg.stateDir)) : new FileStore(cfg.stateDir);
       telegram = cfg.telegramToken && !cfg.dryRun ? await Telegram.open(cfg, { store: root }) : undefined;
+      email = cfg.resendKey && !cfg.dryRun ? await Email.open(cfg, { store: root }) : undefined;
+      // When somebody stops in one way, the people who get the alerts in the other way are told too.
+      if (telegram && email) { telegram.peers.push(email); email.peers.push(telegram); }
       // More than one network: each one keeps its state in its own folder, in the order of RPC_URL.
       watchers = await Promise.all(cfg.networks.map((rpcUrls, i) => AllWatcher.open(
         { ...cfg, rpcUrls },
-        { telegram, store: cfg.networks.length > 1 ? root.scope(`network-${i + 1}`) : root },
+        { telegram, email, store: cfg.networks.length > 1 ? root.scope(`network-${i + 1}`) : root },
       )));
     } else {
       const w = new Watcher(cfg);
@@ -56,6 +62,17 @@ export async function main(argv: string[], env: Record<string, string | undefine
     }
     // The bot answers at once, also while the watcher waits for its next poll.
     if (!cfg.once) void telegram.run();
+  }
+  if (email && !cfg.once) {
+    try {
+      const at = await servePages(email, { port: cfg.port, host: cfg.bindAddress, trustedProxies: cfg.trustedProxies });
+      w.log(`email: the sign-up page is on ${at.host}:${at.port} at ${EMAIL_PATH}. The links in the emails start with ${cfg.publicUrl}${EMAIL_PATH}`);
+    } catch (e) {
+      console.error(`Configuration error: cannot listen on ${cfg.bindAddress}:${cfg.port} (BIND_ADDRESS, PORT): ${errText(e)}`);
+      return 2;
+    }
+  } else if (email) {
+    w.log('email: with --once there is no sign-up page. The addresses on the list get their alerts.');
   }
   for (;;) {
     let ok = true;

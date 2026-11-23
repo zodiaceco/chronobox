@@ -9,6 +9,8 @@ import { BusyError, type LockOptions, type Store } from './store.ts';
 import { type FetchFn, errText } from './util.ts';
 
 const RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+/** One more on a counter, which runs out ARGV[1] seconds after its first hit. In one step, so that no counter is left without an expiry. */
+const HIT = "local n = redis.call('incr', KEYS[1]) if n == 1 then redis.call('expire', KEYS[1], ARGV[1]) end return n";
 
 export type RedisOptions = {
   url: string;
@@ -85,6 +87,10 @@ export class RedisStore implements Store {
 
   async claim(key: string, ttlSeconds: number): Promise<boolean> {
     return (await this.cmd('SET', this.prefix + key, '1', 'NX', 'EX', ttlSeconds)) === 'OK';
+  }
+
+  async hit(key: string, ttlSeconds: number): Promise<number> {
+    return Number(await this.cmd('EVAL', HIT, 1, this.prefix + key, ttlSeconds));
   }
 
   scope(prefix: string): Store {
