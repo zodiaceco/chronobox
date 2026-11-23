@@ -270,8 +270,10 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
           </a>
         </li>
         <li>
-          <Tick />
-          <strong>Audited contracts</strong>
+          <a class="trust-link" href="https://www.zodiac.eco/security#audits" target="_blank" rel="noreferrer noopener">
+            <Tick />
+            <strong>Audited contracts</strong>
+          </a>
         </li>
       </ul>
 
