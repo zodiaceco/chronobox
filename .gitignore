@@ -2,3 +2,5 @@ node_modules
 out
 out-dev
 .DS_Store
+.vercel
+.env*
