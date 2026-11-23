@@ -74,7 +74,10 @@ export function PrivacyPage() {
 
       <Block title="What we do not do">
         <ul>
-          <li>We do not ask for your name, email address or any other account data.</li>
+          <li>
+            We do not ask for your name or any other account data. The app never asks for your email address. If you want alerts by
+            email, you give it to our alert service: see "Alerts" below.
+          </li>
           <li>
             We do not run a server for this app. The page does not send data to us or to anybody else. Alerts are a service of their own:
             see "Alerts" below.
@@ -155,9 +158,10 @@ export function PrivacyPage() {
 
       <Block title="Alerts">
         <p>
-          Alerts are optional. They do not come from this page. They come from an alert service that we run, and you start them yourself
-          in Telegram. This service is not private: to send you an alert, it must know who follows a Chronobox, and we can see that.
+          Alerts are optional. They do not come from this page. They come from an alert service that we run, and you start them yourself,
+          in Telegram or by email. This service is not private: to send you an alert, it must know who follows a Chronobox, and we can see that.
         </p>
+        <h3>In Telegram</h3>
         <p>When you press Start in Telegram, the alert service keeps:</p>
         <ul>
           <li>the number of your Telegram chat,</li>
@@ -173,13 +177,41 @@ export function PrivacyPage() {
           Telegram delivers the alerts. Telegram knows the phone number of your account, sees that you follow a Chronobox, and can read
           what the bot sends you. The privacy policy of Telegram applies to this.
         </p>
-        <p>
-          The alert service runs at Vercel Inc., USA, and keeps the encrypted list at Upstash Inc., USA. Both process the data on our
-          behalf.
-        </p>
         <p>To delete your data, send /stop to the bot. That ends the alerts and deletes your chat from the list.</p>
+        <h3>By email</h3>
         <p>
-          If you do not want us or Telegram to know this, do not use our alert service. Its code is public, and you can run it yourself on a server.
+          The app opens a page of the alert service. You give your email address there, not in the app. The alert service then sends
+          you one email with a link, and the alerts start only when you confirm with it. When you confirm, the alert service keeps:
+        </p>
+        <ul>
+          <li>your email address,</li>
+          <li>the address and the network of the Chronobox you follow,</li>
+          <li>since when you follow it.</li>
+        </ul>
+        <p>
+          We keep this list encrypted too, and the same holds: it does not hide the list from us. We can see that an email address
+          follows a Chronobox. A request that nobody confirms is deleted after one day. The confirmation email also has a link to cancel
+          it.
+        </p>
+        <p>
+          Resend Inc., USA, sends the emails on our behalf. Resend gets your email address and the text of each email. Your email
+          provider sees the emails too.
+        </p>
+        <p>
+          To delete your data, use the link at the end of every alert. That ends the alerts and deletes your email address from the
+          list.
+        </p>
+        <p>
+          To stop the page from being misused, the alert service counts how many requests come from one visitor. It counts a keyed hash
+          of your IP address, not the address itself, and only for a short time.
+        </p>
+        <h3>Where it runs</h3>
+        <p>
+          The alert service runs at Vercel Inc., USA, and keeps the encrypted lists at Upstash Inc., USA. They and Resend process the
+          data on our behalf. Data goes to the USA on the basis of the Standard Contractual Clauses of the European Commission.
+        </p>
+        <p>
+          If you do not want us, Telegram or Resend to know this, do not use our alert service. Its code is public, and you can run it yourself on a server.
           Then we learn nothing about you. "Get told" in your Chronobox shows how.
         </p>
         <p class="tech-note">Legal basis: Art. 6(1)(b) GDPR. We need this data for the service you ask for.</p>
