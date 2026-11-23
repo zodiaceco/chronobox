@@ -162,6 +162,7 @@ Needs Node 22.18 or later.
 
 ```bash
 npm ci --ignore-scripts
+(cd watcher && npm ci --ignore-scripts)   # for npm run check and the alert tests: they read the alert service
 npm run dev          # http://localhost:3130, with a test wallet for a local fork
 npm run fork         # in a second terminal: anvil fork of Ethereum mainnet on :8545
 ```
@@ -171,7 +172,7 @@ The dev build injects a test wallet ("Anvil test wallet") that signs with anvil'
 ```bash
 npm test             # unit tests
 npm run test:fork    # the full flow against the real contracts on the fork
-npm run test:fork:alerts   # the alert service against the real contracts on the fork, with stand-ins for Telegram and Resend (needs npm ci in watcher/)
+npm run test:fork:alerts   # the alert service against the real contracts on the fork, with stand-ins for Telegram and Resend
 npm run check        # TypeScript
 npm run build        # production build in out/, prints the build hash
 ```

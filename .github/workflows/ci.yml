@@ -18,6 +18,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
+      # The check reads test/alerts-fork.ts, which imports the alert service, and so its React (mail.tsx, pages.tsx).
+      - run: npm ci --ignore-scripts
+        working-directory: watcher
       - run: npm run check
       - run: npm test
       - run: npm run build
