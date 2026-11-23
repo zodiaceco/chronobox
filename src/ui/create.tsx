@@ -36,7 +36,7 @@ import {
   slowAfterMs,
   tokenBalance,
 } from "../lib/chronobox.ts";
-import { assertWallet, canBatch, errorText, isRejection, isTemporary, sendBatch, signTyped } from "../lib/wallet.ts";
+import { assertWallet, canBatch, errorText, isRejection, isTemporary, sendCalls, signTyped, waitForBatch } from "../lib/wallet.ts";
 import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalancesState } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
@@ -134,6 +134,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [slow, setSlow] = useState(false);
   const stop = useRef(false);
   const running = useRef(false);
+  // The setup batch that the wallet may still hold after "Stop waiting". The next press waits for it again.
+  const pending = useRef<{ id: string; chainId: number; wallet: Address; safe: Address } | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -381,6 +383,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     let target = plan.safe;
     // True from the moment a request goes to the wallet. After that, the chain says what happened, not an error.
     let asked = false;
+    // True when this press waited for a request sent by an earlier press.
+    let resumed = false;
     try {
       let now = await findPlan();
       setPlan(now);
@@ -395,7 +399,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       const stayed: Line[] = [];
       let later: Chosen[] = [];
 
-      if (batch) {
+      const last = pending.current;
+      if (last && !(last.chainId === chain.id && sameAddress(last.wallet, session.account) && sameAddress(last.safe, now.safe) && !now.created)) pending.current = null;
+      if (batch && pending.current) {
+        // The wallet still has the first request. A second one could end up in the same transaction and make it fail.
+        asked = true;
+        await waitForBatch(session.wallet.provider, pending.current.id, () => setProgress("waiting"), () => stop.current);
+        pending.current = null;
+        // The amounts of that first request may differ from the ones chosen now.
+        resumed = true;
+      } else if (batch) {
         const held = await nativeBalance(session.rpc, session.account);
         // A contribution that nothing can pay is left out. It never stops the setup.
         const parts = splitContribution(money.map((d) => toPick(d, true)), confirmedGive, held, 0n) ?? splitContribution(money.map((d) => toPick(d, true)), null, held, 0n)!;
@@ -411,7 +424,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         inside = money.map((d, i) => line(d, parts.stays[i]));
         if (parts.from !== "none") gave = giveText;
         asked = true;
-        await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"), () => stop.current);
+        const id = await sendCalls(session.wallet.provider, session.account, chain.id, calls);
+        pending.current = { id, chainId: chain.id, wallet: session.account, safe: now.safe };
+        await waitForBatch(session.wallet.provider, id, () => setProgress("waiting"), () => stop.current);
+        pending.current = null;
       } else {
         if (!now.created) {
           setProgress("create");
@@ -503,8 +519,11 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           open = false;
         }
       }
+      if (resumed) return finish(target, state, null, [], money.length > 0);
       return finish(target, state, inside, stayed);
     } catch (e) {
+      // Only "Stop waiting" leaves the request with the wallet. After any other end, the next press may send again.
+      if (!stop.current) pending.current = null;
       if (asked && !isRejection(e)) {
         // Something may have reached the chain all the same. Look before saying that it failed.
         setProgress("check");
@@ -650,7 +669,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               >
                 Stop waiting
               </button>
-              <p class="wiz-note">That does not undo anything. This page then looks at the chain and shows where your setup stands.</p>
+              <p class="wiz-note">
+                That does not undo anything. This page then looks at the chain and shows where your setup stands. If you try again, the page waits for the
+                same request in your wallet. It does not send a second one.
+              </p>
             </div>
           ) : null}
         </Screen>
