@@ -364,6 +364,11 @@
   gap: 10px;
 }
 
+.legal-block h3 {
+  font-size: 1.05rem;
+  margin-top: 8px;
+}
+
 .legal-block ul {
   padding-left: 1.2em;
   display: grid;
