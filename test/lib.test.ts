@@ -315,16 +315,27 @@ test("the link to the Telegram bot carries the network and the address, and matc
   assert.equal(watcher.telegramStart(11155111, safe), telegramStart(11155111, safe));
 });
 
-test("a swap request is agreed to only when it leaves nothing that waits", () => {
+test("a swap request is agreed to when nothing it leaves could run soon", () => {
   const line = { txNonce: 5n, queueNonce: 9n };
-  assert.deepEqual(swapCoverage(9n, line), { state: "ok", cancels: 4n });
-  // A point behind the line, or not ahead of it: what waits would survive the change.
+  assert.deepEqual(swapCoverage(9n, line), { state: "ok", cancels: 4n, left: 0n, runsAt: null });
+  // A point behind the line, or not ahead of it, and nothing known about what is left: refused.
   assert.deepEqual(swapCoverage(7n, line), { state: "uncovered", left: 2n });
   assert.deepEqual(swapCoverage(5n, line), { state: "uncovered", left: 4n });
   assert.deepEqual(swapCoverage(0n, line), { state: "uncovered", left: 4n });
   // A point that no real request can name.
   assert.deepEqual(swapCoverage(10n, line), { state: "impossible" });
   // An empty line: any point up to its end is fine, and the change cancels nothing.
-  assert.deepEqual(swapCoverage(3n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n });
-  assert.deepEqual(swapCoverage(9n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n });
+  assert.deepEqual(swapCoverage(3n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n, left: 0n, runsAt: null });
+  assert.deepEqual(swapCoverage(9n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n, left: 0n, runsAt: null });
+  // Left after the point, but young: queued after the owner asked. A lost wallet can always queue one
+  // more, so this must not stop the guardian. It is cancelled after the change.
+  const day = 86400n;
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1000n, cooldown: day }), { state: "ok", cancels: 2n, left: 2n, runsAt: 1000n + day });
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1000n + day / 2n, cooldown: day }), { state: "ok", cancels: 2n, left: 2n, runsAt: 1000n + day });
+  // Older than half the delay: it could run soon after the change. Cancel first.
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1001n + day / 2n, cooldown: day }), { state: "uncovered", left: 2n });
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1000n + 2n * day, cooldown: day }), { state: "uncovered", left: 2n });
+  // No delay, or a time that makes no sense: never young.
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1000n, cooldown: 0n }), { state: "uncovered", left: 2n });
+  assert.deepEqual(swapCoverage(7n, line, { createdAt: 2000n, now: 1000n, cooldown: day }), { state: "uncovered", left: 2n });
 });

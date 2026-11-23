@@ -25,7 +25,8 @@ import {
   cancelTx,
   councilSwapTx,
   delayNonces,
-  swapCoverage,
+  readSwapCoverage,
+  type SwapCoverage,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -431,9 +432,37 @@ function useLine(rpc: Rpc, delay: Address, active = true): { line: Line; retry: 
   return { line, retry: () => setRound((r) => r + 1) };
 }
 
+type Coverage = { state: "loading" } | { state: "error"; message: string } | { state: "read"; coverage: SwapCoverage };
+
+/** What the request does to the line now, read again on request. */
+function useCoverage(rpc: Rpc, delay: Address, upTo: bigint | null): { coverage: Coverage; retry: () => void } {
+  const [coverage, setCoverage] = useState<Coverage>({ state: "loading" });
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    if (upTo === null) return;
+    let stale = false;
+    setCoverage({ state: "loading" });
+    readSwapCoverage(rpc, delay, upTo).then(
+      (c) => !stale && setCoverage({ state: "read", coverage: c }),
+      (e) => !stale && setCoverage({ state: "error", message: errorText(e) }),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [rpc, delay, upTo, round]);
+  return { coverage, retry: () => setRound((r) => r + 1) };
+}
+
+/** When an item can run at the earliest, as a time of day for people. */
+function runsAtText(runsAt: bigint): string {
+  return new Date(Number(runsAt) * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
 /**
  * After the change. The change cancels what waited, but something that the lost wallet queued
- * after the guardian agreed can still be in the line, and it would run after the wait. The
+ * after the owner asked can still be in the line, and it would run after the wait. The guardian
+ * may agree with such items left (see swapCoverage): from now on nobody but the new wallet can
+ * queue, so one cancel removes them for good. The
  * owner is told it is over only when the line is empty.
  */
 function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }) {
@@ -542,7 +571,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
         </Notice>
       ) : agreed ? (
         <Notice kind="good" title="Your guardian agreed.">
-          You can change the wallet now. It happens at once.
+          Change the wallet now: it happens at once. If something was queued after you asked, cancel it with the new wallet afterwards.
         </Notice>
       ) : (
         <p class="swap-waiting" role="status">
@@ -569,7 +598,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   const { session, chain, vault, request } = props;
   const { to } = request;
   const { swap, retry } = useSwap(session.rpc, vault, request);
-  const { line, retry: readLine } = useLine(session.rpc, vault.delay);
+  const { coverage: read, retry: readLine } = useCoverage(session.rpc, vault.delay, request.upTo);
   // A second, separate read once the change has happened. The read above is from before the
   // agreement: a lost wallet can queue after it and then carry the change out itself.
   const changed = sameAddress(to, vault.controller) || swap.state === "done";
@@ -579,8 +608,9 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   const action = useAction();
   const sending = { chainId: chain.id, chainName: chain.name };
   // What the request does to the line now. The link sets its point of the line, and the old wallet
-  // can make a link: the guardian agrees only when nothing that waits is left out.
-  const coverage = line.state === "read" && request.upTo !== null ? swapCoverage(request.upTo, line) : null;
+  // can make a link. The guardian agrees when nothing that waits could run soon after the change:
+  // what is left must be young, and is cancelled once the change is done (see swapCoverage).
+  const coverage = read.state === "read" ? read.coverage : null;
   const clear = () =>
     action.run("clear", async (waiting) => {
       const now = await delayNonces(session.rpc, vault.delay);
@@ -591,11 +621,11 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   const agree = () =>
     action.run("agree", async (waiting) => {
       if (swap.state !== "ready" || request.upTo === null) return;
-      // Read again just before agreeing: the line may have grown since the page read it.
-      const now = swapCoverage(request.upTo, await delayNonces(session.rpc, vault.delay));
+      // Read again just before agreeing: the line may have changed since the page read it.
+      const now = await readSwapCoverage(session.rpc, vault.delay, request.upTo);
       if (now.state !== "ok") {
         readLine();
-        throw new Error(now.state === "impossible" ? "This link names a point of the line that does not exist. Ask the owner for a new link." : "More withdrawals wait now. Cancel them first.");
+        throw new Error(now.state === "impossible" ? "This link names a point of the line that does not exist. Ask the owner for a new link." : "A withdrawal waits that could run soon. Cancel everything that waits first.");
       }
       await sendAndWait(session.rpc, session.account, councilApproveTx(vault.council!, swap.hash), { chainId: chain.id, chainName: chain.name, ...waiting });
       setSent(true);
@@ -694,9 +724,17 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
     );
   }
   if (swap.agreed || sent) {
+    const left = coverage?.state === "ok" ? coverage.left : 0n;
     return (
       <Modal title="You agreed." onClose={props.onClose}>
-        <p>The owner can change the wallet now. You do not need to do anything more.</p>
+        <p>The owner can change the wallet now.</p>
+        {left > 0n && coverage?.state === "ok" && coverage.runsAt !== null ? (
+          <Notice kind="risk" title={left === 1n ? "One item waits that the change does not cancel." : `${left} items wait that the change does not cancel.`}>
+            Keep this page open. Once the owner changed the wallet, it asks you to cancel what is left, and then nobody can queue in its place. Do it before {runsAtText(coverage.runsAt)}.
+          </Notice>
+        ) : (
+          <p class="muted">Once the owner changed the wallet, this page checks that nothing of the old wallet still waits.</p>
+        )}
         {closeOnly}
       </Modal>
     );
@@ -711,16 +749,20 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
         Agree only if they tell you this address themselves. A message is not enough: a person who has their wallet can write to you too.
       </Notice>
       <Choice role="checkbox" on={spoke} title="I spoke to the owner, and the address is the same." disabled={!!action.busy} onClick={() => setSpoke(!spoke)} />
-      {line.state === "error" ? (
+      {read.state === "error" ? (
         <Notice kind="bad">
-          We could not read the line: {line.message}{" "}
+          We could not read the line: {read.message}{" "}
           <button type="button" class="link-button" onClick={readLine}>
             Try again
           </button>
         </Notice>
       ) : coverage?.state === "uncovered" ? (
         <Notice kind="bad" title={coverage.left === 1n ? "One withdrawal waits that this change does not cancel." : `${coverage.left} withdrawals wait that this change does not cancel.`}>
-          If the wallet of the owner is lost, they come from the person who has it, and they could still run after the change. Cancel everything that waits first. It happens at once, and nothing moves.
+          If the wallet of the owner is lost, they come from the person who has it, and they could run soon after the change. Cancel everything that waits first. It happens at once, and nothing moves.
+        </Notice>
+      ) : coverage?.state === "ok" && coverage.left > 0n && coverage.runsAt !== null ? (
+        <Notice kind="risk" title={coverage.left === 1n ? "One item was queued after the owner asked." : `${coverage.left} items were queued after the owner asked.`}>
+          The change does not cancel {coverage.left === 1n ? "it" : "them"}, but {coverage.left === 1n ? "it" : "they"} cannot run before {runsAtText(coverage.runsAt)}. After the change, the old wallet cannot queue or cancel any more, and this page asks you to cancel what is left. You can agree now.
         </Notice>
       ) : coverage?.state === "ok" && coverage.cancels > 0n ? (
         <p class="hint">The change also cancels the {coverage.cancels === 1n ? "withdrawal" : `${coverage.cancels} withdrawals`} that wait now.</p>
