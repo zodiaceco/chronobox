@@ -5,6 +5,7 @@
 export const FUNCTIONS = {
   poll: { maxDuration: 120 },
   telegram: { maxDuration: 60 },
+  email: { maxDuration: 60 },
   health: { maxDuration: 10 },
 } as const;
 
