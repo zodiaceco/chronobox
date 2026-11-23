@@ -75,6 +75,7 @@ const READS = new Set([
   "eth_call",
   "eth_getBalance",
   "eth_getCode",
+  "eth_getStorageAt",
   "eth_getLogs",
   "eth_blockNumber",
   "eth_getBlockByNumber",
