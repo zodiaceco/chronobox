@@ -4,3 +4,4 @@ out-dev
 .DS_Store
 .vercel
 .env*
+.scenarios/

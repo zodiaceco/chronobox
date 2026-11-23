@@ -15,6 +15,8 @@
     "test:fork:guardian": "node test/guardian-fork.ts",
     "test:fork:deposit": "node test/deposit-fork.ts",
     "test:fork:alerts": "node --import ./watcher/jsx.mjs test/alerts-fork.ts",
+    "scenarios": "node test/scenarios.ts",
+    "scenarios:shots": "node test/screenshots.ts",
     "test:tokens": "node test/tokens-live.ts",
     "tokens:list": "node tools/token-list.ts"
   },

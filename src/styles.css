@@ -3150,3 +3150,53 @@ button.row-strong:hover .row-hint {
   color: var(--muted);
   font-weight: 500;
 }
+
+/* #/states: every state of a Chronobox. Only in the dev server. */
+.states-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  gap: 10px;
+}
+
+.states-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 12px;
+}
+
+.states-list li > div {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 18rem;
+}
+
+.states-list small {
+  color: var(--muted);
+}
+
+.states-links {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.states-fault {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.states-empty pre {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--line, rgba(127, 127, 127, 0.12));
+  overflow-x: auto;
+}

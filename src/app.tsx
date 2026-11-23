@@ -10,6 +10,7 @@ import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
 import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
+import { StatesPage } from "./ui/states.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
 /**
@@ -22,6 +23,7 @@ type Route =
   | { page: "new" }
   | { page: "technical" }
   | { page: "privacy" }
+  | { page: "states" }
   | { page: "terms" }
   | { page: "imprint" }
   | { page: "vault"; chain: Chain; safe: Address; swap: { to: Address; upTo: bigint | null } | null }
@@ -39,6 +41,8 @@ function parseRoute(hash: string): Route {
   if (path === "/privacy") return { page: "privacy" };
   if (path === "/terms") return { page: "terms" };
   if (path === "/imprint") return { page: "imprint" };
+  // Every state of the vault page, from `npm run scenarios`. Only in the dev server.
+  if (__DEV__ && path === "/states") return { page: "states" };
   const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40})(?:&upTo=(\d{1,78}))?)?$/.exec(path);
   if (match) {
     const chain = chainByShort(match[1]);
@@ -151,7 +155,8 @@ export function App() {
   // Reconnect without a prompt when the wallet already knows this page.
   useEffect(() => {
     if (session) return;
-    const wanted = lastWallet();
+    // In the dev server, a link that names a test wallet (?as= or ?account=) opens with it at once.
+    const wanted = lastWallet() ?? (__DEV__ && /[?&](as|account)=/.test(location.search) ? "dev.anvil" : null);
     const wallet = wallets.find((w) => w.id === wanted);
     if (wallet) connect(wallet, false).catch(() => undefined);
   }, [wallets, session, connect]);
@@ -194,6 +199,9 @@ export function App() {
     body = <TermsPage />;
   } else if (route.page === "imprint") {
     body = <ImprintPage />;
+  } else if (route.page === "states") {
+    // Only the dev server has this route; the production build leaves the page out.
+    body = __DEV__ ? <StatesPage /> : null;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
