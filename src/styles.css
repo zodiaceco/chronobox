@@ -1802,6 +1802,21 @@ a:focus-visible {
   gap: 10px;
 }
 
+/* Items of the line that are not shown, and the one button that stops them all. */
+.queue-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.queue-more .hint {
+  margin: 0;
+  flex: 1 1 14rem;
+}
+
 .queue-item {
   display: flex;
   flex-wrap: wrap;

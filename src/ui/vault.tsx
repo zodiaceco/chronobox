@@ -16,6 +16,7 @@ import {
   type ItemStatus,
   type QueueItem,
   type SwapRequest,
+  cancelAllTx,
   cancelTx,
   changeDelayTx,
   changeWalletTx,
@@ -27,6 +28,7 @@ import {
   inspect,
   itemStatus,
   queuedInReceipt,
+  queueLength,
   readQueue,
   readBalances,
   readToken,
@@ -37,6 +39,7 @@ import {
   receiptTime,
   MAX_COOLDOWN,
   MIN_COOLDOWN,
+  QUEUE_PAGE,
 } from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
@@ -48,10 +51,17 @@ import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 import { RowIcon, type RowIconName } from "./row-icons.tsx";
 
 type VaultData = {
+  /** The network and the Chronobox this was read for. */
+  key: string;
   inspection: Inspection;
+  /** The front of the line, oldest first: at most QUEUE_PAGE items. `queueLength(inspection)` is how many wait. */
   queue: QueueItem[];
+  /** "reading" while the items are looked up. The page does not wait for them: cancel needs none of it. */
+  queueRead: "reading" | "done" | "failed";
   /** Null where the balance could not be read. That is "not known", never "nothing". */
   balances: (bigint | null)[];
+  /** False until the balances were read once. Until then, a null is "not read yet". */
+  balancesRead: boolean;
   /** False when the long list of tokens could not be read, and only the main ones were. */
   allRead: boolean;
   assets: Asset[];
@@ -78,22 +88,67 @@ function useVault(session: Session, chain: Chain, safe: Address) {
   useEffect(() => {
     let stale = false;
     reading.current = true;
+    const key = `${chain.id}:${safe}`.toLowerCase();
+    // Every part that arrives is shown at once. Nothing waits for the slowest part.
+    const publish = (patch: Partial<VaultData>) => {
+      if (stale || !last.current || last.current.key !== key) return;
+      const next = { ...last.current, ...patch };
+      last.current = next;
+      setData(next);
+    };
     (async () => {
       try {
         const rpc = session.rpc;
         const assets = assetsOf(chain);
         let [inspection, now] = await Promise.all([inspect(rpc, safe, blockHints(chain.id)), chainTime(rpc)]);
         // A check that passed a moment ago and cannot run now is asked once more before the page says so.
-        if (last.current?.inspection.state === "locked" && inspection.state !== "locked") {
+        if (last.current?.key === key && last.current.inspection.state === "locked" && inspection.state !== "locked") {
           inspection = await inspect(rpc, safe, blockHints(chain.id)).catch(() => inspection);
         }
-        const { balances, complete } = inspection.state === "missing" ? { balances: assets.map((): bigint | null => 0n), complete: true } : await readBalances(rpc, safe, assets);
-        const queue = inspection.state === "locked" || inspection.state === "unverified" ? await readQueue(rpc, inspection, txCache(chain.id, inspection.delay!)) : [];
         if (stale) return;
-        const next = { inspection, queue, balances, allRead: complete, assets, now, fetchedAt: Date.now() };
+        const before = last.current?.key === key ? last.current : null;
+        const readsQueue = inspection.state === "locked" || inspection.state === "unverified";
+        // A queued item never changes. What was read before and is still at the front of the line
+        // stays on the page while the line is read again, so a cancel that is being asked for does not lose its item.
+        const end = inspection.txNonce + BigInt(QUEUE_PAGE);
+        const kept =
+          readsQueue && before && sameAddress(before.inspection.delay, inspection.delay)
+            ? before.queue.filter((item) => item.nonce >= inspection.txNonce && item.nonce < inspection.queueNonce && item.nonce < end)
+            : [];
+        const missing = inspection.state === "missing";
+        const next: VaultData = {
+          key,
+          inspection,
+          queue: kept,
+          queueRead: readsQueue ? "reading" : "done",
+          balances: missing ? assets.map((): bigint | null => 0n) : (before?.balances ?? assets.map(() => null)),
+          balancesRead: missing || (before?.balancesRead ?? false),
+          allRead: missing || (before?.allRead ?? true),
+          assets,
+          now,
+          fetchedAt: Date.now(),
+        };
         last.current = next;
         setData(next);
         setError(null);
+
+        const balances = missing
+          ? Promise.resolve()
+          : readBalances(rpc, safe, assets).then(
+              ({ balances, complete }) => publish({ balances, allRead: complete, balancesRead: true }),
+              () => publish({ balancesRead: true, allRead: false }),
+            );
+        const queue = readsQueue
+          ? readQueue(rpc, inspection, txCache(chain.id, inspection.delay!), {
+              known: kept,
+              // The front of the line first. Items read before stay until their turn comes.
+              onItems: (items) => publish({ queue: [...items, ...kept.filter((item) => item.nonce > items[items.length - 1].nonce)] }),
+            }).then(
+              (queue) => publish({ queue, queueRead: "done" }),
+              () => publish({ queueRead: "failed" }),
+            )
+          : Promise.resolve();
+        await Promise.all([balances, queue]);
       } catch (e) {
         if (!stale) setError(errorText(e));
       } finally {
@@ -180,6 +235,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [sheet, setSheet] = useState<Sheet>(null);
   const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  const [cancellingAll, setCancellingAll] = useState(false);
   const [copied, setCopied] = useState(false);
   // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
   // nothing else that is pending may block it.
@@ -260,6 +316,25 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         refresh();
       }
     });
+  // The whole line as the last read saw it. It needs no item to be read: a line too long to
+  // read, or a network that cannot look the items up, does not keep the stop out of reach.
+  const cancelAll = () =>
+    cancelAction.run("cancel", async (waiting) => {
+      const tx = cancelAllTx(inspection.roles!, inspection.delay!, inspection);
+      if (!tx) return setCancellingAll(false);
+      try {
+        await sendAndWait(session.rpc, session.account, tx, { ...sending, ...waiting });
+        setCancellingAll(false);
+      } finally {
+        refresh();
+      }
+    });
+  const askCancelAll = () => {
+    cancelAction.clearError();
+    setConfirming(null);
+    setCancelling(null);
+    setCancellingAll(true);
+  };
   const remove = () =>
     action.run("remove", async (waiting) => {
       try {
@@ -285,13 +360,17 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
   // What is inside: every asset with a balance. The first one is shown large.
   const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
-  const shown = held.length > 0 ? held : [{ asset: assets[0], amount: balances[0] ?? 0n }];
-  const unread = assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol);
+  const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
+  // Until the balances are read once, a missing one is "not read yet", not "could not be read".
+  const unread = data.balancesRead ? assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol) : [];
   // The item in the line that a dialog is about may be gone by now.
   const cancelItem = cancelling ? (queue.find((q) => q.nonce === cancelling.nonce) ?? null) : null;
   const confirmItem = confirming ? (queue.find((q) => q.nonce === confirming.nonce) ?? null) : null;
   const passed = inspection.checks.filter((c) => c.ok).length;
   const cancelIndex = cancelling ? queue.findIndex((q) => q.nonce === cancelling.nonce) : -1;
+  // How many wait, from the two numbers of the inspection. The items are read separately, and only the front of the line.
+  const waitingCount = locked ? queueLength(inspection) : 0n;
+  const unshown = waitingCount - BigInt(queue.length);
 
   return (
     <section class="page vault">
@@ -334,13 +413,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
-                <span class="balance-amount">{formatAmount(h.amount, h.asset.decimals)}</span>
+                <span class="balance-amount">{h.amount === null ? "…" : formatAmount(h.amount, h.asset.decimals)}</span>
                 <span class="balance-symbol">{h.asset.symbol}</span>
               </li>
             ))}
           </ul>
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
-          {unread.length === 0 && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
+          {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {locked ? (
             <p class="vault-lock">
               <span class="dot" aria-hidden="true" />
@@ -371,9 +450,22 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </div>
       ) : null}
 
-      {vault && queue.length > 0 ? (
+      {vault && waitingCount > 0n ? (
         <div class="section">
           <h2>Waiting</h2>
+          {unshown > 0n ? (
+            <div class="queue-more" role="status">
+              <p class="hint">
+                {queueNote(data.queueRead, queue.length, unshown)}
+                {canCancel && unshown > 1n ? ` ${isGuardian ? "You can stop" : "You can cancel"} everything that waits without reading it first.` : ""}
+              </p>
+              {canCancel ? (
+                <Button kind={data.queueRead === "reading" && queue.length === 0 && waitingCount <= BigInt(QUEUE_PAGE) ? "plain" : "primary"} onClick={askCancelAll}>
+                  {waitingCount === 1n ? (isGuardian ? "Stop it" : "Cancel it") : `${isGuardian ? "Stop" : "Cancel"} all ${waitingCount}`}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           <ol class="queue">
             {queue.map((item, index) => (
               <QueueCard
@@ -436,7 +528,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
 
       {sheet === "withdraw" && vault ? (
-        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>
@@ -514,6 +606,39 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           )}
         </Modal>
       ) : null}
+      {cancellingAll && vault ? (
+        <Modal title={isGuardian ? "Stop everything that waits?" : "Cancel everything that waits?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancellingAll(false)}>
+          {waitingCount > 0n ? (
+            <>
+              <p class="big-line">{waitingCount === 1n ? "1 item" : `${waitingCount} items`}</p>
+              <p>
+                {waitingCount === 1n ? "This cancels it" : `This cancels all ${waitingCount}`}
+                {unshown > 0n ? ", also what is not shown here. " : ". "}
+                {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
+              </p>
+              <SlowNote action={cancelAction} />
+              {cancelAction.error ? <Notice kind="bad">{cancelAction.error}</Notice> : null}
+              <div class="modal-actions">
+                <Button kind="primary" busy={cancelAction.busy === "cancel"} onClick={cancelAll}>
+                  {isGuardian ? "Stop all" : "Cancel all"}
+                </Button>
+                <Button kind="quiet" onClick={() => setCancellingAll(false)} disabled={!!cancelAction.busy}>
+                  {isGuardian ? "Let it wait" : "Keep it"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p>Nothing waits any more. It was cancelled or carried out already.</p>
+              <div class="modal-actions">
+                <Button kind="primary" onClick={() => setCancellingAll(false)}>
+                  Close
+                </Button>
+              </div>
+            </>
+          )}
+        </Modal>
+      ) : null}
       {confirming && vault ? (
         <Modal title="Carry this out?" onClose={() => setConfirming(null)}>
           {confirmItem ? (
@@ -552,6 +677,15 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
     </section>
   );
+}
+
+/** What the page says about the items of the line that it does not show. */
+function queueNote(read: VaultData["queueRead"], shown: number, unshown: bigint): string {
+  const items = (n: bigint) => (n === 1n ? "1 item" : `${n} items`);
+  const more = shown > 0 ? `${items(unshown)} more` : items(unshown);
+  if (read === "reading") return shown > 0 ? `Reading ${more}…` : `${more} ${unshown === 1n ? "waits" : "wait"}. Reading what ${unshown === 1n ? "it does" : "they do"}…`;
+  if (read === "failed") return `${more} could not be read now.`;
+  return `${more} ${unshown === 1n ? "waits" : "wait"} after these. Only the first ${shown} are shown.`;
 }
 
 /** One line in the list under the balance. With an action it is a button. */
@@ -757,6 +891,8 @@ function WithdrawSheet(props: {
   assets: Asset[];
   balances: (bigint | null)[];
   queue: QueueItem[];
+  /** True when not every item of the line was read: then `reserved` can be too low. */
+  partial: boolean;
   now: bigint;
   canCancel: boolean;
   onClose: () => void;
@@ -903,6 +1039,7 @@ function WithdrawSheet(props: {
       ) : (
         <p class="hint">
           {reserved > 0n ? `${formatAmount(reserved, asset.decimals)} ${asset.symbol} is already waiting in line. ` : ""}
+          {props.partial ? "Not everything in line could be read, so more may be waiting than this counts. " : ""}
           After {delayText}, you collect it here. Then it goes to your wallet <AddressText address={vault.controller} />.
         </p>
       )}

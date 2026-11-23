@@ -44,6 +44,9 @@ import {
   queueTx,
   queuedInReceipt,
   readQueue,
+  queueLength,
+  cancelAllTx,
+  QUEUE_PAGE,
   readToken,
   safeFromReceipt,
   sendAndWait,
@@ -330,6 +333,23 @@ try {
   assert.equal(state.state, "locked");
   assert.equal(state.cooldown, WEEK);
   ok("expired items were skipped, the delay is unchanged");
+
+  step("9a. A flooded line is read at its front, and one cancel removes all of it");
+  const flood = QUEUE_PAGE + 5;
+  for (let i = 0; i < flood; i++) await sendAndWait(rpc, WALLET, queueTx(delay, withdrawalTx(WALLET, null, BigInt(i + 1))));
+  state = await inspect(rpc, safe);
+  assert.equal(queueLength(state), BigInt(flood));
+  const front = await readQueue(rpc, state);
+  assert.equal(front.length, QUEUE_PAGE);
+  assert.equal(front[0].nonce, state.txNonce);
+  assert.deepEqual(front[0].tx, withdrawalTx(WALLET, null, 1n));
+  ok(`${flood} items wait, the first ${QUEUE_PAGE} are read`);
+  await sendAndWait(rpc, WALLET, cancelAllTx(roles, delay, state)!);
+  state = await inspect(rpc, safe);
+  assert.equal(state.txNonce, state.queueNonce);
+  assert.equal(queueLength(state), 0n);
+  assert.equal(state.state, "locked");
+  ok("one cancel, read from the two numbers alone, emptied the line");
 
   step("9b. An RPC without old logs");
   const noHistory: Rpc = async (method, params = []) => {

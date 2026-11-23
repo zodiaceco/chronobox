@@ -1113,14 +1113,41 @@ export type TxCache = {
 const notFound = new Map<string, number>();
 const LOOK_AGAIN_MS = 120_000;
 
-/** Reads every pending queue item, oldest first. */
-export async function readQueue(rpc: Rpc, inspection: Inspection, cache?: TxCache): Promise<QueueItem[]> {
+/**
+ * How many items of the line are read. Only the oldest item can run next, so the front of the
+ * line is what matters. A stolen wallet can queue as much as it likes, and every item costs
+ * many reads: without a limit, a long line would keep the page busy for as long as it likes.
+ * Everything after the limit is counted, not read, and one cancel removes it all (`cancelAllTx`).
+ */
+export const QUEUE_PAGE = 20;
+
+/** How many items wait in the line. It needs no reads beyond the inspection. */
+export function queueLength(inspection: Pick<Inspection, "txNonce" | "queueNonce">): bigint {
+  return inspection.queueNonce > inspection.txNonce ? inspection.queueNonce - inspection.txNonce : 0n;
+}
+
+export type ReadQueueOptions = {
+  /** At most this many items, from the front of the line. */
+  limit?: number;
+  /** Items read before. A queued item never changes, so one whose content was found is not read again. */
+  known?: readonly QueueItem[];
+  /** Called with the items read so far, oldest first, after each few. */
+  onItems?: (items: QueueItem[]) => void;
+};
+
+/** Reads the pending queue items at the front of the line, oldest first. */
+export async function readQueue(rpc: Rpc, inspection: Inspection, cache?: TxCache, options: ReadQueueOptions = {}): Promise<QueueItem[]> {
   const delay = inspection.delay;
   if (!delay) return [];
+  const limit = BigInt(options.limit ?? QUEUE_PAGE);
+  const end = inspection.queueNonce - inspection.txNonce > limit ? inspection.txNonce + limit : inspection.queueNonce;
   const nonces: bigint[] = [];
-  for (let nonce = inspection.txNonce; nonce < inspection.queueNonce; nonce++) nonces.push(nonce);
+  for (let nonce = inspection.txNonce; nonce < end; nonce++) nonces.push(nonce);
+  const known = new Map((options.known ?? []).filter((item) => item.tx !== null).map((item) => [item.nonce, item]));
 
   const one = async (nonce: bigint): Promise<QueueItem> => {
+    const seen = known.get(nonce);
+    if (seen) return seen;
     const [createdAt, hash] = await Promise.all([
       read(rpc, delay, "getTxCreatedAt(uint256)", [nonce], ["uint256"]).then((r) => r[0] as bigint),
       read(rpc, delay, "getTxHash(uint256)", [nonce], ["bytes32"]).then((r) => r[0] as Hex),
@@ -1144,7 +1171,10 @@ export async function readQueue(rpc: Rpc, inspection: Inspection, cache?: TxCach
 
   // A few at a time. The order of the line is the order of the numbers, not of the answers.
   const items: QueueItem[] = [];
-  for (let i = 0; i < nonces.length; i += 3) items.push(...(await Promise.all(nonces.slice(i, i + 3).map(one))));
+  for (let i = 0; i < nonces.length; i += 3) {
+    items.push(...(await Promise.all(nonces.slice(i, i + 3).map(one))));
+    options.onItems?.([...items]);
+  }
   return items;
 }
 
@@ -1621,6 +1651,16 @@ export function cancelTx(roles: Address, delay: Address, nonce: bigint): TxReque
       true,
     ]),
   };
+}
+
+/**
+ * Cancels the whole line as it was read: everything before `queueNonce`. It needs only the two
+ * numbers of the inspection, not what the items are, so a line too long to read can still be
+ * stopped at once. Null when nothing waits. Something queued after the read is not covered:
+ * it shows up on the next read, and waits its full delay like everything else.
+ */
+export function cancelAllTx(roles: Address, delay: Address, line: Pick<Inspection, "txNonce" | "queueNonce">): TxRequest | null {
+  return line.queueNonce > line.txNonce ? cancelTx(roles, delay, line.queueNonce - 1n) : null;
 }
 
 /** The wallet that a change-wallet batch would enable, read from its first call. Null for anything else. */
