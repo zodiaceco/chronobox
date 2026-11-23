@@ -26,12 +26,9 @@ import {
   councilExecTx,
   councilHash,
   councilOwners,
-  agreementCursor,
-  councilHashLocal,
   councilSwapTx,
   createTx,
   delayNonces,
-  findAgreedSwap,
   depositTx,
   executeTx,
   inspect,
@@ -188,8 +185,6 @@ try {
   const swap = councilSwapTx(parts() as any, owners, SECOND, requested.queueNonce)!;
   for (const bad of [WALLET, GUARDIAN, council, safe, null]) assert.equal(councilSwapTx(parts() as any, owners, bad, requested.queueNonce), null);
   const hash = await councilHash(rpc, council, swap);
-  const [councilNonce] = await Promise.all([rpc("eth_call", [{ to: council, data: call("nonce()", []) }, "latest"]).then(toBigInt)]);
-  assert.equal(councilHashLocal(1n, council, swap, councilNonce), hash, "the hash computed here is the Safe's");
   const exec = councilExecTx(council, swap, owners);
   await reverts(WALLET, exec, /GS025/, "the wallet changes the wallet without the guardian");
   await reverts(GUARDIAN, exec, /GS025/, "the guardian changes the wallet without the wallet");
@@ -199,16 +194,13 @@ try {
   assert.equal(await councilApproved(rpc, council, GUARDIAN, hash), true);
   await reverts(STRANGER, exec, /GS025/, "a stranger carries it out after the guardian agreed");
   // Then again and again after the guardian agreed: the signed change cannot know of these, and
-  // they must not hide the agreement from the owner.
+  // they must not change what the guardian agreed to. The request carries its own point of the line.
   const late = withdrawalTx(WALLET, null, ETH / 2n);
   for (let i = 0; i < 5; i++) await sendAndWait(rpc, WALLET, queueTx(delay, late));
-  const cursor = agreementCursor();
-  for (let round = 0; round < 2; round++) {
-    const agreed = await findAgreedSwap(rpc, parts() as any, owners, SECOND, cursor);
-    assert.ok(agreed && agreed.hash === hash, "the agreement is found five items later");
-  }
-  assert.equal(await findAgreedSwap(rpc, parts() as any, owners, THIRD, agreementCursor()), null, "no agreement for another wallet");
-  ok("five more items in the line do not hide the guardian's agreement");
+  const rebuilt = councilSwapTx(parts() as any, await councilOwners(rpc, council), SECOND, requested.queueNonce)!;
+  assert.equal(await councilHash(rpc, council, rebuilt), hash);
+  assert.equal(await councilApproved(rpc, council, GUARDIAN, hash), true);
+  ok("five more items in the line do not change the request, and the agreement still holds");
   console.log(`  gas used by the change: ${gas(await sendAndWait(rpc, WALLET, exec))}`);
   const line = await delayNonces(rpc, delay);
   assert.equal(line.txNonce, requested.queueNonce, "the change cancelled everything up to the request");

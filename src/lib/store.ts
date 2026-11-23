@@ -5,7 +5,7 @@
  */
 import type { Token } from "./chains.ts";
 import { type Address, type Hex, sameAddress } from "./hex.ts";
-import { type BlockHints, type DelayTx, type TxCache, delayTxHash, predictSafe } from "./chronobox.ts";
+import { type BlockHints, type DelayTx, type SwapRequest, type TxCache, delayTxHash, predictSafe } from "./chronobox.ts";
 import { parseAddress } from "./hex.ts";
 
 function load<T>(key: string, fallback: T): T {
@@ -156,18 +156,22 @@ export function setLastWallet(rdns: string | null): void {
 }
 
 /**
- * A wallet change that the owner asked the guardian to agree to: the new wallet. It is kept so
- * that the owner can close the page while the guardian looks at it. The chain decides what is
- * true: this is only what the page offers to finish.
+ * A wallet change that the owner asked the guardian to agree to: the new wallet, and the point
+ * of the line it cancels up to. It is kept so that the owner can close the page while the
+ * guardian looks at it. The chain decides what is true: this is only what the page offers to
+ * finish. A request kept by an older version has no point of the line, and is dropped.
  */
-export function pendingSwap(chainId: number, safe: Address): Address | null {
+export function pendingSwap(chainId: number, safe: Address): SwapRequest | null {
   const value = load<unknown>(`chronobox:swap:${chainId}:${safe.toLowerCase()}`, null);
-  return typeof value === "string" ? parseAddress(value) : null;
+  if (!value || typeof value !== "object") return null;
+  const { to, upTo } = value as { to?: unknown; upTo?: unknown };
+  const address = typeof to === "string" ? parseAddress(to) : null;
+  return address && typeof upTo === "string" && /^\d{1,78}$/.test(upTo) ? { to: address, upTo: BigInt(upTo) } : null;
 }
 
-export function setPendingSwap(chainId: number, safe: Address, to: Address | null): void {
+export function setPendingSwap(chainId: number, safe: Address, request: SwapRequest | null): void {
   const key = `chronobox:swap:${chainId}:${safe.toLowerCase()}`;
-  if (to) return save(key, to);
+  if (request) return save(key, { to: request.to, upTo: request.upTo.toString() });
   try {
     localStorage.removeItem(key);
   } catch {

@@ -13,6 +13,7 @@ import {
   type CouncilTx,
   type Inspection,
   type Rpc,
+  type SwapRequest,
   addGuardianTx,
   councilApproveTx,
   councilCompatible,
@@ -20,10 +21,9 @@ import {
   councilExecTx,
   councilHash,
   councilOwners,
-  agreementCursor,
+  councilApproved,
   councilSwapTx,
   delayNonces,
-  findAgreedSwap,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -32,9 +32,9 @@ import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, cop
 import { QrCode } from "./deposit.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 
-/** The page of this Chronobox, as a link for another person. `to`: with a request for a new wallet. */
-export function guardianLink(chain: Chain, safe: Address, to?: Address): string {
-  return `${location.origin}${location.pathname}#/v/${chain.short}:${safe}${to ? `?to=${to}` : ""}`;
+/** The page of this Chronobox, as a link for another person. `request`: with a request for a new wallet. */
+export function guardianLink(chain: Chain, safe: Address, request?: SwapRequest): string {
+  return `${location.origin}${location.pathname}#/v/${chain.short}:${safe}${request ? `?to=${request.to}&upTo=${request.upTo}` : ""}`;
 }
 
 /** A line of text that is copied with one tap. */
@@ -342,15 +342,15 @@ type Swap =
   | { state: "ready"; tx: CouncilTx; hash: Hex; owners: Address[]; agreed: boolean };
 
 /** Reads the request from the chain every few seconds: what both sign, and whether the guardian agreed. */
-function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: () => void } {
+function useSwap(rpc: Rpc, vault: VaultRef, request: { to: Address; upTo: bigint | null }): { swap: Swap; retry: () => void } {
   const [swap, setSwap] = useState<Swap>({ state: "loading" });
   const [round, setRound] = useState(0);
   const reading = useRef(false);
-  const cursor = useRef(agreementCursor());
   const { council, guardian, roles, members } = vault;
+  const { to, upTo } = request;
   useEffect(() => {
-    cursor.current = agreementCursor();
-    if (!council || !guardian || !roles || !members) return setSwap({ state: "bad" });
+    // A link without a point of the line is from an older version: it cannot be agreed to.
+    if (!council || !guardian || !roles || !members || upTo === null) return setSwap({ state: "bad" });
     let stale = false;
     let hadAnswer = false;
     setSwap({ state: "loading" });
@@ -368,25 +368,18 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
           hadAnswer = true;
           return !stale && setSwap({ state: "done" });
         }
-        // The change also cancels the whole line, up to where it stands now. A lost wallet can queue
-        // after the guardian agreed, so the signed change may name an earlier point. That agreement
-        // stays good until the shared Safe moves on: find it, wherever the line is now. Whatever it
-        // leaves behind is caught after the change (see SwapDoneSheet).
-        const guarded = { ...vault, roles, guardian, council, members };
-        const agreed = await findAgreedSwap(rpc, guarded, owners, to, cursor.current);
-        if (agreed) {
-          hadAnswer = true;
-          return !stale && setSwap({ state: "ready", ...agreed, owners, agreed: true });
-        }
-        const { queueNonce } = await delayNonces(rpc, vault.delay);
-        const tx = councilSwapTx(guarded, owners, to, queueNonce);
+        // The change cancels the line up to the point fixed in the request. Both sides build the same
+        // transaction from it, whatever the line does meanwhile. What a lost wallet queues after that
+        // point is caught after the change (see SwapDoneSheet).
+        const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to, upTo);
         if (!tx) {
           hadAnswer = true;
           return !stale && setSwap({ state: "bad" });
         }
         const hash = await councilHash(rpc, council, tx);
+        const agreed = await councilApproved(rpc, council, guardian, hash);
         hadAnswer = true;
-        if (!stale) setSwap({ state: "ready", tx, hash, owners, agreed: false });
+        if (!stale) setSwap({ state: "ready", tx, hash, owners, agreed });
       } catch (e) {
         // After a first good read, a temporary failure keeps the last answer and asks again next round.
         if (!stale && !hadAnswer) setSwap({ state: "error", message: errorText(e) });
@@ -401,7 +394,7 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
       reading.current = false;
       clearInterval(timer);
     };
-  }, [rpc, vault.safe, vault.delay, vault.controller, council, guardian, roles, members?.join(","), to, round]);
+  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to, upTo, round]);
   return { swap, retry: () => setRound((r) => r + 1) };
 }
 
@@ -498,12 +491,13 @@ function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }
 }
 
 /** The owner's side while the guardian decides. */
-export function AskGuardianSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onDrop: () => void; onClose: () => void }) {
-  const { session, chain, vault, to } = props;
-  const { swap, retry } = useSwap(session.rpc, vault, to);
+export function AskGuardianSheet(props: { session: Session; chain: Chain; vault: VaultRef; request: SwapRequest; onDrop: () => void; onClose: () => void }) {
+  const { session, chain, vault, request } = props;
+  const { to } = request;
+  const { swap, retry } = useSwap(session.rpc, vault, request);
   const [done, setDone] = useState(false);
   const action = useAction();
-  const link = guardianLink(chain, vault.safe, to);
+  const link = guardianLink(chain, vault.safe, request);
 
   useEffect(() => {
     if (swap.state === "done") {
@@ -569,9 +563,10 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
 }
 
 /** The guardian's side: a link from the owner asks for a new wallet. */
-export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onClose: () => void }) {
-  const { session, chain, vault, to } = props;
-  const { swap, retry } = useSwap(session.rpc, vault, to);
+export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; request: { to: Address; upTo: bigint | null }; onClose: () => void }) {
+  const { session, chain, vault, request } = props;
+  const { to } = request;
+  const { swap, retry } = useSwap(session.rpc, vault, request);
   const changed = sameAddress(to, vault.controller) || swap.state === "done";
   const { line } = useLine(session.rpc, vault.delay, changed);
   const [spoke, setSpoke] = useState(false);

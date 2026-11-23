@@ -1449,6 +1449,9 @@ export function removeGuardianTx(vault: { roles: Address; guardian: Address; cou
 /** A transaction of the shared 2 of 2 Safe. */
 export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: number };
 
+/** What the owner asks the guardian to agree to: the new wallet, and the point of the line that the change cancels up to. */
+export type SwapRequest = { to: Address; upTo: bigint };
+
 /**
  * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The shared
  * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
@@ -1461,6 +1464,10 @@ export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: numb
  * sets the Delay's txNonce to `cancelUpTo` (the queueNonce when the request was read), and gives
  * the role back. That call may fail without stopping the change (the line may have moved since
  * the signatures), so a caller must still read the line afterwards: see `delayNonces`.
+ *
+ * `cancelUpTo` is fixed once, when the owner asks, and travels with the request (see
+ * `SwapRequest`). Never derive it from the line at the time of reading: a lost wallet can move
+ * the line, and with it the hash that the guardian agreed to.
  */
 export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null, cancelUpTo: bigint): CouncilTx | null {
   const { delay, roles, controller: from, council, guardian } = vault;
@@ -1486,103 +1493,6 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
     withRole(roles, call("disableModule(address,address)", [members.remove(from), from])),
     batchItem(council, call("swapOwner(address,address,address)", [ownerAt === 0 ? SENTINEL : owners[ownerAt - 1], from, to])),
   ]);
-}
-
-const SAFE_DOMAIN_TYPE = keccak(utf8("EIP712Domain(uint256 chainId,address verifyingContract)"));
-const SAFE_TX_TYPE = keccak(
-  utf8("SafeTx(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,uint256 nonce)"),
-);
-const APPROVE_HASH = topic("ApproveHash(bytes32,address)");
-
-/** What `councilHash` reads from the Safe, computed here (Safe 1.4.1), so that many candidates cost no request. */
-export function councilHashLocal(chainId: bigint, council: Address, tx: CouncilTx, nonce: bigint): Hex {
-  const domain = keccak(encode(["bytes32", "uint256", "address"], [SAFE_DOMAIN_TYPE, chainId, council]));
-  const body = keccak(
-    encode(
-      ["bytes32", "address", "uint256", "bytes32", "uint8", "uint256", "uint256", "uint256", "address", "address", "uint256"],
-      [SAFE_TX_TYPE, tx.to, tx.value, keccak(tx.data), tx.operation, 0n, 0n, 0n, ZERO, ZERO, nonce],
-    ),
-  );
-  return keccak(concat("0x1901", domain, body));
-}
-
-/**
- * Remembers, across reads, what the search for the guardian's agreement has seen:
- * the hashes the guardian approved, up to which block, and the point of the line it agreed to.
- */
-export type AgreementCursor = { from: bigint | null; hashes: Set<string>; upTo: bigint | null; logs: boolean };
-
-export function agreementCursor(): AgreementCursor {
-  return { from: null, hashes: new Set(), upTo: null, logs: true };
-}
-
-/**
- * The wallet change that the guardian agreed to, if there is one that the shared Safe can still run.
- *
- * The change names the point of the line it cancels up to, so its hash moves whenever somebody
- * queues something. A lost wallet can queue as often as it likes, so the agreement is never looked
- * for in a window behind the line. It comes from the chain: every ApproveHash of the guardian on
- * the shared Safe, matched against the change at every point of the line, newest first. The match
- * is then confirmed by the Safe itself. When the network refuses the logs, the point found before
- * and the last few points are asked directly.
- */
-export async function findAgreedSwap(
-  rpc: Rpc,
-  vault: Guarded,
-  owners: readonly Address[],
-  to: Address,
-  cursor: AgreementCursor,
-): Promise<{ tx: CouncilTx; hash: Hex } | null> {
-  const { council, guardian } = vault;
-  const build = (upTo: bigint) => councilSwapTx(vault, owners, to, upTo);
-  const confirm = async (upTo: bigint) => {
-    const tx = build(upTo);
-    if (!tx) return null;
-    const hash = await councilHash(rpc, council, tx);
-    return (await councilApproved(rpc, council, guardian, hash)) ? { tx, hash } : null;
-  };
-  const { queueNonce } = await delayNonces(rpc, vault.delay);
-
-  if (cursor.upTo !== null && cursor.upTo <= queueNonce) {
-    const known = await confirm(cursor.upTo);
-    if (known) return known;
-    cursor.upTo = null;
-  }
-
-  if (cursor.logs) {
-    try {
-      const latest = toBigInt(await rpc("eth_blockNumber", []));
-      const logs = await logsOf(rpc, council, cursor.from);
-      for (const log of logs) {
-        if (log.topics[0] === APPROVE_HASH && log.topics[2] && sameAddress(checksum(log.topics[2].slice(-40)), guardian)) cursor.hashes.add(strip(log.topics[1]).toLowerCase());
-      }
-      cursor.from = latest;
-      if (cursor.hashes.size === 0) return null;
-      const [[nonce], chainId] = await Promise.all([read(rpc, council, "nonce()", [], ["uint256"]) as Promise<[bigint]>, rpc("eth_chainId", []).then(toBigInt)]);
-      for (let upTo = queueNonce; upTo >= 0n; upTo--) {
-        const tx = build(upTo);
-        if (!tx) return null;
-        if (!cursor.hashes.has(strip(councilHashLocal(chainId, council, tx, nonce)).toLowerCase())) continue;
-        const found = await confirm(upTo);
-        if (found) {
-          cursor.upTo = upTo;
-          return found;
-        }
-      }
-      return null;
-    } catch {
-      // This network does not give the logs. Ask the Safe for the last points instead.
-      cursor.logs = false;
-    }
-  }
-  for (let upTo = queueNonce; upTo >= 0n && queueNonce - upTo < 16n; upTo--) {
-    const found = await confirm(upTo);
-    if (found) {
-      cursor.upTo = upTo;
-      return found;
-    }
-  }
-  return null;
 }
 
 /** Where the line of the Delay stands: items from txNonce up to queueNonce wait, or can run. */
