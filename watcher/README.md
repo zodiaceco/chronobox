@@ -149,7 +149,7 @@ How a person subscribes (on Vercel too):
 - The bot checks on the chain that the address is a Chronobox. Then it keeps the pair (chat, Chronobox) and answers with what waits there right now.
 - From then on every alert of that Chronobox goes to that chat. "All quiet" arrives without a sound. Money to another address is marked with a warning sign, and a change of the Chronobox with an alarm sign, because Telegram cannot ring louder.
 - `/stop` ends all alerts of a chat and deletes it. `/stop <address>` ends one. `/list` shows what the chat follows. `/privacy` says what the bot keeps. A chat can follow 20 Chronoboxes at most.
-- When a chat stops, every other chat that follows the same Chronobox is told. Alerts must not go off in silence.
+- When a chat stops, every other chat that follows the same Chronobox is told. Alerts must not go off in silence. But anybody can follow a public Chronobox, so only a follow of a day or more tells the others, and they are told once an hour at most: more stops in that hour come together in the next message ("3 chats … have stopped them"), which the poll sends. A stop is never dropped, so a stranger cannot hide a real one for more than an hour.
 - A chat that blocks the bot is removed. A message that fails is tried again on the next poll, and a chat that already got it does not get it twice.
 - The bot works in a group too: add it to the group and send the same `/start` command there.
 
@@ -172,7 +172,7 @@ Things to know:
 ### What the service keeps
 
 - Public chain data: the Chronoboxes it found and what waits in them.
-- The list of chats (`STATE_DIR/telegram.json`, or the key `chronobox:telegram` in Redis): for each chat that pressed Start, the number of the chat and the Chronoboxes it follows. No name, no username, no phone number, no message.
+- The list of chats (`STATE_DIR/telegram.json`, or the key `chronobox:telegram` in Redis): for each chat that pressed Start, the number of the chat, the Chronoboxes it follows, and since when. For each Chronobox, how many chats stopped that the others were not told of yet. No name, no username, no phone number, no message.
 - That list is personal data. It links a Telegram account to a Chronobox, and so to an amount of money.
 - The list is encrypted with `TELEGRAM_KEY` (AES-256-GCM). It holds no address and no chat number that somebody can read without the key. So the file, the Redis database, a backup of either, or the disk alone are worth nothing.
 - Keep the key and the token away from where the list is: in the secret store of your host, or in a file that only the service can read. On Vercel the key is in the environment of the project, and the list is at Upstash, two different companies. With the list and the token, somebody could write to every person as the real bot.

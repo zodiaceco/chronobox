@@ -114,7 +114,9 @@ try {
   const logs: string[] = [];
   const settings = { RPC_URL: URL, STATE_DIR: dir, HEARTBEAT_HOURS: "0", TELEGRAM_TOKEN: TOKEN, TELEGRAM_KEY: KEY, TELEGRAM_API: telegramApi };
   const config = parseConfig(["--all"], settings);
-  const bot = new Telegram(config, { log: (line) => logs.push(line) });
+  // The time of the bot: step 8 moves it a day on, because only a follow of a day or more tells the others of a stop.
+  let later = 0;
+  const bot = new Telegram(config, { log: (line) => logs.push(line), clock: () => Date.now() + later });
   await bot.start();
   const watcher = new AllWatcher(config, { log: (line) => logs.push(line), telegram: bot });
   assert.equal(await watcher.poll(), true);
@@ -262,6 +264,13 @@ try {
   ok("a Chronobox with a guardian is still a Chronobox for the alert service");
 
   step("8. Stop");
+  // A stranger who follows and stops at once tells nobody: else anybody could ring the phones of all followers.
+  person(CURIOUS, `/start ${telegramStart(1, anna.safe)}`);
+  person(CURIOUS, "/stop");
+  await bot.pump();
+  assert.deepEqual(chats(heard()), [CURIOUS, CURIOUS]);
+  ok("a stranger who follows and stops at once rings nobody else");
+  later = 24 * 3600 * 1000;
   person(ANNA_PHONE, "/stop");
   await bot.pump();
   told = heard();

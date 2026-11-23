@@ -24,8 +24,8 @@ export function AlertsSheet(props: { chain: Chain; safe: Address; onClose: () =>
         </a>
       </div>
       <p class="deposit-note">
-        Telegram opens. Press Start there. The alert service keeps the number of your Telegram chat and the address of this Chronobox.
-        Nothing else.
+        Telegram opens. Press Start there. The alert service keeps the number of your Telegram chat, the address of this Chronobox, and
+        since when you follow it. Nothing else.
       </p>
     </Modal>
   );

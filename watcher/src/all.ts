@@ -395,6 +395,8 @@ export class AllWatcher {
     if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll (the oldest waits ${this.report.overdueSeconds}s)`);
     this.report.queued = (s.queue ?? []).length;
     await this.save();
+    // Stops that the other followers were not told of yet, because one was told in the last hour.
+    await this.opts.telegram?.sendNotices().catch((e) => this.log(`telegram: could not send the notices of stops: ${errText(e)}`));
     return ok;
   }
 }

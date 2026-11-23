@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, MemoryStore, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, MemoryStore, NOTICE_GAP_MS, NOTICE_MIN_FOLLOW_MS, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
@@ -33,6 +33,8 @@ let said: Said[] = [];
 let inbox: { update_id: number; message: unknown }[] = [];
 let nextUpdate = 1;
 let tgCalls: string[] = [];
+/** The time of the bot (ms). */
+let tgNow = Date.now();
 /** What sendMessage answers for a chat: a Telegram error, one time ("once") or every time. */
 let tgRefuse: Record<number, { code: number; description: string; once?: boolean }> = {};
 const person = (chat: number, text: string, type = 'private') => {
@@ -85,6 +87,7 @@ beforeEach(() => {
   said = [];
   inbox = [];
   tgCalls = [];
+  tgNow = Date.now();
   tgRefuse = {};
   logs.length = 0;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'chronobox-watch-'));
@@ -1017,7 +1020,7 @@ function withBot(extra: Record<string, string> = {}, hookToo = true) {
   };
   if (hookToo) env.WEBHOOK_URL = `${notify.url}/hook`;
   const cfg = parseConfig(['--all'], env);
-  const bot = new Telegram(cfg, { log: (m) => logs.push(m) });
+  const bot = new Telegram(cfg, { log: (m) => logs.push(m), clock: () => tgNow });
   const w = new AllWatcher(cfg, { log: (m) => logs.push(m), telegram: bot });
   return { w, bot, cfg };
 }
@@ -1040,7 +1043,7 @@ test('Telegram: Start subscribes a chat, and the alerts of the vault go to it', 
   assert.equal(saidTo(ANNA).length, 1);
   assert.match(saidTo(ANNA)[0], /^You now get the alerts of the Chronobox 0x5a5a…5a5a on Ethereum\./);
   assert.match(saidTo(ANNA)[0], /Nothing waits there right now\./);
-  assert.match(saidTo(ANNA)[0], /I keep the number of this chat and the address of the Chronobox\. I keep nothing else\./);
+  assert.match(saidTo(ANNA)[0], /I keep the number of this chat, the address of the Chronobox, and since when this chat follows it\. I keep nothing else\./);
   assert.match(saidTo(ANNA)[0], /I never send links/);
   assert.doesNotMatch(saidTo(ANNA)[0], /https?:/);
   // The bot keeps the number of the chat and the vault, and nothing about the person.
@@ -1050,7 +1053,7 @@ test('Telegram: Start subscribes a chat, and the alerts of the vault go to it', 
   const text = fs.readFileSync(path.join(dir, 'all', 'telegram.json'), 'utf8');
   const file = JSON.parse(text);
   assert.deepEqual(Object.keys(file).sort(), ['offset', 'sealed', 'version']);
-  assert.equal(file.version, 2);
+  assert.equal(file.version, 3);
   assert.doesNotMatch(text, new RegExp(`${SAFE.slice(2)}|chats|Somebody|somebody|${TG_KEY}`, 'i'));
   assert.doesNotMatch(Buffer.from(file.sealed, 'base64').toString('latin1'), new RegExp(`${SAFE.slice(2)}|${ANNA}`));
 
@@ -1173,6 +1176,8 @@ test('Telegram: /stop, /list and /privacy', async () => {
   assert.equal(saidTo(ANNA)[1], `This chat follows:\n${SAFE} on Ethereum\n\n/stop ends all of them. /stop and an address ends one.`);
   assert.match(saidTo(ANNA)[2], /I do not keep your name, your username or your messages\./);
 
+  // A day later. (A follow of less than a day tells nobody: see the next test.)
+  tgNow += NOTICE_MIN_FOLLOW_MS;
   person(ANNA, `/stop ${STRANGER}`);
   person(ANNA, `/stop ${SAFE}`);
   person(ANNA, '/stop');
@@ -1191,6 +1196,67 @@ test('Telegram: /stop, /list and /privacy', async () => {
   chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
   await w.poll();
   assert.equal(said.length, 0);
+});
+
+test('Telegram: a stranger who follows and stops again and again rings nobody; real stops come together, once an hour', async () => {
+  const DAVE = 4004, STRANGE = 4666;
+  const { w, bot } = withBot();
+  await w.poll();
+  chain.create();
+  await w.poll();
+  for (const chat of [ANNA, BEN, CARL, DAVE]) person(chat, START);
+  await bot.pump();
+  said = [];
+  // The finding: anybody can follow a public Chronobox and stop again, to ring the phones of all its followers.
+  for (let i = 0; i < 10; i++) { person(STRANGE, START); person(STRANGE, '/stop'); }
+  await bot.pump();
+  assert.deepEqual(said.filter((m) => m.chat !== STRANGE), [], 'a follow of less than a day tells nobody');
+
+  // A day later, real followers stop. The first stop is told at once.
+  tgNow += NOTICE_MIN_FOLLOW_MS;
+  person(BEN, '/stop');
+  await bot.pump();
+  const told = 'A chat that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them. You still get them here.';
+  assert.deepEqual(said.filter((m) => m.chat !== BEN && m.chat !== STRANGE).map((m) => [m.chat, m.text]), [[ANNA, told], [CARL, told], [DAVE, told]]);
+  // Two more within the hour: nobody is rung again yet, and nothing is lost.
+  said = [];
+  tgNow += 600_000;
+  person(CARL, '/stop');
+  person(DAVE, '/stop');
+  await bot.pump();
+  await w.poll();
+  assert.deepEqual(said.filter((m) => m.chat === ANNA), []);
+  // An hour after the first one, the poll sends them together.
+  tgNow += NOTICE_GAP_MS;
+  await w.poll();
+  assert.deepEqual(saidTo(ANNA), [`2 chats that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum have stopped them since ${fmtWhen(Math.floor((tgNow - NOTICE_GAP_MS) / 1000))}. You still get them here.`]);
+  await w.poll();
+  assert.equal(saidTo(ANNA).length, 1, 'once');
+});
+
+test('Telegram: a list of version 2 (the chats alone) still opens, and its follows count as a day old', async () => {
+  const crypto = await import('node:crypto');
+  const { w, bot, cfg } = withBot();
+  await w.poll();
+  chain.create();
+  await w.poll();
+  // Version 2 sealed the chats alone, with the same key and label.
+  const key = crypto.scryptSync(TG_KEY, 'chronobox-telegram-chats-v2', 32);
+  const nonce = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  cipher.setAAD(Buffer.from('chronobox-telegram-chats-v2'));
+  const body = Buffer.concat([cipher.update(JSON.stringify({ [ANNA]: [`1-${SAFE}`], [BEN]: [`1-${SAFE}`] })), cipher.final()]);
+  fs.writeFileSync(path.join(dir, 'all', 'telegram.json'), JSON.stringify({ version: 2, sealed: Buffer.concat([nonce, cipher.getAuthTag(), body]).toString('base64') }));
+  const old = await Telegram.open(cfg, { log: (m) => logs.push(m), clock: () => tgNow });
+  assert.deepEqual(old.subscribers(1, SAFE), [String(ANNA), String(BEN)]);
+  void bot;
+  const w2 = new AllWatcher(cfg, { log: (m) => logs.push(m), telegram: old });
+  await w2.poll();
+  said = [];
+  person(BEN, '/stop');
+  await old.pump();
+  assert.match(saidTo(ANNA)[0], /^A chat that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them\./);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'all', 'telegram.json'), 'utf8')).version, 3);
 });
 
 test('Telegram: a failed chat is tried again without a second message to the others, and a blocked bot is a stop', async () => {
@@ -1266,7 +1332,7 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
   // A list from before the encryption is sealed at the first start.
   fs.writeFileSync(file, JSON.stringify({ version: 1, offset: 7, chats: { [CARL]: [`1-${SAFE}`] } }));
   const moved = await Telegram.open(cfg, { log: (m) => logs.push(m) });
-  assert.deepEqual(moved.state, { offset: 7, chats: { [CARL]: [`1-${SAFE}`] } });
+  assert.deepEqual(moved.state, { offset: 7, chats: { [CARL]: [`1-${SAFE}`] }, since: {}, notices: {} });
   assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /chats/);
   assert.deepEqual((await Telegram.open(cfg)).state, moved.state);
   assert.doesNotMatch(logs.join('\n'), new RegExp(TG_KEY));

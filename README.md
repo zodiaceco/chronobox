@@ -140,9 +140,9 @@ The registration is in Telegram, not in this app. The app only builds the link, 
 What this gives and what it does not:
 
 - No second app for people who have Telegram, and no form to fill in.
-- The alert service keeps one pair per chat: the number of the Telegram chat and the address of the Chronobox. It keeps no name, no username, no phone number and no message. `/stop` deletes the pair. This pair is personal data: it links a reachable account to a Chronobox. On disk the list is encrypted with a key that is not stored with it, so a copy of the file alone shows nothing. A person who controls the running service can still read it.
+- The alert service keeps, per chat, the number of the Telegram chat, the address of the Chronobox, and since when the chat follows it. It keeps no name, no username, no phone number and no message. `/stop` deletes all of it. This pair is personal data: it links a reachable account to a Chronobox. On disk the list is encrypted with a key that is not stored with it, so a copy of the file alone shows nothing. A person who controls the running service can still read it.
 - Telegram knows the phone number of the account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
-- A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat stops, every other chat that follows the same Chronobox is told.
+- A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat that followed for a day or more stops, every other chat that follows the same Chronobox is told, once an hour at most. A stranger who follows and stops again cannot ring the phones of the others.
 - The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
 
 ## Run it

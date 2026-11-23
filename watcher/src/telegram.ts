@@ -2,9 +2,9 @@
 //
 // A second way to get the alerts of --all, for people who do not want another app. A person opens
 // https://t.me/<bot>?start=<chain id>-<vault address> and presses Start. From then on the bot sends the
-// alerts of that vault to that chat. The bot keeps one pair per chat: the number of the chat and the
-// vault. That pair is all this watcher stores about a person. It keeps no name, no username and no
-// message, and it does not write the number of a chat to the log.
+// alerts of that vault to that chat. The bot keeps, per chat, the number of the chat and the vaults it follows, with
+// since when. That is all this watcher stores about a person. It keeps no name, no username and no message, and it
+// does not write the number of a chat to the log.
 //
 // The stored list of chats is encrypted with TELEGRAM_KEY (AES-256-GCM). The key is a setting and is not
 // stored with the list, so the file or the Redis database, a copy of it or a backup show nobody who
@@ -17,7 +17,7 @@
 
 import * as crypto from 'node:crypto';
 import { ADDRESS_RE, type Config } from './config.ts';
-import { networkName, shortAddr } from './format.ts';
+import { fmtWhen, networkName, shortAddr } from './format.ts';
 import { FileStore, type Store } from './store.ts';
 import type { Alert } from './types.ts';
 import { ConfigError, type FetchFn, type Log, defaultLog, errText } from './util.ts';
@@ -48,9 +48,17 @@ export type Network = {
   pending(vault: string): Promise<string[]>;
 };
 
-type TelegramState = { offset?: number; chats: Record<string, string[]> };
+type TelegramState = {
+  offset?: number;
+  /** For each chat, the Chronoboxes it follows ("<chain id>-<address>"). */
+  chats: Record<string, string[]>;
+  /** When a chat began to follow a Chronobox (ms), by "<chat> <chain id>-<address>". Missing: before this was kept. */
+  since: Record<string, number>;
+  /** Stops that the other followers of a Chronobox are still to be told of, and when they were told last (ms). */
+  notices: Record<string, { stopped: number; firstAt: number; lastSent?: number }>;
+};
 /** What is stored: the list of chats as one sealed block (base64 of nonce, tag and ciphertext). The offset is no secret. */
-type TelegramFile = { version: 2; offset?: number; sealed: string };
+type TelegramFile = { version: 3; offset?: number; sealed: string };
 const SEAL_LABEL = 'chronobox-telegram-chats-v2';
 
 /** One chat cannot follow more Chronoboxes than this. */
@@ -59,9 +67,9 @@ export const TELEGRAM_MAX_PER_CHAT = 20;
 const TG_HOW = 'To get alerts, open your Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
 const TG_HELP = `${TG_HOW}\n\n/list shows what this chat follows.\n/stop ends the alerts.\n/privacy says what I keep.`;
 const TG_NEVER = 'I never send links, and I never ask for a key, a password or money. A message that does is not from me.';
-const TG_KEEP = 'I keep the number of this chat and the address of the Chronobox. I keep nothing else. /stop deletes it.';
+const TG_KEEP = 'I keep the number of this chat, the address of the Chronobox, and since when this chat follows it. I keep nothing else. /stop deletes it.';
 const TG_PRIVACY =
-  'I keep two things: the number of this chat, and the addresses of the Chronoboxes that it follows. ' +
+  'I keep the number of this chat, the addresses of the Chronoboxes that it follows, and since when it follows each one. ' +
   'I do not keep your name, your username or your messages.\n\n' +
   'The list is stored encrypted. /stop deletes everything about this chat.\n\n' +
   'Telegram can read the messages that I send you. What they say is public on the blockchain. That this chat follows a Chronobox is not.';
@@ -88,18 +96,30 @@ function sealKey(secret: string): Buffer {
 
 const WEBHOOK_LABEL = 'chronobox-telegram-webhook';
 
+/**
+ * A chat that stops tells the others who follow the same Chronobox: a person who is forced to stop the alerts on
+ * their phone has others who still listen. Anybody can follow a public Chronobox, though, so a stranger could follow
+ * and stop again and again to ring everybody's phone. So only a follow of a day or more tells the others, and they
+ * are told once an hour at most; the stops in between come together in the next message. A stop is never dropped,
+ * so a stranger cannot hide a real one for more than an hour.
+ */
+export const NOTICE_MIN_FOLLOW_MS = 24 * 3600_000;
+export const NOTICE_GAP_MS = 3600_000;
+
 export type TelegramOptions = {
   fetch?: FetchFn;
   log?: Log;
   /** Where the list of chats is kept, under the key "telegram". Default: STATE_DIR. */
   store?: Store;
+  /** The time in ms. Tests set it. */
+  clock?: () => number;
 };
 
 export class Telegram {
   /** The name of the bot, from Telegram. Empty until `start` worked. */
   username = '';
   /** The list of chats as last read or written. A change reads the stored list again first (`edit`). */
-  state: TelegramState = { chats: {} };
+  state: TelegramState = { chats: {}, since: {}, notices: {} };
   private token: string;
   private secret: string;
   private key: Buffer;
@@ -109,6 +129,7 @@ export class Telegram {
   private log: Log;
   private store: Store;
   private loading: Promise<void> | null = null;
+  private clock: () => number;
   private networks = new Map<number, Network>();
 
   constructor(cfg: Config, opts: TelegramOptions = {}) {
@@ -123,6 +144,7 @@ export class Telegram {
     const out = opts.log ?? defaultLog;
     this.log = (m: string) => out(this.redact(m));
     this.store = opts.store ?? new FileStore(cfg.stateDir);
+    this.clock = opts.clock ?? Date.now;
   }
 
   /** A bot with its list of chats read. Throws a ConfigError if TELEGRAM_KEY does not open the list. */
@@ -152,16 +174,16 @@ export class Telegram {
     return got.length === want.length && crypto.timingSafeEqual(got, want);
   }
 
-  private seal(chats: Record<string, string[]>): string {
+  private seal(content: unknown): string {
     const nonce = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.key, nonce);
     cipher.setAAD(Buffer.from(SEAL_LABEL));
-    const body = Buffer.concat([cipher.update(JSON.stringify(chats), 'utf8'), cipher.final()]);
+    const body = Buffer.concat([cipher.update(JSON.stringify(content), 'utf8'), cipher.final()]);
     return Buffer.concat([nonce, cipher.getAuthTag(), body]).toString('base64');
   }
 
   /** Throws when the key is not the one that sealed the block, or when the block was changed. */
-  private open(sealed: string): Record<string, string[]> {
+  private open(sealed: string): any {
     const raw = Buffer.from(sealed, 'base64');
     const decipher = crypto.createDecipheriv('aes-256-gcm', this.key, raw.subarray(0, 12));
     decipher.setAAD(Buffer.from(SEAL_LABEL));
@@ -173,23 +195,27 @@ export class Telegram {
 
   private async load(): Promise<TelegramState> {
     const text = await this.store.get('telegram');
-    if (text === null) return { chats: {} };
     let f: any;
+    if (text === null) return { chats: {}, since: {}, notices: {} };
     try { f = JSON.parse(text); } catch (e) {
       throw new ConfigError(`The stored list of Telegram chats is not valid (${errText(e)}). Fix or remove it; removing it ends every subscription.`);
     }
     if (f?.version === 1 && typeof f.chats === 'object' && f.chats !== null) {
       // A list from before the encryption. It is written again, sealed, right now.
-      const state: TelegramState = { offset: f.offset, chats: f.chats };
+      const state: TelegramState = { offset: f.offset, chats: f.chats, since: {}, notices: {} };
       await this.save(state);
       this.log('telegram: the list of chats was in plain form and is encrypted now');
       return state;
     }
-    if (f?.version !== 2 || typeof f.sealed !== 'string') {
+    if ((f?.version !== 2 && f?.version !== 3) || typeof f.sealed !== 'string') {
       throw new ConfigError('The stored list of Telegram chats is not valid (unknown format). Fix or remove it; removing it ends every subscription.');
     }
     try {
-      return { offset: f.offset, chats: this.open(f.sealed) };
+      const content = this.open(f.sealed);
+      // Version 2 sealed the chats alone. Their follows are older than this, so they count as a day or more.
+      if (f.version === 2) return { offset: f.offset, chats: content, since: {}, notices: {} };
+      if (typeof content.chats !== 'object' || content.chats === null) throw new Error('unknown format');
+      return { offset: f.offset, chats: content.chats, since: content.since ?? {}, notices: content.notices ?? {} };
     } catch {
       throw new ConfigError(
         'TELEGRAM_KEY does not open the stored list of Telegram chats. Use the key that the list was written with. ' +
@@ -199,7 +225,7 @@ export class Telegram {
   }
 
   private async save(state: TelegramState): Promise<void> {
-    const out: TelegramFile = { version: 2, offset: state.offset, sealed: this.seal(state.chats) };
+    const out: TelegramFile = { version: 3, offset: state.offset, sealed: this.seal({ chats: state.chats, since: state.since, notices: state.notices }) };
     await this.store.set('telegram', JSON.stringify(out) + '\n');
   }
 
@@ -269,6 +295,40 @@ export class Telegram {
   }
 
   /**
+   * Tells the followers of each Chronobox that other chats stopped, once an hour at most per Chronobox (see
+   * NOTICE_GAP_MS). A notice is claimed under the lock before it is sent, so two places never send it twice. The
+   * poll calls this, so that a notice that had to wait goes out.
+   */
+  async sendNotices(): Promise<void> {
+    await this.ready();
+    const now = this.clock();
+    const due = (n: { stopped: number; lastSent?: number }) => n.stopped > 0 && (n.lastSent === undefined || now - n.lastSent >= NOTICE_GAP_MS);
+    if (!Object.values(this.state.notices).some(due)) return;
+    const claimed: [string, number, number][] = [];
+    await this.edit((s) => {
+      claimed.length = 0;
+      for (const [key, n] of Object.entries(s.notices)) {
+        if (due(n)) {
+          claimed.push([key, n.stopped, n.firstAt]);
+          s.notices[key] = { stopped: 0, firstAt: now, lastSent: now };
+        } else if (n.stopped === 0 && (n.lastSent === undefined || now - n.lastSent >= NOTICE_GAP_MS)) {
+          delete s.notices[key];
+        }
+      }
+    });
+    for (const [key, stopped, firstAt] of claimed) {
+      const [id, vault] = key.split('-');
+      const of = `the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))}`;
+      const text = stopped === 1
+        ? `A chat that got ${of} has stopped them. You still get them here.`
+        : `${stopped} chats that got ${of} have stopped them since ${fmtWhen(Math.floor(firstAt / 1000))}. You still get them here.`;
+      for (const other of this.subscribers(Number(id), vault)) {
+        await this.say(other, text).catch((e) => this.log(`telegram: could not tell a chat that another one stopped: ${errText(e)}`));
+      }
+    }
+  }
+
+  /**
    * Sends an alert to every chat that follows the vault. A chat that got it is marked in `a.done`, so a
    * second try does not send it twice. Throws if a chat could not be reached and should be tried again.
    */
@@ -292,6 +352,11 @@ export class Telegram {
           await this.edit((s) => {
             if (!s.chats[chat]) return false;
             s.chats[to] = [...new Set([...(s.chats[to] ?? []), ...s.chats[chat]])];
+            for (const key of s.chats[chat]) {
+              const since = s.since[`${chat} ${key}`];
+              if (since !== undefined) s.since[`${to} ${key}`] ??= since;
+              delete s.since[`${chat} ${key}`];
+            }
             delete s.chats[chat];
           });
           failed = 'a group has a new number';
@@ -315,6 +380,7 @@ export class Telegram {
   private async forget(chat: string): Promise<void> {
     const removed = await this.edit((s) => {
       if (!(chat in s.chats)) return false;
+      for (const key of s.chats[chat]) delete s.since[`${chat} ${key}`];
       delete s.chats[chat];
     });
     if (removed) this.log('telegram: a chat was removed');
@@ -415,6 +481,7 @@ export class Telegram {
       if ((s.chats[chat] ?? []).includes(key)) return false;
       if (full(s)) { limit = true; return false; }
       s.chats[chat] = [...(s.chats[chat] ?? []), key];
+      s.since[`${chat} ${key}`] = this.clock();
     });
     if (limit) { await this.say(chat, LIMIT); return; }
     if (added) this.log(`telegram: a chat follows ${vault} on chain ${chainId}`);
@@ -433,6 +500,16 @@ export class Telegram {
       left = one ? mine.filter((key) => !key.endsWith(`-${one}`)) : [];
       if (left.length === mine.length) return false;
       if (left.length) s.chats[chat] = left; else delete s.chats[chat];
+      const now = this.clock();
+      for (const key of mine.filter((k) => !left.includes(k))) {
+        const since = s.since[`${chat} ${key}`];
+        delete s.since[`${chat} ${key}`];
+        // A follow of less than a day tells nobody: else anybody could ring the phones of all followers.
+        if (since !== undefined && now - since < NOTICE_MIN_FOLLOW_MS) continue;
+        const n = (s.notices[key] ??= { stopped: 0, firstAt: now });
+        if (n.stopped === 0) n.firstAt = now;
+        n.stopped++;
+      }
     });
     if (!changed) {
       await this.say(chat, mine.length ? `This chat does not follow ${one}. /list shows what it follows.` : 'This chat follows no Chronobox.');
@@ -440,13 +517,7 @@ export class Telegram {
     }
     this.log('telegram: a chat stopped');
     // Alerts must not go off in silence: a person who is forced to stop them has others who still listen.
-    for (const key of mine.filter((k) => !left.includes(k))) {
-      const [id, vault] = key.split('-');
-      for (const other of this.subscribers(Number(id), vault)) {
-        await this.say(other, `A chat that got the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(Number(id))} has stopped them. You still get them here.`)
-          .catch((e) => this.log(`telegram: could not tell a chat that another one stopped: ${errText(e)}`));
-      }
-    }
+    await this.sendNotices();
     await this.say(chat, left.length
       ? `Done. No more alerts for ${one} here. /list shows what this chat still follows.`
       : 'Done. You get no more alerts here, and I deleted this chat from my list.');
