@@ -176,7 +176,7 @@ A person signs up in two steps (double opt-in). The app is not part of it: it on
 Things to know:
 
 - **On a machine, email needs an address on the web. Telegram does not.** The CLI serves the pages on `PORT` (default 8787) at `/api/email`. Put a proxy with TLS in front of it, for example Caddy or nginx, that adds the visitor to `X-Forwarded-For`. `GET /health` answers `ok`. With `--once` there is no page; the addresses on the list still get their alerts.
-- A request that nobody confirms is deleted after one day.
+- A request that nobody confirms is deleted after one day. The confirmation email also has a link "Not you? Cancel": it opens a page with a button that deletes every request to that address that is not confirmed. Only who reads that mailbox has the link. So a stranger who fills the three open requests of somebody else's address cannot block that person's own sign-up: they cancel, and ask again. Confirmed alerts stay as they are.
 - The page gives the same answer for every address, so nobody can use it to find out who is on the list.
 - Somebody can type the address of another person. That person gets one email and nothing more. An address gets one confirmation in ten minutes for a Chronobox and holds three open requests at most. One visitor can ask for ten an hour, and all visitors together for 300. The limits are counters in the store (Redis on Vercel), with a keyed hash of the visitor, not the IP address.
 - The visitor is the last address in `X-Forwarded-For`: the one that the nearest proxy saw. Vercel sets it to that one address.

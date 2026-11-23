@@ -70,7 +70,7 @@ function Frame({ preview, title, children, foot }: FrameProps) {
 }
 
 /** The one email before the confirmation. Its button is the only way on: an alert never has one. */
-export function confirmHtml(o: { vault: string; network: string; link: string }): Promise<string> {
+export function confirmHtml(o: { vault: string; network: string; link: string; cancel: string }): Promise<string> {
   return render(
     <Frame preview="Was it you? Confirm the alerts for your Chronobox." title="Confirm the alerts">
       {/* One string: React puts a comment between text parts. */}
@@ -79,7 +79,10 @@ export function confirmHtml(o: { vault: string; network: string; link: string })
       <Section style={{ margin: '6px 0 20px' }}>
         <Button href={o.link} style={styles.button}>Confirm the alerts</Button>
       </Section>
-      <Text style={styles.p}>If it was not you, do nothing. We delete this request after one day.</Text>
+      <Text style={styles.p}>If it was not you, do nothing: we delete this request after one day.</Text>
+      <Text style={styles.p}>
+        <Link href={o.cancel} style={{ color: muted, textDecoration: 'underline' }}>Not you? Cancel</Link> this request, and every other one to this address, now.
+      </Text>
     </Frame>,
     { pretty: false },
   );

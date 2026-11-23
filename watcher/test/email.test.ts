@@ -139,12 +139,13 @@ test('Email: a person signs up, confirms, and then gets the alerts of the vault'
   assert.equal(first.from, 'Chronobox alerts <alerts@chrono.example>');
   assert.equal(first.subject, 'Confirm the alerts for your Chronobox');
   assert.match(first.text, new RegExp(`^Somebody asked for alerts for the Chronobox ${SAFE} on Ethereum to this address\\.\\n\\nWas it you\\? Then open this link and confirm:\\n${PUBLIC}${EMAIL_PATH}\\?confirm=`));
-  assert.match(first.text, /If it was not you, do nothing\. We delete this request after one day\.$/);
+  assert.match(first.text, new RegExp(`If it was not you, do nothing: we delete this request after one day\\.\\n\\nNot you\\? Cancel this request, and every other one to this address, now:\\n${PUBLIC}${EMAIL_PATH}\\?cancel=[\\w-]+$`));
   assert.equal(first.agent, 'chronobox-watcher');
   // The HTML part, from react-email: the same words, a button to the same link, and nothing else to click.
   assert.match(first.html, /^<!DOCTYPE html/);
   assert.match(first.html, new RegExp(`Somebody asked for alerts for the Chronobox ${SAFE} on Ethereum to this address\\.`));
-  assert.deepEqual([...first.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), [linkIn(first, 'confirm')]);
+  const cancelLink = new RegExp(`https://\\S+\\?cancel=[\\w-]+`).exec(first.text)![0];
+  assert.deepEqual([...first.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), [linkIn(first, 'confirm'), cancelLink]);
   assert.match(first.html, />Confirm the alerts<\/span>/);
   assert.deepEqual(email.subscribers(1, SAFE), []);
   chain.mine(12n);
@@ -356,6 +357,55 @@ test('Email: what the sign-up refuses, and what it does not give away', async ()
 
   // A form that is far too long is not read.
   assert.equal((await post({ c: `1-${SAFE}`, email: 'x'.repeat(9000) + '@example.org' })).status, 413);
+});
+
+test('Email: a stranger who fills the requests of an address does not block it: the mailbox cancels them, and signs up', async () => {
+  const { email, get, post, ready } = await withEmail();
+  await ready();
+  // The stranger knows Anna's address and asks for alerts to it: for this Chronobox through the page, and (the
+  // stand-in chain has one Chronobox only) for two others straight into the list. Three requests fill her slots.
+  await post({ c: `1-${SAFE}`, email: MAIL_ANNA }, '198.51.100.66');
+  const strangers = mailsTo(MAIL_ANNA);
+  assert.equal(strangers.length, 1);
+  await (email as any).edit((st: any) => {
+    for (const vault of ['0x' + '11'.repeat(20), '0x' + '22'.repeat(20)]) st.pending.push({ email: MAIL_ANNA, box: `1-${vault}`, token: `token-${vault.slice(2, 6)}`, at: now });
+  });
+  // Past the pause per Chronobox, so that only the full slots hold Anna back.
+  now += 11 * 60_000;
+
+  // Anna asks for her own: the same page as always, but no email, because the slots are full.
+  mails.splice(0);
+  const blocked = await post({ c: `1-${SAFE}`, email: MAIL_ANNA }, '203.0.113.200');
+  assert.match(blocked.html, /Look in your inbox/);
+  assert.match(blocked.html, /If you got emails for a Chronobox that is not yours, open &quot;Not you\? Cancel&quot;/);
+  assert.equal(mails.length, 0);
+
+  // In the email of the stranger: "Not you? Cancel". Opening it changes nothing, as a scanner opens links too.
+  const cancel = /\?cancel=([\w-]+)/.exec(strangers[0].text)![1];
+  const ask = await get(`?cancel=${cancel}`);
+  assert.match(ask.html, /<h1>Cancel these requests\?<\/h1><p>3 requests for alerts wait for a confirmation from anna@example\.org\.<\/p>/);
+  assert.equal(email.state.pending.length, 3);
+  const done = await post({ cancel });
+  assert.match(done.html, /<h1>Done<\/h1><p>We deleted every request to this address that was not confirmed\.<\/p>/);
+  assert.deepEqual(email.state.pending, []);
+  assert.equal((await post({ cancel })).status, 410, 'the link works one time');
+
+  // Now Anna's own request goes out at once.
+  await post({ c: `1-${SAFE}`, email: MAIL_ANNA }, '203.0.113.200');
+  assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_ANNA, 'Confirm the alerts for your Chronobox']]);
+  assert.match(logs.join('\n'), /email: an address cancelled its requests/);
+  assert.doesNotMatch(logs.join('\n'), /anna/);
+});
+
+test('Email: a cancel clears only requests that are not confirmed, of that address only', async () => {
+  const { email, post, join, ready } = await withEmail();
+  await ready();
+  await join(MAIL_ANNA);
+  await post({ c: `1-${SAFE}`, email: MAIL_BEN });
+  await (email as any).edit((st: any) => { st.pending.push({ email: MAIL_ANNA, box: `1-0x${'11'.repeat(20)}`, token: 'anna-other', at: now }); });
+  await post({ cancel: 'anna-other' });
+  assert.deepEqual(email.subscribers(1, SAFE).map((e) => e.email), [MAIL_ANNA], 'her confirmed alerts stay');
+  assert.deepEqual(email.state.pending.map((e) => e.email), [MAIL_BEN], 'the request of Ben stays');
 });
 
 test('Email: an email that fails is tried again, and nobody gets it twice', async () => {

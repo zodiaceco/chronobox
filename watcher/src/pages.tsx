@@ -91,7 +91,10 @@ export const form = (o: { c: string; box: string; problem?: string }, status = 2
 /** After the first step. The same page for every address: it does not say who is on the list. */
 export const sent = (email: string) => page(200, 'Look in your inbox', <>
   <p>We sent a link to {email}. Open it and confirm. It works for one day.</p>
-  <small>Nothing more comes before you confirm. If no email arrives, look in the spam folder.</small>
+  <small>
+    Nothing more comes before you confirm. If no email arrives, look in the spam folder. If you got emails for a Chronobox that is not
+    yours, open "Not you? Cancel" in one of them, and then ask again here.
+  </small>
 </>);
 
 /** The link in the email. A program that reads the email for the person does not press the button. */
@@ -110,6 +113,18 @@ export const confirmed = (o: { box: string; waits: string[] }) => page(200, 'Don
 export const stopAsk = (o: { box: string; email: string; token: string }) => page(200, 'Stop these alerts?', <>
   <p>The alerts of {o.box}, to {o.email}.</p>
   <Button name="stop" value={o.token} label="Stop the alerts" />
+</>);
+
+/** The cancel link in a confirmation email: every request to this address that is not confirmed. */
+export const cancelAsk = (o: { email: string; count: number; token: string }) => page(200, 'Cancel these requests?', <>
+  <p>{o.count === 1 ? 'One request for alerts waits' : `${o.count} requests for alerts wait`} for a confirmation from {o.email}.</p>
+  <p>Cancel them, and no more email comes for them. Alerts that you confirmed before stay as they are.</p>
+  <Button name="cancel" value={o.token} label="Cancel the requests" />
+</>);
+
+export const cancelled = () => page(200, 'Done', <>
+  <p>We deleted every request to this address that was not confirmed.</p>
+  <small>To get the alerts of your own Chronobox, open "Get told" there again.</small>
 </>);
 
 export const stopped = (box: string) => page(200, 'Done', <p>No more alerts of {box} to this address. We deleted it from our list.</p>);

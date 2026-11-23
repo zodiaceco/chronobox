@@ -417,11 +417,15 @@ export class Email implements Peer {
     if (!entry) return sent;
     try {
       const link = `${this.pages}?confirm=${entry.token}`;
+      // The same token cancels: only who reads this mailbox has it. So a stranger who asks for alerts to somebody
+      // else's address cannot hold its requests (EMAIL_PENDING_PER_ADDRESS) for a day.
+      const cancel = `${this.pages}?cancel=${entry.token}`;
       await this.send(email, 'Confirm the alerts for your Chronobox',
         `Somebody asked for alerts for the Chronobox ${vault} on ${networkName(chainId)} to this address.\n\n` +
         `Was it you? Then open this link and confirm:\n${link}\n\n` +
-        'If it was not you, do nothing. We delete this request after one day.',
-        await confirmHtml({ vault, network: networkName(chainId), link }),
+        'If it was not you, do nothing: we delete this request after one day.\n\n' +
+        `Not you? Cancel this request, and every other one to this address, now:\n${cancel}`,
+        await confirmHtml({ vault, network: networkName(chainId), link, cancel }),
         { idem: `confirm-${entry.token}` });
     } catch (e) {
       await this.edit((s) => {
@@ -470,6 +474,29 @@ export class Email implements Peer {
     return pages.confirmed({ box: boxText(p.box), waits });
   }
 
+  /** The cancel link in a confirmation email. A page with a button, as for confirm. */
+  private async cancelPage(token: string): Promise<Page> {
+    const s = await this.fresh();
+    const p = this.findPending(s, token);
+    if (!p) return pages.gone();
+    return pages.cancelAsk({ email: p.email, count: s.pending.filter((e) => e.email === p.email && this.findPending(s, e.token)).length, token });
+  }
+
+  /** Deletes every request to the address of this token that is not confirmed. Its slots are free again at once. */
+  private async cancel(token: string): Promise<Page> {
+    let found = false;
+    await this.edit((s) => {
+      const purged = this.purge(s);
+      const p = this.findPending(s, token);
+      if (!p) return purged;
+      found = true;
+      s.pending = s.pending.filter((e) => e.email !== p.email);
+    });
+    if (!found) return pages.gone();
+    this.log('email: an address cancelled its requests');
+    return pages.cancelled();
+  }
+
   private async stopPage(token: string): Promise<Page> {
     const e = token ? (await this.fresh()).entries.find((x) => x.token === token) : undefined;
     if (!e) return pages.gone();
@@ -500,15 +527,17 @@ export class Email implements Peer {
   }
 
   /**
-   * Every step of the pages: the method, and which of the fields `stop`, `confirm` (in the query or the form) the
+   * Every step of the pages: the method, and which of the fields `stop`, `confirm`, `cancel` (in the query or the form) the
    * request has. Without either, it is the sign-up. A GET only shows; only a POST (a button) changes something.
    * The one-click stop of a mail program posts "List-Unsubscribe=One-Click" to the stop link, so it is "POST stop".
    */
-  private routes: Record<`${'GET' | 'POST'} ${'signup' | 'confirm' | 'stop'}`, (r: Route) => Page | Promise<Page>> = {
+  private routes: Record<`${'GET' | 'POST'} ${'signup' | 'confirm' | 'cancel' | 'stop'}`, (r: Route) => Page | Promise<Page>> = {
     'GET signup': (r) => this.formPage(r.field('c')),
     'POST signup': (r) => this.signUp(r.field('c'), r.form.get('email') ?? '', r.visitor),
     'GET confirm': (r) => this.confirmPage(r.field('confirm')),
     'POST confirm': (r) => this.confirm(r.field('confirm')),
+    'GET cancel': (r) => this.cancelPage(r.field('cancel')),
+    'POST cancel': (r) => this.cancel(r.field('cancel')),
     'GET stop': (r) => this.stopPage(r.field('stop')),
     'POST stop': (r) => this.stop(r.field('stop')),
   };
@@ -521,7 +550,7 @@ export class Email implements Peer {
       if (req.body.length > MAX_FORM) return pages.tooLong();
       const form = req.method === 'POST' ? new URLSearchParams(req.body) : new URLSearchParams();
       const field = (k: string) => form.get(k) ?? url.searchParams.get(k) ?? '';
-      const step = field('stop') ? 'stop' : field('confirm') ? 'confirm' : 'signup';
+      const step = field('stop') ? 'stop' : field('confirm') ? 'confirm' : field('cancel') ? 'cancel' : 'signup';
       const route = this.routes[`${req.method} ${step}` as keyof Email['routes']];
       if (!route) return pages.nothingHere(405);
       return await route({ field, form, visitor: visitorOf(req) });
