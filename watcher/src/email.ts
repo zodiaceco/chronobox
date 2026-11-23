@@ -489,7 +489,7 @@ export class Email implements Peer {
     if (!p) return pages.gone();
     const [id, vault] = p.box.split('-');
     this.log(`email: an address follows ${vault} on chain ${id}`);
-    const waits = (await this.networks.get(Number(id))?.pending(vault)) ?? [];
+    const waits = (await this.networks.get(Number(id))?.pending(vault)) ?? null;
     return pages.confirmed({ box: boxText(p.box), waits });
   }
 

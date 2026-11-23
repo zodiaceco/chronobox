@@ -45,8 +45,8 @@ export type Network = {
   chainId: number;
   /** Starts to watch the vault if it is a Chronobox. False if it is not one. Throws if the chain cannot be read. */
   adopt(vault: string): Promise<boolean>;
-  /** What waits in the vault now, one line per item. */
-  pending(vault: string): Promise<string[]>;
+  /** What waits in the vault now, one line per item. Null if the watcher could not read it yet: not known, not empty. */
+  pending(vault: string): Promise<string[] | null>;
 };
 
 type TelegramState = {
@@ -64,6 +64,8 @@ const SEAL_LABEL = 'chronobox-telegram-chats-v2';
 
 /** One chat cannot follow more Chronoboxes than this. */
 export const TELEGRAM_MAX_PER_CHAT = 20;
+/** Starts with an address that one chat may send in an hour. Each one can make the watcher read the chain. */
+export const TELEGRAM_STARTS_PER_HOUR = 30;
 
 const TG_HOW = 'To get alerts, open your Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
 const TG_HELP = `${TG_HOW}\n\n/list shows what this chat follows.\n/stop ends the alerts.\n/privacy says what I keep.`;
@@ -97,6 +99,8 @@ function sealKey(secret: string): Buffer {
 
 const WEBHOOK_LABEL = 'chronobox-telegram-webhook';
 const DELIVERY_LABEL = 'chronobox-telegram-delivery';
+/** For the names of the counters of Starts: a chat is never named in the store, only sealed (see `startsOf`). */
+const STARTS_LABEL = 'chronobox-telegram-starts';
 
 export type TelegramOptions = {
   fetch?: FetchFn;
@@ -118,6 +122,7 @@ export class Telegram implements Peer {
   private secret: string;
   private key: Buffer;
   private deliveryKey: Buffer;
+  private startsKey: Buffer;
   private api: string;
   private expected: number;
   private fetchFn: FetchFn;
@@ -134,6 +139,7 @@ export class Telegram implements Peer {
     this.secret = cfg.alertsKey;
     this.key = sealKey(cfg.alertsKey);
     this.deliveryKey = crypto.createHmac('sha256', cfg.alertsKey).update(DELIVERY_LABEL).digest();
+    this.startsKey = crypto.createHmac('sha256', cfg.alertsKey).update(STARTS_LABEL).digest();
     this.api = cfg.telegramApi;
     this.expected = cfg.networks.length;
     this.fetchFn = opts.fetch ?? fetch;
@@ -456,6 +462,15 @@ export class Telegram implements Peer {
     await this.say(chat, TG_HELP);
   }
 
+  /**
+   * The name of the counter of Starts of one chat. Which chats use the bot is kept sealed with ALERTS_KEY, so the name
+   * of a key in the store must not say it either: it is a keyed hash of the chat, which nobody without the key can
+   * match to a chat.
+   */
+  private startsOf(chat: number): string {
+    return 'telegram-starts:' + crypto.createHmac('sha256', this.startsKey).update(String(chat)).digest('base64url').slice(0, 22);
+  }
+
   private async subscribe(chat: number, arg: string): Promise<void> {
     const p = /^(\d{1,12})-(0x[0-9a-fA-F]{40})$/.exec(arg);
     if (!p) { await this.say(chat, TG_HELP); return; }
@@ -471,9 +486,15 @@ export class Telegram implements Peer {
     const full = (s: TelegramState) => { const mine = s.chats[chat] ?? []; return !mine.includes(key) && mine.length >= TELEGRAM_MAX_PER_CHAT; };
     const LIMIT = `This chat follows ${TELEGRAM_MAX_PER_CHAT} Chronoboxes already. That is the limit. /list shows them.`;
     if (full(this.state)) { await this.say(chat, LIMIT); return; }
+    // A chat that follows this vault already needs no check: the answer comes from what the watcher read last.
+    const follows = (this.state.chats[chat] ?? []).includes(key);
+    if (!follows && (await this.store.hit(this.startsOf(chat), 3600)) > TELEGRAM_STARTS_PER_HOUR) {
+      await this.say(chat, 'This chat asked for many Chronoboxes in the last hour. Try again later.');
+      return;
+    }
     let found: boolean;
     try {
-      found = await net.adopt(vault);
+      found = follows || (await net.adopt(vault));
     } catch (e) {
       this.log(`telegram: could not check ${vault} on chain ${chainId}: ${errText(e)}`);
       await this.say(chat, TG_LATER);
@@ -493,7 +514,8 @@ export class Telegram implements Peer {
     if (limit) { await this.say(chat, LIMIT); return; }
     if (added) this.log(`telegram: a chat follows ${vault} on chain ${chainId}`);
     const waits = await net.pending(vault);
-    const now = waits.length === 0 ? 'Nothing waits there right now.'
+    const now = waits === null ? 'I could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive here.'
+      : waits.length === 0 ? 'Nothing waits there right now.'
       : `Right now ${waits.length === 1 ? 'one request waits' : `${waits.length} requests wait`} there:\n${waits.join('\n')}`;
     await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${TG_NEVER}`);
   }

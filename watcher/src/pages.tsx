@@ -61,7 +61,9 @@ function Button({ name, value, label }: { name: string; value: string; label: st
 }
 
 /** What waits in the Chronobox right now, one paragraph per request. */
-function Waits({ waits }: { waits: string[] }) {
+function Waits({ waits }: { waits: string[] | null }) {
+  // Not read yet is not "nothing": the page must not reassure where it does not know.
+  if (waits === null) return <p>We could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive by email.</p>;
   if (waits.length === 0) return <p>Nothing waits there right now.</p>;
   return (
     <>
@@ -103,7 +105,7 @@ export const confirmAsk = (o: { box: string; email: string; token: string }) => 
   <Button name="confirm" value={o.token} label="Confirm" />
 </>);
 
-export const confirmed = (o: { box: string; waits: string[] }) => page(200, 'Done', <>
+export const confirmed = (o: { box: string; waits: string[] | null }) => page(200, 'Done', <>
   <p>You now get the alerts of {o.box} by email.</p>
   <Waits waits={o.waits} />
   <small>To end the alerts, use the link at the end of any alert.</small>
