@@ -320,6 +320,22 @@ export function App() {
               ))}
             </ul>
           )}
+          {/* Chronobox has no WalletConnect, so a Safe needs a wallet in this browser that acts as it. */}
+          <p class="connect-safe">
+            <strong>Using a Safe?</strong> Chronobox has no WalletConnect. Add a wallet to this browser that can act as your Safe, such as{" "}
+            <a href="https://www.ambire.com/" target="_blank" rel="noopener noreferrer">
+              Ambire
+            </a>
+            ,{" "}
+            <a href="https://rabby.io/" target="_blank" rel="noopener noreferrer">
+              Rabby
+            </a>{" "}
+            or{" "}
+            <a href="https://chromewebstore.google.com/detail/zodiac-pilot/jklckajipokenkbbodifahogmidkekcb" target="_blank" rel="noopener noreferrer">
+              Zodiac Pilot
+            </a>
+            . Then choose it here.
+          </p>
           {connectError ? <Notice kind="bad">{connectError}</Notice> : null}
         </Modal>
       ) : null}
