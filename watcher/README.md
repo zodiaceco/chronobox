@@ -178,6 +178,7 @@ Things to know:
 - Keep the key and the token away from where the list is: in the secret store of your host, or in a file that only the service can read. On Vercel the key is in the environment of the project, and the list is at Upstash, two different companies. With the list and the token, somebody could write to every person as the real bot.
 - The key does not protect against a person who controls the running watcher. The watcher must know which chats follow a Chronobox when it sends an alert, so it holds the list and the key. Only a sealed enclave could hide the list from the person who runs the machine. That is not built.
 - If the key is lost, the list is lost: remove `telegram.json` (or the key `chronobox:telegram` in Redis), and every person must press Start again. A wrong key stops the watcher with a clear message (on Vercel: every call answers 500 with it). It does not start with an empty list.
+- An alert that waits for a chat or the webhook is kept with the state of its Chronobox, which is not encrypted. It notes which chats got it by a keyed hash of the alert, the Chronobox and the chat (made from `TELEGRAM_KEY`), never by the number of the chat. Without the key nobody can tell which chats they are, and two alerts do not show that the same chat got both.
 - The watcher does not write the number of a chat, the token or the key to its log.
 - Telegram knows the phone number of each account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 

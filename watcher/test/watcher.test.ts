@@ -1283,6 +1283,53 @@ test('Telegram: a failed chat is tried again without a second message to the oth
   assert.doesNotMatch(logs.join('\n'), new RegExp(TG_TOKEN));
 });
 
+test('Telegram: an alert that waits does not show in the state of the vault which chats got it', async () => {
+  const { w, bot } = withBot();
+  await w.poll();
+  chain.create();
+  await w.poll();
+  for (const chat of [ANNA, BEN]) person(chat, START);
+  await bot.pump();
+  const stateOf = () => fs.readFileSync(path.join(dir, 'all', `${SAFE}.json`), 'utf8');
+  const shows = (text: string) => /tg:-?\d+\b/.test(text) || [ANNA, BEN].some((c) => new RegExp(`\\b${c}\\b`).test(text));
+  said = [];
+
+  // Partial delivery: Anna gets it, Ben does not yet. The alert waits, stored without encryption.
+  tgRefuse[BEN] = { code: 500, description: 'Internal Server Error', once: true };
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await w.poll();
+  const waiting = JSON.parse(stateOf()).outbox;
+  assert.equal(waiting.length, 1);
+  assert.equal(waiting[0].done.filter((m: string) => m.startsWith('tg:')).length, 1, 'one chat got it');
+  assert.ok(!shows(stateOf()), 'no chat in the state of the vault');
+  await w.poll();
+  assert.deepEqual(said.map((m) => m.chat), [ANNA, BEN], 'Ben gets it on the next poll, Anna not twice');
+
+  // The webhook fails after both chats got the alert: it waits for the webhook, with both marks.
+  said = [];
+  notifyFails = true;
+  chain.mine(12n);
+  chain.enqueue(STRANGER, 1n);
+  await w.poll();
+  const [one] = JSON.parse(stateOf()).outbox;
+  const marks = one.done.filter((m: string) => m.startsWith('tg:'));
+  assert.equal(marks.length, 2);
+  assert.ok(!shows(stateOf()));
+  // The marks of this alert are not those of the last one: they do not show that the same chats got both.
+  assert.ok(!marks.some((m: string) => waiting[0].done.includes(m)));
+  notifyFails = false;
+  await w.poll();
+  assert.deepEqual(said.map((m) => m.chat), [ANNA, BEN], 'no second message when the webhook works again');
+
+  // A mark from before the tags (the number of the chat) still counts, and becomes a tag.
+  said = [];
+  const old = { id: '99-queued-9', event: 'queued', title: 'x', message: 'y', priority: 3, at: 0, done: [`tg:${ANNA}`] };
+  await bot.deliver(1, SAFE, old);
+  assert.deepEqual(said.map((m) => m.chat), [BEN]);
+  assert.ok(old.done.every((m) => !shows(m)), JSON.stringify(old.done));
+});
+
 test('Telegram only: a quiet Chronobox is read for "All quiet" only when a chat follows it, and that message is silent', async () => {
   const { w, bot } = withBot({ HEARTBEAT_HOURS: '24' }, false);
   await w.poll();

@@ -95,6 +95,7 @@ function sealKey(secret: string): Buffer {
 }
 
 const WEBHOOK_LABEL = 'chronobox-telegram-webhook';
+const DELIVERY_LABEL = 'chronobox-telegram-delivery';
 
 /**
  * A chat that stops tells the others who follow the same Chronobox: a person who is forced to stop the alerts on
@@ -123,6 +124,7 @@ export class Telegram {
   private token: string;
   private secret: string;
   private key: Buffer;
+  private deliveryKey: Buffer;
   private api: string;
   private expected: number;
   private fetchFn: FetchFn;
@@ -138,6 +140,7 @@ export class Telegram {
     if (!cfg.telegramKey || cfg.telegramKey.length < 32) throw new ConfigError('TELEGRAM_KEY must be a secret of 32 characters or more.');
     this.secret = cfg.telegramKey;
     this.key = sealKey(cfg.telegramKey);
+    this.deliveryKey = crypto.createHmac('sha256', cfg.telegramKey).update(DELIVERY_LABEL).digest();
     this.api = cfg.telegramApi;
     this.expected = cfg.networks.length;
     this.fetchFn = opts.fetch ?? fetch;
@@ -338,8 +341,10 @@ export class Telegram {
     await this.ready();
     const text = telegramText(a, chainId, vault);
     let failed: string | null = null;
+    // Marks from before the tags held the number of the chat: they count, and become tags now.
+    a.done = a.done.map((m) => (/^tg:-?\d+$/.test(m) ? this.deliveryTag(a, chainId, vault, m.slice(3)) : m));
     for (const chat of this.subscribers(chainId, vault)) {
-      const mark = `tg:${chat}`;
+      const mark = this.deliveryTag(a, chainId, vault, chat);
       if (a.done.includes(mark)) continue;
       try {
         await this.say(chat, text, a.priority <= 2);
@@ -375,6 +380,16 @@ export class Telegram {
       }
     }
     if (failed) throw new Error(failed);
+  }
+
+  /**
+   * The mark in `a.done` that says that this chat got this alert. An alert that waits for another channel is stored
+   * with the state of the vault, which is not encrypted, so the mark must not show the chat: it is a keyed hash of
+   * the alert, the vault and the chat. Without TELEGRAM_KEY nobody can tell which chat it is, and the marks of two
+   * alerts do not show that the same chat got both.
+   */
+  private deliveryTag(a: Alert, chainId: number, vault: string, chat: string): string {
+    return 'tg:' + crypto.createHmac('sha256', this.deliveryKey).update(`${chainId}|${vault}|${a.id}|${chat}`).digest('base64url').slice(0, 22);
   }
 
   private async forget(chat: string): Promise<void> {
