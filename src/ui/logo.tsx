@@ -23,8 +23,10 @@ export function ByZodiac() {
   return (
     <span class="by-zodiac">
       by
-      <img class="only-light" src="./zodiac-light.svg" alt="Zodiac" height="12" />
-      <img class="only-dark" src="./zodiac-dark.svg" alt="Zodiac" height="12" />
+      <a href="https://zodiac.eco" target="_blank" rel="noreferrer noopener">
+        <img class="only-light" src="./zodiac-light.svg" alt="Zodiac" height="12" />
+        <img class="only-dark" src="./zodiac-dark.svg" alt="Zodiac" height="12" />
+      </a>
     </span>
   );
 }
