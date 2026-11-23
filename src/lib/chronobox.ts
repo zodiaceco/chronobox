@@ -1500,18 +1500,60 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
  * The point of the line comes from a link, and the old wallet can make that link: it is one of
  * the two owners of the shared Safe, so it can also carry out whatever the guardian agrees to.
  *   - "impossible": the point is past the end of the line. No real request names it.
- *   - "uncovered": `left` items wait that the change would not cancel. They must be cancelled
- *     first, or they could still run after the change.
- *   - "ok": the change cancels every item that waits now (`cancels` of them).
+ *   - "uncovered": `left` items wait that the change would not cancel, and the first of them has
+ *     waited too long already: it could run soon after the change. Cancel them first.
+ *   - "ok": the change cancels `cancels` items. `left` items come after the point; each of them
+ *     still has at least half of the delay to wait (until `runsAt` at the earliest). They are
+ *     cancelled after the change, and nobody can stop that: see below.
+ *
+ * Why the guardian may agree while young items are left. A lost wallet can queue at any moment,
+ * also right after any read and after any cancel, so "nothing is left" can never be a condition
+ * of agreeing: the person with the lost wallet could keep the owner and the guardian from ever
+ * changing the wallet. The change itself takes the old wallet away from the Delay and takes its
+ * right to cancel. From then on, only the new wallet can queue, and the new wallet and the
+ * guardian can cancel. A single cancel then removes everything, and nothing can come after it.
+ * What the old wallet queued just before can only run after the full delay, so there is time.
+ * Only an item that is already old must go before the guardian agrees, and a lost wallet cannot
+ * make an old item: anything it queues instead is new.
+ *
+ * `first` is about the item at the point where the change stops cancelling: when it was queued,
+ * the time now, and the delay. Items after it were queued later. Without `first`, any item left
+ * counts as "uncovered".
  */
-export type SwapCoverage = { state: "impossible" } | { state: "uncovered"; left: bigint } | { state: "ok"; cancels: bigint };
+export type SwapCoverage =
+  | { state: "impossible" }
+  | { state: "uncovered"; left: bigint }
+  | { state: "ok"; cancels: bigint; left: bigint; runsAt: bigint | null };
 
-export function swapCoverage(upTo: bigint, line: { txNonce: bigint; queueNonce: bigint }): SwapCoverage {
+export function swapCoverage(
+  upTo: bigint,
+  line: { txNonce: bigint; queueNonce: bigint },
+  first?: { createdAt: bigint; now: bigint; cooldown: bigint },
+): SwapCoverage {
   const { txNonce, queueNonce } = line;
   if (upTo > queueNonce) return { state: "impossible" };
   const reach = upTo > txNonce ? upTo : txNonce;
-  if (reach < queueNonce) return { state: "uncovered", left: queueNonce - reach };
-  return { state: "ok", cancels: reach - txNonce };
+  const cancels = reach - txNonce;
+  if (reach >= queueNonce) return { state: "ok", cancels, left: 0n, runsAt: null };
+  const left = queueNonce - reach;
+  // Young: at most half of the delay has gone by. Rounded so that a one-second delay is never young.
+  if (first && first.now >= first.createdAt && (first.now - first.createdAt) * 2n <= first.cooldown && first.cooldown > 0n) {
+    return { state: "ok", cancels, left, runsAt: first.createdAt + first.cooldown };
+  }
+  return { state: "uncovered", left };
+}
+
+/** `swapCoverage` with everything it needs read from the chain. */
+export async function readSwapCoverage(rpc: Rpc, delay: Address, upTo: bigint): Promise<SwapCoverage> {
+  const line = await delayNonces(rpc, delay);
+  const reach = upTo > line.txNonce ? upTo : line.txNonce;
+  if (upTo > line.queueNonce || reach >= line.queueNonce) return swapCoverage(upTo, line);
+  const [createdAt, cooldown, now] = await Promise.all([
+    read(rpc, delay, "getTxCreatedAt(uint256)", [reach], ["uint256"]).then((r) => r[0] as bigint),
+    read(rpc, delay, "txCooldown()", [], ["uint256"]).then((r) => r[0] as bigint),
+    chainTime(rpc),
+  ]);
+  return swapCoverage(upTo, line, { createdAt, now, cooldown });
 }
 
 /** Where the line of the Delay stands: items from txNonce up to queueNonce wait, or can run. */

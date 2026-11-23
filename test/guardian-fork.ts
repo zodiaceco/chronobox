@@ -28,6 +28,7 @@ import {
   councilOwners,
   councilSwapTx,
   createTx,
+  readSwapCoverage,
   swapCoverage,
   delayNonces,
   depositTx,
@@ -337,7 +338,7 @@ try {
   // Now the line is empty: the Delay refuses this txNonce, and the change must not depend on it.
   const emptyLine = await delayNonces(rpc, d.delay);
   assert.equal(emptyLine.txNonce, emptyLine.queueNonce);
-  assert.deepEqual(swapCoverage(stalePoint, emptyLine), { state: "ok", cancels: 0n });
+  assert.deepEqual(swapCoverage(stalePoint, emptyLine), { state: "ok", cancels: 0n, left: 0n, runsAt: null });
   const swapD = councilSwapTx(partsD, ownersD, SECOND, stalePoint)!;
   await sendAndWait(rpc, GUARDIAN, councilApproveTx(councilD, await councilHash(rpc, councilD, swapD)));
   await sendAndWait(rpc, WALLET, councilExecTx(councilD, swapD, ownersD));
@@ -348,6 +349,49 @@ try {
   await warp(DAY + 60n);
   await reverts(STRANGER, executeTx(d.delay, queuedD), null, "the withdrawal of the old wallet runs after the change");
   ok("an empty line does not stop the change, and the history still proves the permissions");
+
+  step("11. A lost wallet that queues after every cancel cannot keep the guardian from agreeing");
+  const e = await make(WALLET, 5);
+  await through(e.delay, WALLET, addGuardianTx({ ...e, controller: WALLET }, GUARDIAN)!);
+  await sendAndWait(rpc, WALLET, depositTx(e.safe, null, ETH));
+  const balanceE = await nativeBalance(rpc, e.safe);
+  const stateE = await inspect(rpc, e.safe);
+  const councilE = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(e.safe, WALLET, GUARDIAN)))!;
+  const ownersE = await councilOwners(rpc, councilE);
+  const partsE = { ...e, controller: WALLET, guardian: GUARDIAN, council: councilE, members: stateE.members };
+  // The owner asks. The thief, who has the same key, queues one more right after.
+  const upToE = (await delayNonces(rpc, e.delay)).queueNonce;
+  const stolen = withdrawalTx(WALLET, null, ETH);
+  await sendAndWait(rpc, WALLET, queueTx(e.delay, stolen));
+  // An item that has waited more than half the delay could run soon after the change: refused.
+  await warp(DAY / 2n + 60n);
+  assert.deepEqual(await readSwapCoverage(rpc, e.delay, upToE), { state: "uncovered", left: 1n });
+  ok("an old item left out of the change is refused");
+  // The guardian cancels, and the thief queues again at once: in front of every retry.
+  const lineE = await delayNonces(rpc, e.delay);
+  await sendAndWait(rpc, GUARDIAN, cancelTx(e.roles, e.delay, lineE.queueNonce - 1n));
+  await sendAndWait(rpc, WALLET, queueTx(e.delay, stolen));
+  assert.equal(swapCoverage(upToE, await delayNonces(rpc, e.delay)).state, "uncovered", "full cover is out of reach");
+  const young = await readSwapCoverage(rpc, e.delay, upToE);
+  assert.equal(young.state, "ok");
+  assert.equal(young.state === "ok" && young.left, 1n);
+  ok("a new item left out of the change does not stop the guardian");
+  const swapE = councilSwapTx(partsE, ownersE, SECOND, upToE)!;
+  await sendAndWait(rpc, GUARDIAN, councilApproveTx(councilE, await councilHash(rpc, councilE, swapE)));
+  // The thief keeps queueing after the agreement too, until the change takes the old wallet away.
+  await sendAndWait(rpc, WALLET, queueTx(e.delay, stolen));
+  await sendAndWait(rpc, WALLET, councilExecTx(councilE, swapE, ownersE));
+  await reverts(WALLET, queueTx(e.delay, stolen), null, "the old wallet queues after the change");
+  // Now one cancel is final: nobody but the new wallet can queue, and the old wallet cannot cancel.
+  const leftE = await delayNonces(rpc, e.delay);
+  assert.equal(leftE.queueNonce - leftE.txNonce, 2n);
+  await sendAndWait(rpc, GUARDIAN, cancelTx(e.roles, e.delay, leftE.queueNonce - 1n));
+  assert.deepEqual(await readSwapCoverage(rpc, e.delay, upToE), { state: "ok", cancels: 0n, left: 0n, runsAt: null });
+  await warp(DAY + 60n);
+  await reverts(STRANGER, executeTx(e.delay, stolen), null, "a withdrawal of the old wallet runs after the change");
+  assert.equal(await nativeBalance(rpc, e.safe), balanceE);
+  assert.ok(sameAddress((await inspect(rpc, e.safe)).controller, SECOND));
+  ok("the change went through, one cancel after it removed the rest, and nothing of the thief ran");
 
   console.log("\nAll guardian checks passed.");
 } finally {
