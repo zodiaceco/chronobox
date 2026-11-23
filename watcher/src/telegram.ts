@@ -64,6 +64,8 @@ const SEAL_LABEL = 'chronobox-telegram-chats-v2';
 
 /** One chat cannot follow more Chronoboxes than this. */
 export const TELEGRAM_MAX_PER_CHAT = 20;
+/** Starts with an address that one chat may send in an hour. Each one can make the watcher read the chain. */
+export const TELEGRAM_STARTS_PER_HOUR = 30;
 
 const TG_HOW = 'To get alerts, open your Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
 const TG_HELP = `${TG_HOW}\n\n/list shows what this chat follows.\n/stop ends the alerts.\n/privacy says what I keep.`;
@@ -471,9 +473,15 @@ export class Telegram implements Peer {
     const full = (s: TelegramState) => { const mine = s.chats[chat] ?? []; return !mine.includes(key) && mine.length >= TELEGRAM_MAX_PER_CHAT; };
     const LIMIT = `This chat follows ${TELEGRAM_MAX_PER_CHAT} Chronoboxes already. That is the limit. /list shows them.`;
     if (full(this.state)) { await this.say(chat, LIMIT); return; }
+    // A chat that follows this vault already needs no check: the answer comes from what the watcher read last.
+    const follows = (this.state.chats[chat] ?? []).includes(key);
+    if (!follows && (await this.store.hit(`telegram-starts:${chat}`, 3600)) > TELEGRAM_STARTS_PER_HOUR) {
+      await this.say(chat, 'This chat asked for many Chronoboxes in the last hour. Try again later.');
+      return;
+    }
     let found: boolean;
     try {
-      found = await net.adopt(vault);
+      found = follows || (await net.adopt(vault));
     } catch (e) {
       this.log(`telegram: could not check ${vault} on chain ${chainId}: ${errText(e)}`);
       await this.say(chat, TG_LATER);

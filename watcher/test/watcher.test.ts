@@ -1136,9 +1136,13 @@ test('Telegram: a Chronobox that the watcher has not seen is found when somebody
   assert.deepEqual(w.state.vaults, {});
   person(ANNA, START);
   await bot.pump();
-  assert.deepEqual(Object.keys(w.state.vaults), [SAFE]);
   assert.equal(saidTo(ANNA).length, 1, 'one answer, and no "Watching" message');
   assert.match(saidTo(ANNA)[0], /Right now one request waits there:\nWithdraw 1\.5 ETH\. Its wait ends on /);
+  // The question did not take the lock of the network: the next poll takes the vault in.
+  assert.deepEqual(w.state.vaults, {});
+  await w.poll();
+  assert.deepEqual(Object.keys(w.state.vaults), [SAFE]);
+  assert.equal(saidTo(ANNA).length, 1, 'the poll does not tell again what the answer told');
 
   // From here on it is watched like every other one.
   chain.mine(2n * DAY);

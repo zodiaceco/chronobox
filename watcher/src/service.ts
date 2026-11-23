@@ -177,7 +177,13 @@ export type NetworkResult = {
   chainId: number;
   /** The chain could be read. */
   ok: boolean;
+  /** Another poll or a question held the lock of this network, so this poll did not read it. */
   skipped?: true;
+  /**
+   * When a poll of this network last ran to its end (ISO). A skipped poll keeps the time of the one before: a network
+   * whose polls are skipped for long is not healthy, whatever holds its lock.
+   */
+  observedAt?: string;
   error?: string;
   /** Vaults that were due and were not read, for lack of time, and how long the oldest of them waits. */
   late?: number;
@@ -187,6 +193,16 @@ export type NetworkResult = {
   /** Vaults that could not be read while the chain could. A problem of those vaults; their readers are told. */
   failing?: number;
 };
+
+/** The note of the last poll, or null if there is none or it cannot be read. */
+async function lastPoll(store: Store): Promise<{ at?: string; networks?: NetworkResult[] } | null> {
+  try {
+    const text = await store.get('last-poll');
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Vercel Cron, every minute. */
 export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Reply> {
@@ -203,14 +219,20 @@ export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Rep
     return failure(e, log);
   }
   const deadline = started + s.sc.pollBudgetSeconds * 1000;
+  const before = await lastPoll(s.store);
+  const observedBefore = (chainId: number) => before?.networks?.find((n) => n.chainId === chainId)?.observedAt;
   const results: NetworkResult[] = await Promise.all(watchers(s).map(async ({ chainId, w }) => {
     try {
       const ok = await w.poll({ deadline });
       const { late, overdueSeconds, queued, failing } = w.report;
-      return { chainId, ok, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}), ...(failing ? { failing } : {}) };
+      const observedAt = new Date().toISOString();
+      return { chainId, ok, observedAt, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}), ...(failing ? { failing } : {}) };
     } catch (e) {
-      // The poll before this one still runs. It does this work.
-      if (e instanceof BusyError) return { chainId, ok: true, skipped: true as const };
+      // The poll before this one still runs. It does this work. Until it ends, the time of the last poll that ended stays.
+      if (e instanceof BusyError) {
+        const observedAt = observedBefore(chainId);
+        return { chainId, ok: true, skipped: true as const, ...(observedAt ? { observedAt } : {}) };
+      }
       s.log(`chain ${chainId}: ${e instanceof ConfigError ? 'configuration error: ' : 'unexpected error: '}${errText(e)}`);
       return { chainId, ok: false, error: e instanceof ConfigError ? e.message : 'unexpected' };
     }
@@ -290,9 +312,15 @@ export async function health(env: Env, _req: Request, deps: Deps = {}): Promise<
   const fresh = age !== null && age <= sc.healthMaxAgeSeconds;
   // A network is behind when a vault waits to be read for longer than a poll may be missing.
   const behind = (n: NetworkResult) => (n.overdueSeconds ?? 0) > sc.healthMaxAgeSeconds;
-  const healthy = fresh && Array.isArray(last.networks) && last.networks.every((n: NetworkResult) => n.ok && !behind(n));
+  // A network whose polls are skipped (its lock is held) is only as fresh as the last poll that ran to its end.
+  const observedAge = (n: NetworkResult) => (n.observedAt ? Math.round((Date.now() - Date.parse(n.observedAt)) / 1000) : null);
+  const stale = (n: NetworkResult) => { const a = observedAge(n); return a === null || a > sc.healthMaxAgeSeconds; };
+  const healthy = fresh && Array.isArray(last.networks) && last.networks.every((n: NetworkResult) => n.ok && !behind(n) && !stale(n));
   const networks = Array.isArray(last?.networks)
-    ? last.networks.map((n: NetworkResult) => ({ chainId: n.chainId, ok: n.ok, ...(n.late ? { late: n.late, overdueSeconds: n.overdueSeconds } : {}) }))
+    ? last.networks.map((n: NetworkResult) => ({
+      chainId: n.chainId, ok: n.ok, observedSeconds: observedAge(n),
+      ...(n.skipped ? { skipped: true } : {}), ...(n.late ? { late: n.late, overdueSeconds: n.overdueSeconds } : {}),
+    }))
     : [];
   return { status: healthy ? 200 : 503, body: { healthy, lastPoll: last?.at ?? null, ageSeconds: age, networks } };
 }

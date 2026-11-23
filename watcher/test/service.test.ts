@@ -4,7 +4,7 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {
-  BusyError, ConfigError, EMAIL_PER_VISITOR_HOUR, RedisStore, Telegram, emailPages, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
+  BusyError, ConfigError, EMAIL_PER_VISITOR_HOUR, TELEGRAM_STARTS_PER_HOUR, RedisStore, Telegram, emailPages, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
   type Env, type Request,
 } from '../src/index.ts';
 import { vercelFunction } from '../src/vercel.ts';
@@ -15,6 +15,7 @@ const TG_KEY = 'a-secret-for-the-service-test-that-is-long-0123';
 const CRON = 'cron-secret-for-the-tests-0123';
 const REDIS_TOKEN = 'redis-token-for-the-tests';
 const ANNA = 4001;
+const BEN = 4002;
 const ONE_ETH = 10n ** 18n;
 
 let chain: MockChain;
@@ -121,6 +122,13 @@ test('settings of the service', () => {
   assert.throws(() => serviceConfig(env({ TELEGRAM_KEY: 'too-short' })), ConfigError);
 });
 
+/** The result of a network without the time of its last full poll, which only has to be there. */
+const net = (n: any) => {
+  const { observedAt, ...rest } = n;
+  assert.ok(!Number.isNaN(Date.parse(observedAt)), `observedAt: ${observedAt}`);
+  return rest;
+};
+
 test('only Vercel Cron starts a poll', async () => {
   assert.equal((await poll(env(), cron('wrong-secret-of-the-same-size'), deps)).status, 401);
   assert.equal((await poll(env(), { method: 'GET', headers: {}, body: '' }, deps)).status, 401);
@@ -132,7 +140,7 @@ test('a poll sets the webhook one time, finds a Chronobox, and a Start through t
   chain.withCancel();
   let r = await poll(env(), cron(), deps);
   assert.equal(r.status, 200);
-  assert.deepEqual((r.body as any).networks, [{ chainId: 1, ok: true }]);
+  assert.deepEqual((r.body as any).networks.map(net), [{ chainId: 1, ok: true }]);
   const hook = tgCalls.filter((c) => c.method === 'setWebhook');
   assert.equal(hook.length, 1);
   assert.equal(hook[0].args.url, 'https://alerts.example/api/telegram');
@@ -201,7 +209,7 @@ test('two polls at the same time: one works, the other one sees the lock and sto
   assert.equal(b.status, 200);
   // The lock is free again.
   rpcDelayMs = 0;
-  assert.deepEqual(((await poll(env(), cron(), deps)).body as any).networks, [{ chainId: 1, ok: true }]);
+  assert.deepEqual(((await poll(env(), cron(), deps)).body as any).networks.map(net), [{ chainId: 1, ok: true }]);
 });
 
 test('a Start while a poll runs waits for the poll, and both work', async () => {
@@ -218,11 +226,62 @@ test('a Start while a poll runs waits for the poll, and both work', async () => 
   assert.match(answer.text, /Right now one request waits there/);
 });
 
+test('a Start that reads the chain does not hold the network: the poll at the same time runs', async () => {
+  chain.withCancel();
+  await poll(env(), cron(), deps); // begins at the newest block: the Chronobox is not known
+  chain.create();
+  rpcDelayMs = 15;
+  const start = telegramWebhook(env(), message(ANNA, START), deps);
+  await new Promise((r) => setTimeout(r, 40)); // the Start is reading the chain now
+  const p = await poll(env(), cron(), deps);
+  assert.equal((p.body as any).networks[0].skipped, undefined, JSON.stringify(p.body));
+  assert.equal((await start).status, 200);
+  rpcDelayMs = 0;
+  assert.ok(said.some((m) => /^You now get the alerts/.test(m.text)), JSON.stringify(said));
+});
+
+test('Starts again and again: one that follows already reads nothing, and a chat has a limit per hour', async () => {
+  chain.withCancel();
+  chain.create();
+  await poll(env(), cron(), deps);
+  await telegramWebhook(env(), message(ANNA, START), deps);
+  const before = chain.calls.length;
+  for (let i = 0; i < 5; i++) await telegramWebhook(env(), message(ANNA, START), deps);
+  assert.equal(chain.calls.length, before, 'a chat that follows the vault already makes no read of the chain');
+  // Addresses that are not Chronoboxes, one after the other: each is a check, until the limit.
+  said = [];
+  for (let i = 0; i < TELEGRAM_STARTS_PER_HOUR + 2; i++) {
+    await telegramWebhook(env(), message(BEN, `/start ${telegramStart(1, '0x' + String(i).padStart(40, '0'))}`), deps);
+  }
+  assert.equal(said.filter((m) => /asked for many Chronoboxes/.test(m.text)).length, 2, 'the two after the limit');
+});
+
+test('health: a network whose polls are all skipped is not healthy, however fresh the note of the poll is', async () => {
+  const req: Request = { method: 'GET', headers: {}, body: '' };
+  await poll(env(), cron(), deps);
+  assert.equal((await health(env(), req, deps)).status, 200);
+  // Somebody holds the lock of the network. The polls go on, and are skipped.
+  redis.data.set('chronobox:1:lock:all', { value: 'somebody-else' });
+  const skipped = await poll(env(), cron(), deps);
+  assert.equal((skipped.body as any).networks[0].skipped, true);
+  assert.equal((await health(env(), req, deps)).status, 200, 'skipped once: the last full poll is a minute old');
+  const last = JSON.parse(redis.get('chronobox:last-poll')!);
+  const old = new Date(Date.now() - 600_000).toISOString();
+  redis.data.set('chronobox:last-poll', { value: JSON.stringify({ ...last, networks: last.networks.map((n: any) => ({ ...n, observedAt: old })) }) });
+  await poll(env(), cron(), deps);
+  const h = await health(env(), req, deps);
+  assert.equal(h.status, 503, 'the skipped poll keeps the old time of the last full poll');
+  assert.equal((h.body as any).networks[0].skipped, true);
+  redis.data.delete('chronobox:1:lock:all');
+  await poll(env(), cron(), deps);
+  assert.equal((await health(env(), req, deps)).status, 200);
+});
+
 test('a network whose RPC is on another chain is a configuration error, and the other networks still work', async () => {
   const r = await poll(env({ CHAINS: '1,5' }), cron(), deps);
   assert.equal(r.status, 500);
   const nets = (r.body as any).networks;
-  assert.deepEqual(nets[0], { chainId: 1, ok: true });
+  assert.deepEqual(net(nets[0]), { chainId: 1, ok: true });
   assert.equal(nets[1].chainId, 5);
   assert.match(nets[1].error, /The RPC of chain 5 is on chain 1/);
 });
@@ -243,20 +302,20 @@ test('health: 503 before the first poll and when the polls stopped, 200 after a 
   await poll(env(), cron(), deps);
   const ok = await health(env(), req, deps);
   assert.equal(ok.status, 200);
-  assert.deepEqual((ok.body as any).networks, [{ chainId: 1, ok: true }]);
+  assert.deepEqual((ok.body as any).networks, [{ chainId: 1, ok: true, observedSeconds: 0 }]);
   const last = JSON.parse(redis.get('chronobox:last-poll')!);
   redis.data.set('chronobox:last-poll', { value: JSON.stringify({ ...last, at: new Date(Date.now() - 600_000).toISOString() }) });
   assert.equal((await health(env(), req, deps)).status, 503);
   // A network that reads every vault late is not healthy, even when the chain can be read.
   const behind = (overdueSeconds: number) => redis.data.set('chronobox:last-poll', {
-    value: JSON.stringify({ ...last, at: new Date().toISOString(), networks: [{ chainId: 1, ok: true, late: 2, overdueSeconds }] }),
+    value: JSON.stringify({ ...last, at: new Date().toISOString(), networks: [{ chainId: 1, ok: true, observedAt: new Date().toISOString(), late: 2, overdueSeconds }] }),
   });
   behind(100);
   assert.equal((await health(env(), req, deps)).status, 200);
   behind(600);
   const late = await health(env(), req, deps);
   assert.equal(late.status, 503);
-  assert.deepEqual((late.body as any).networks, [{ chainId: 1, ok: true, late: 2, overdueSeconds: 600 }]);
+  assert.deepEqual((late.body as any).networks, [{ chainId: 1, ok: true, observedSeconds: 0, late: 2, overdueSeconds: 600 }]);
 });
 
 test('Redis locks: a held lock is busy, a lock left behind runs out, only the holder frees it', async () => {

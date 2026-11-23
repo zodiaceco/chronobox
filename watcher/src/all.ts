@@ -14,7 +14,7 @@
 import { MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED, encAddr, hex, strip, toAddr } from './chain.ts';
 import type { Config } from './config.ts';
 import { itemStatus, waitLine } from './status.ts';
-import { DryRunStore, FileStore, type Store } from './store.ts';
+import { BusyError, DryRunStore, FileStore, type Store } from './store.ts';
 import type { Email } from './email.ts';
 import type { Network, Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, errText } from './util.ts';
@@ -84,8 +84,15 @@ export type PollOptions = {
   deadline?: number;
 };
 
-/** How long a question of the bot waits for a poll that holds the lock. */
+/**
+ * How long a question of the bot waits for the lock of one vault, or of the list of adopted vaults. Neither is held
+ * for a whole poll: the network-wide lock is the poll's alone, so a question cannot keep a poll from running.
+ */
 const ADOPT_WAIT_MS = 30_000;
+/** A vault that somebody asked for is read for the answer at most once in this time, however often they ask (s). */
+const ADOPT_READ_EVERY_S = 300;
+/** At most this many vaults wait in the list of adopted vaults until a poll takes them in. */
+const MAX_ADOPTED = 1000;
 
 export class AllWatcher {
   cfg: Config;
@@ -154,37 +161,77 @@ export class AllWatcher {
   }
 
   /**
-   * Somebody asked for the alerts of this vault. If it is a Chronobox, the watcher knows it from now on,
-   * also when it is older than the first block that the watcher searched. Then the vault is read, so
-   * that the answer can say what waits. False if the address is not a Chronobox.
+   * Somebody asked for the alerts of this vault. If it is a Chronobox, the watcher knows it from now on, also when it
+   * is older than the first block that the watcher searched. False if the address is not a Chronobox.
+   *
+   * Anybody can ask, as often as they like, so nothing here holds the lock of the network: that is the poll's, and a
+   * poll that cannot get it does not run. The check reads the chain without a lock. A new vault goes into its own
+   * small list ("adopted"), which the next poll takes in. Its first read, for the answer, holds the lock of that one
+   * vault only, which the poll also takes before it reads the vault. A vault the watcher knows is not read here at all.
    */
-  adopt(vault: string): Promise<boolean> {
-    return this.once(async () => {
-      const s = this.state;
-      if (s.chainId === undefined) throw new Error('the network is not known yet');
-      if (!s.vaults[vault]) {
-        let mods: string[];
-        try { mods = await this.probe.modules(vault, 'latest'); } catch (e) {
-          if (e instanceof RevertError) return false;
-          throw e;
-        }
-        let delay: string | null = null;
-        // A Chronobox has two modules at most.
-        for (const m of mods.slice(0, 2)) {
-          if ((await this.probe.chronoboxOf(m, 'latest')) === vault) { delay = m; break; }
-        }
-        if (!delay) return false;
-        s.vaults[vault] = { delay, active: true };
-        this.log(`new Chronobox ${vault} (Delay ${delay}), found because somebody asked for its alerts`);
-        await this.save();
+  async adopt(vault: string): Promise<boolean> {
+    if (this.state.chainId === undefined) throw new Error('the network is not known yet');
+    if (this.state.vaults[vault]) return true;
+    const adopted = await this.adopted();
+    let delay: string | null = adopted[vault] ?? null;
+    if (!delay) {
+      let mods: string[];
+      try { mods = await this.probe.modules(vault, 'latest'); } catch (e) {
+        if (e instanceof RevertError) return false;
+        throw e;
       }
-      const known = s.vaults[vault];
-      if (known.active) {
-        await this.look(vault, known);
-        await this.save();
+      // A Chronobox has two modules at most.
+      for (const m of mods.slice(0, 2)) {
+        if ((await this.probe.chronoboxOf(m, 'latest')) === vault) { delay = m; break; }
       }
+      if (!delay) return false;
+      const found = delay;
+      const added = await this.store.lock('adopted', async () => {
+        const list = await this.adopted();
+        if (list[vault]) return true;
+        if (Object.keys(list).length >= MAX_ADOPTED) return false;
+        list[vault] = found;
+        await this.store.set('adopted', JSON.stringify(list));
+        return true;
+      }, { waitMs: ADOPT_WAIT_MS });
+      if (!added) throw new Error(`${MAX_ADOPTED} adopted Chronoboxes wait for a poll already`);
+      this.log(`new Chronobox ${vault} (Delay ${delay}), found because somebody asked for its alerts`);
+    }
+    // The first read, so that the answer can say what waits. Once in a while at most: the poll reads it anyway.
+    if (await this.store.claim(`adopt-read:${vault}`, ADOPT_READ_EVERY_S)) {
+      const known: Known = { delay, active: true };
+      await this.store.lock(`vault:${vault}`, () => this.watcherOf(vault, known).poll(), { waitMs: ADOPT_WAIT_MS });
+    }
+    return true;
+  }
+
+  /** The vaults that somebody asked for, and that no poll has taken in yet: vault to Delay. */
+  private async adopted(): Promise<Record<string, string>> {
+    const text = await this.store.get('adopted');
+    if (!text) return {};
+    try {
+      const list = JSON.parse(text);
+      return list && typeof list === 'object' ? list : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /** Takes the adopted vaults into the state of the network. Only a poll calls this, with the network's lock. */
+  private async takeAdopted(): Promise<void> {
+    const s = this.state;
+    const taken = await this.store.lock('adopted', async () => {
+      const list = await this.adopted();
+      if (Object.keys(list).length === 0) return false;
+      for (const [vault, delay] of Object.entries(list)) s.vaults[vault] ??= { delay, active: true };
+      await this.store.set('adopted', '{}');
       return true;
-    }, ADOPT_WAIT_MS);
+    }, { waitMs: 5_000 }).catch((e) => {
+      // A question that holds the list a moment too long: the next poll takes the vaults in.
+      this.log(`the adopted Chronoboxes wait for the next poll: ${errText(e)}`);
+      return false;
+    });
+    if (taken) await this.save();
   }
 
   /** What waits in a vault, from the last read: one line per item. */
@@ -207,15 +254,24 @@ export class AllWatcher {
     });
   }
 
-  /** Reads one vault and sends its alerts. False if the chain could not be read. */
-  private async look(vault: string, known: Known): Promise<boolean> {
+  /**
+   * Reads one vault and sends its alerts. False if the chain could not be read. Null if a question of the bot reads
+   * this vault right now: that read sends its alerts, and this poll goes on with the next vault.
+   */
+  private async look(vault: string, known: Known): Promise<boolean | null> {
     // Saved before the read: if the function is killed during it, this vault goes to the back of the line, and it
     // cannot block every poll after this one.
     known.lookedAt = this.clock();
     delete known.waitingSince;
     await this.save();
     const w = this.watcherOf(vault, known);
-    const ok = await w.poll();
+    let ok: boolean;
+    try {
+      ok = await this.store.lock(`vault:${vault}`, () => w.poll(), { waitMs: 0 });
+    } catch (e) {
+      if (e instanceof BusyError) return null;
+      throw e;
+    }
     const ws = w.state;
     known.active = Object.keys(ws.items).length > 0 || ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
     known.heartbeatAt = ws.lastHeartbeat;
@@ -348,6 +404,7 @@ export class AllWatcher {
       this.log(`search for Chronoboxes failed: ${errText(e)}`);
     }
     if (s.chainId === undefined) return false;
+    await this.takeAdopted();
     // New Delays first, so that a new Chronobox is read in this poll. They get a quarter of the time at most (one
     // batch always), so that a flood of Delays cannot take the time of the Chronoboxes that are known.
     const started = this.clock();
@@ -377,12 +434,13 @@ export class AllWatcher {
       }
       // A vault that cannot be read is a problem of that vault, not of the network: anybody can deploy a Safe that
       // answers anything. Its readers are told (Watcher), and it waits longer each time, while the chain can be read.
-      let read = false;
+      let read: boolean | null = false;
       try {
         read = await this.look(vault, known);
       } catch (e) {
         this.log(`${vault}: ${errText(e)}`);
       }
+      if (read === null) continue;
       if (read) {
         delete known.failures;
         delete known.retryAt;

@@ -169,7 +169,11 @@ try {
   assert.deepEqual(chats(told), [ANNA_PHONE, ANNA_FRIEND, BEN_PHONE, OLD_PHONE, CURIOUS]);
   for (const m of told.filter((m) => m.chat !== CURIOUS)) assert.match(m.text, /^You now get the alerts of the Chronobox 0x\w{4}…\w{4} on Ethereum\.\n\nNothing waits there right now\./);
   assert.match(told.find((m) => m.chat === CURIOUS)!.text, /is not a Chronobox on Ethereum/);
+  // A Start does not take the lock of the network, so the next poll takes the older Chronobox in, and tells nothing new.
+  assert.equal(watcher.state.vaults[old.safe.toLowerCase()], undefined);
+  assert.equal(await watcher.poll(), true);
   assert.ok(watcher.state.vaults[old.safe.toLowerCase()], "the older Chronobox is known now");
+  assert.equal(said.length, 0);
   assert.deepEqual(bot.subscribers(1, anna.safe), [String(ANNA_PHONE), String(ANNA_FRIEND)]);
   ok("four chats follow three Chronoboxes; the older one was found because somebody asked");
   ok("the plain Safe is refused");
