@@ -84,6 +84,32 @@ export type Chain = {
 export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da81505d736Efd61c8d";
 
 /**
+ * The name of the Telegram bot of the alert service, without the "@". Null
+ * means: this build has no alerts, and a Chronobox does not show "Get told".
+ *
+ * The alert service is a project of its own (watcher/, see watcher/README.md),
+ * deployed to Vercel as a second project. The name must be the bot that it
+ * runs with: else the bot does not answer. The app never connects to
+ * Telegram. It only builds a link to the bot, and that link is the only place
+ * where people learn which bot is the real one.
+ */
+export const ALERTS_TELEGRAM: string | null = "zodiac_chronobox_bot";
+
+/**
+ * The page of the alert service where a person gives an email address, for
+ * example "https://alerts.example.org/api/email". The same alert service
+ * serves it, with RESEND_KEY (see watcher/README.md). Null means: no alerts
+ * by email. The app only opens that page. It never sees an email address.
+ */
+export const ALERTS_EMAIL: string | null = null;
+
+/**
+ * Where a person reads how to run the alert service on a machine of their
+ * own: the guide in the repository. Null means: the app does not point to it.
+ */
+export const ALERTS_GUIDE: string | null = null;
+
+/**
  * The suggested contribution in US dollars, by how much money is in play:
  * what goes into the Chronobox during the setup, or what the wallet holds
  * when nothing goes in yet. Each entry is [from this many dollars, suggest

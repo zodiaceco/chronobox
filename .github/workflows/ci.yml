@@ -15,9 +15,66 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
+      - run: npm ci --ignore-scripts
+      # The check reads test/alerts-fork.ts, which imports the alert service, and so its React (mail.tsx, pages.tsx).
+      - run: npm ci --ignore-scripts
+        working-directory: watcher
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+  # The alert service is a project of its own, with its own package.json.
+  watcher:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: watcher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: watcher/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm test
       - run: npm run build
+
+  # The app and the alert service against the real contracts, on an anvil fork of Ethereum mainnet. Each test takes a
+  # snapshot and reverts to it, and uses its own anvil accounts, so all of them share one fork.
+  fork:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # A repository secret with an RPC of your own, if the public one is slow or limits the fork. Pull requests from
+      # forks get no secrets and use the public one.
+      FORK_URL: ${{ secrets.FORK_RPC_URL || 'https://mainnet.gateway.tenderly.co' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # anvil comes from the lockfile (@foundry-rs/anvil-linux-amd64), so no install script has to run.
+      - run: npm ci --ignore-scripts
+      # The alert service has its own packages: react-email for the emails, esbuild for its .tsx (jsx.mjs).
+      - run: npm ci --ignore-scripts
+        working-directory: watcher
+      - name: Start the fork
+        run: |
+          npx anvil --fork-url "$FORK_URL" --chain-id 1 --port 8545 --silent > anvil.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' http://127.0.0.1:8545 > /dev/null; then
+              echo "the fork answers"; exit 0
+            fi
+            sleep 1
+          done
+          echo "the fork did not start"; cat anvil.log; exit 1
+      - run: npm run test:fork
+      - run: npm run test:fork:guardian
+      - run: npm run test:fork:deposit
+      - run: npm run test:fork:alerts

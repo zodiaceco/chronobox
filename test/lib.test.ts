@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { call, decode, encode, selector, topic } from "../src/lib/abi.ts";
+import { telegramLink, telegramStart } from "../src/lib/alerts.ts";
 import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
@@ -303,4 +304,13 @@ test("inspect isolates history cache per chainId and catches a guard on Roles", 
   // Here we also confirm DELAY_PROXY_CODE and ROLES_PROXY_CODE are distinct.
   assert.notEqual(DELAY_PROXY_CODE, ROLES_PROXY_CODE);
   assert.ok(SENTINEL && ZERO && CONTRACTS.burn && typeof inspect === "function");
+});
+
+test("the link to the Telegram bot carries the network and the address, and matches the watcher", async () => {
+  const safe = "0x29fcB43b46531BcA003ddC8FCB67FFE91900C762";
+  assert.equal(telegramLink("@ChronoboxAlertsBot", 1, safe), "https://t.me/ChronoboxAlertsBot?start=1-0x29fcb43b46531bca003ddc8fcb67ffe91900c762");
+  // Telegram allows letters, digits, "-" and "_" after "start=", up to 64 characters.
+  assert.match(telegramStart(11155111, safe), /^[-_A-Za-z0-9]{1,64}$/);
+  const watcher = await import("../watcher/src/telegram.ts");
+  assert.equal(watcher.telegramStart(11155111, safe), telegramStart(11155111, safe));
 });
