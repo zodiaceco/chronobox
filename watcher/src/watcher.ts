@@ -150,8 +150,8 @@ export class Watcher {
     return lo;
   }
 
-  /** Logs of one contract, or of every contract when no address is given. */
-  async getLogs(from: number, to: number, topics: (string | string[] | null)[], address?: string): Promise<any[]> {
+  /** Logs of one contract, or of a list of contracts. */
+  async getLogs(from: number, to: number, topics: (string | string[] | null)[], address?: string | string[]): Promise<any[]> {
     const out: any[] = [];
     let chunk = this.cfg.logChunk;
     let start = from;

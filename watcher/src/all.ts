@@ -1,13 +1,17 @@
 // --all: every Chronobox on one network.
 //
 // Everything a Chronobox does goes through its Delay, and the chain is public. So one watcher can watch every
-// Chronobox without being told about each one: it finds new Chronoboxes by the Delay they deploy and by the
-// transactions they queue. The alerts of a vault go to the Telegram chats that follow it, and to the webhook.
+// Chronobox without being told about each one: it finds new Chronoboxes by the Delay that they deploy through the
+// Zodiac factory, and older ones when somebody presses Start for them. The alerts of a vault go to the Telegram
+// chats that follow it, and to the webhook.
+//
+// The watcher reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows.
+// Anybody can deploy contracts that emit any event, so logs from every contract would let anybody fill a poll.
 //
 // What it knows is in the store, under "all" (the network) and under the address of each vault. Every poll and
 // every question of the bot reads it again under the lock "all", because on Vercel a cron run and the webhook
 // work at the same time, in different places.
-import { MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED, hex, strip, toAddr } from './chain.ts';
+import { MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED, encAddr, hex, strip, toAddr } from './chain.ts';
 import type { Config } from './config.ts';
 import { itemStatus, waitLine } from './status.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
@@ -30,7 +34,16 @@ export type AllState = {
   chainId?: number;
   lastBlock?: number;
   vaults: Record<string, Known>;
+  /** Delays from the factory that were not checked yet. Saved with lastBlock, so no search is done twice. */
+  queue?: string[];
 };
+
+/** The most Delays that wait to be checked. More is a flood; the rest is dropped (see `scan`). */
+export const MAX_QUEUE = 1000;
+/** Delays checked at the same time. */
+const CHECK_PARALLEL = 8;
+/** Delays per eth_getLogs request for the requests of known Chronoboxes. */
+const ADDRESSES_PER_QUERY = 100;
 
 export type AllOptions = {
   fetch?: FetchFn;
@@ -48,6 +61,8 @@ export type PollReport = {
   late: number;
   /** How long the vault that has waited longest has been due without being read. */
   overdueSeconds: number;
+  /** Delays from the factory that still wait to be checked. */
+  queued: number;
 };
 
 export type PollOptions = {
@@ -63,7 +78,7 @@ export class AllWatcher {
   state: AllState = { version: 1, vaults: {} };
   log: Log;
   /** Set by each poll. */
-  report: PollReport = { late: 0, overdueSeconds: 0 };
+  report: PollReport = { late: 0, overdueSeconds: 0, queued: 0 };
   private opts: AllOptions;
   private probe: Watcher;
   private store: Store;
@@ -191,7 +206,11 @@ export class AllWatcher {
     return ok;
   }
 
-  /** Find new Chronoboxes and see which known ones queued something. Returns the vaults to look at now. */
+  /**
+   * Which known Chronoboxes queued something, and which Delays the factory made. The new Delays go into the queue,
+   * and the queue is saved with the new lastBlock before any of them is checked: a search is never done twice, also
+   * when the function is killed afterwards. Returns the vaults to look at now.
+   */
   private async scan(): Promise<{ chainId: number; now: number; touched: Set<string> }> {
     const s = this.state;
     const rpc = this.probe.rpc;
@@ -206,39 +225,75 @@ export class AllWatcher {
     const block = await rpc.call('eth_getBlockByNumber', [hex(head), false]);
     if (!block) throw new Error(`block ${head} not found`);
     const now = Number(BigInt(block.timestamp));
-    const tag = hex(head);
     const touched = new Set<string>();
     const from = s.lastBlock !== undefined ? s.lastBlock + 1 : this.cfg.startBlock ?? head + 1;
     // A long way behind (the first start with START_BLOCK, or after an outage): one part per poll.
     const to = this.cfg.maxScanBlocks > 0 ? Math.min(head, from + this.cfg.maxScanBlocks - 1) : head;
     if (from <= to) {
-      const logs = await this.probe.getLogs(from, to, [[TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED]]);
       const byDelay = new Map(Object.entries(s.vaults).map(([vault, k]) => [k.delay, vault]));
-      const candidates = new Set<string>();
-      for (const l of logs) {
-        const emitter = String(l.address).toLowerCase();
-        if (l.topics[0] === TOPIC_MODULE_PROXY_CREATION) {
-          if (emitter !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
-          const delay = toAddr(strip(l.topics[1]));
-          if (!byDelay.has(delay)) candidates.add(delay);
-        } else {
-          const vault = byDelay.get(emitter);
-          if (vault) touched.add(vault); else candidates.add(emitter);
+      // The requests of the Chronoboxes it knows. Only their Delays can emit these logs.
+      const delays = [...byDelay.keys()];
+      for (let i = 0; i < delays.length; i += ADDRESSES_PER_QUERY) {
+        for (const l of await this.probe.getLogs(from, to, [TOPIC_TRANSACTION_ADDED], delays.slice(i, i + ADDRESSES_PER_QUERY))) {
+          const vault = byDelay.get(String(l.address).toLowerCase());
+          if (vault) touched.add(vault);
         }
       }
-      for (const delay of candidates) {
-        const vault = await this.probe.chronoboxOf(delay, tag);
-        if (!vault || s.vaults[vault]) continue;
-        s.vaults[vault] = { delay, active: true };
-        touched.add(vault);
-        this.log(`new Chronobox ${vault} (Delay ${delay})`);
+      // New Delays, from the factory. Every Chronobox deploys its Delay there.
+      const queue = s.queue ?? [];
+      const waiting = new Set(queue);
+      let dropped = 0;
+      const created = await this.probe.getLogs(from, to, [TOPIC_MODULE_PROXY_CREATION, null, '0x' + encAddr(MASTER_COPY.delay)], MODULE_PROXY_FACTORY);
+      for (const l of created) {
+        if (String(l.address).toLowerCase() !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
+        const delay = toAddr(strip(l.topics[1]));
+        if (byDelay.has(delay) || waiting.has(delay)) continue;
+        // A flood of Delays is dropped. A Chronobox in it is still found when somebody presses Start for it.
+        if (queue.length >= MAX_QUEUE) { dropped++; continue; }
+        queue.push(delay);
+        waiting.add(delay);
       }
+      if (dropped) this.log(`${dropped} new Delays were not queued: ${MAX_QUEUE} wait to be checked already`);
+      s.queue = queue;
       if (to < head) this.log(`searched up to block ${to}, ${head - to} blocks to go`);
     }
     s.chainId = chainId;
     s.lastBlock = to;
     this.announce();
     return { chainId, now, touched };
+  }
+
+  /**
+   * Checks the Delays in the queue, a few at a time, until the queue is empty or `deadline` is past. One batch
+   * always runs, so the queue goes down on every poll. Saved after each batch. Returns the number found.
+   */
+  private async check(deadline: number | undefined): Promise<number> {
+    const s = this.state;
+    let found = 0;
+    let first = true;
+    while ((s.queue ?? []).length > 0) {
+      if (!first && deadline !== undefined && this.clock() >= deadline) break;
+      first = false;
+      const batch = s.queue!.slice(0, CHECK_PARALLEL);
+      const results = await Promise.allSettled(batch.map((delay) => this.probe.chronoboxOf(delay, 'latest')));
+      const failed = results.findIndex((r) => r.status === 'rejected');
+      // The chain cannot be read now. What was not checked stays in the queue.
+      const done = failed < 0 ? batch.length : failed;
+      for (let i = 0; i < done; i++) {
+        const vault = (results[i] as PromiseFulfilledResult<string | null>).value;
+        if (!vault || s.vaults[vault]) continue;
+        s.vaults[vault] = { delay: batch[i], active: true };
+        found++;
+        this.log(`new Chronobox ${vault} (Delay ${batch[i]})`);
+      }
+      s.queue = s.queue!.slice(done);
+      await this.save();
+      if (failed >= 0) {
+        this.log(`could not check a new Delay: ${errText((results[failed] as PromiseRejectedResult).reason)}`);
+        break;
+      }
+    }
+    return found;
   }
 
   /**
@@ -265,6 +320,10 @@ export class AllWatcher {
       this.log(`search for Chronoboxes failed: ${errText(e)}`);
     }
     if (s.chainId === undefined) return false;
+    // New Delays first, so that a new Chronobox is read in this poll. They get a quarter of the time at most (one
+    // batch always), so that a flood of Delays cannot take the time of the Chronoboxes that are known.
+    const started = this.clock();
+    await this.check(opts.deadline === undefined ? undefined : started + Math.max(0, opts.deadline - started) / 4);
     await this.opts.telegram?.ready();
     const beat = this.cfg.heartbeatHours * 3600;
     const chainId = s.chainId;
@@ -293,8 +352,9 @@ export class AllWatcher {
         this.log(`${vault}: ${errText(e)}`);
       }
     }
-    this.report = { late, overdueSeconds: late ? Math.round((this.clock() - oldest) / 1000) : 0 };
+    this.report = { late, overdueSeconds: late ? Math.round((this.clock() - oldest) / 1000) : 0, queued: 0 };
     if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll (the oldest waits ${this.report.overdueSeconds}s)`);
+    this.report.queued = (s.queue ?? []).length;
     await this.save();
     return ok;
   }

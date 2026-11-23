@@ -34,6 +34,10 @@ export class MockChain {
   rolesOwner = BURN_ADDRESS;
   safeOwners = [BURN_ADDRESS];
   created: number | null = null; // block of the ModuleProxyCreation log of the Delay
+  /** More Delays that the factory made: not of a Chronobox. */
+  otherCreated: { delay: string; block: number }[] = [];
+  /** The addresses of each eth_getLogs request. */
+  logQueries: string[][] = [];
   create() { this.mine(12n); this.created = this.head; this.mine(12n); }
   codes: Record<string, string> = {
     [DELAY]: proxyCode(MASTER_COPY.delay),
@@ -106,31 +110,33 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       const from = Number(BigInt(f.fromBlock)), to = Number(BigInt(f.toBlock));
       if (to - from + 1 > chain.maxLogRange) return { error: { code: -32005, message: 'query returned more than 10000 results' } };
       const out: unknown[] = [];
-      if (!f.address) {
-        // The search of --all: every contract, ModuleProxyCreation or TransactionAdded.
-        const wanted: string[] = [f.topics[0]].flat();
-        if (wanted.includes(TOPIC_MODULE_PROXY_CREATION) && chain.created !== null && chain.created >= from && chain.created <= to) {
+      // The watcher reads logs of contracts it chose only. An RPC may refuse a search over every contract, and
+      // anybody can fill one.
+      if (!f.address) return { error: { code: -32602, message: 'the stand-in wants an address' } };
+      const addrs: string[] = [f.address].flat().map((x: string) => x.toLowerCase());
+      chain.logQueries.push(addrs);
+      if (f.topics[0] === TOPIC_MODULE_PROXY_CREATION) {
+        if (!addrs.includes(MODULE_PROXY_FACTORY)) return { result: out };
+        const created = [...(chain.created === null ? [] : [{ delay: DELAY, block: chain.created }]), ...chain.otherCreated].sort((x, y) => x.block - y.block);
+        for (const c of created) {
+          if (c.block < from || c.block > to) continue;
+          if (f.topics[2] && f.topics[2] !== '0x' + encAddr(MASTER_COPY.delay)) continue;
           out.push({
-            address: MODULE_PROXY_FACTORY, blockNumber: '0x' + chain.created.toString(16),
-            topics: [TOPIC_MODULE_PROXY_CREATION, '0x' + encAddr(DELAY), '0x' + encAddr(MASTER_COPY.delay)], data: '0x',
-          });
-        }
-        if (wanted.includes(TOPIC_TRANSACTION_ADDED)) {
-          chain.queue.forEach((q, n) => {
-            if (q.block < from || q.block > to) return;
-            out.push({ address: DELAY, blockNumber: '0x' + q.block.toString(16), topics: [TOPIC_TRANSACTION_ADDED, '0x' + u(n), '0x' + 'ab'.repeat(32)], data: encAdded(q) });
+            address: MODULE_PROXY_FACTORY, blockNumber: '0x' + c.block.toString(16),
+            topics: [TOPIC_MODULE_PROXY_CREATION, '0x' + encAddr(c.delay), '0x' + encAddr(MASTER_COPY.delay)], data: '0x',
           });
         }
         return { result: out };
       }
-      if (f.topics[0] === TOPIC_TX_NONCE_SET && f.address.toLowerCase() === DELAY) {
+      f.address = addrs.length === 1 ? addrs[0] : addrs;
+      if (f.topics[0] === TOPIC_TX_NONCE_SET && addrs.includes(DELAY)) {
         for (const l of chain.delayHasNonceEvent ? chain.nonceSets : []) {
           if (l.block < from || l.block > to) continue;
           out.push({ address: DELAY, blockNumber: '0x' + l.block.toString(16), logIndex: '0x0', topics: [TOPIC_TX_NONCE_SET], data: '0x' + u(l.nonce) });
         }
         return { result: out };
       }
-      if (f.topics[0] === TOPIC_SAFE_MODULE_TRANSACTION && f.address.toLowerCase() === SAFE) {
+      if (f.topics[0] === TOPIC_SAFE_MODULE_TRANSACTION && addrs.includes(SAFE)) {
         // Every module call in the Safe: the cancels (Roles calls setTxNonce on the Delay) and one other call.
         const moduleTx = (module: string, to: string, data: string) =>
           '0x' + encAddr(module) + encAddr(to) + u(0) + u(160) + u(0) + u((data.length - 2) / 2) + data.slice(2).padEnd(128, '0');
@@ -143,7 +149,7 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
         return { result: out };
       }
       chain.queue.forEach((q, n) => {
-        if (f.address.toLowerCase() !== DELAY) return;
+        if (!addrs.includes(DELAY)) return;
         if (q.block < from || q.block > to) return;
         if (f.topics[0] !== TOPIC_TRANSACTION_ADDED) return;
         const t1 = '0x' + u(n);

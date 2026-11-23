@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, MemoryStore, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, MemoryStore, MAX_QUEUE, MODULE_PROXY_FACTORY, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
@@ -581,7 +581,9 @@ test('--all reads a quiet Chronobox only when it queues something', async () => 
   chain.mine(600n);
   await w.poll();
   assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
-  assert.equal(chain.calls.filter((c) => c === 'eth_getLogs').length, 1);
+  // Two searches: the requests of the known Delays, and new Delays from the factory. Never all contracts.
+  assert.equal(chain.calls.filter((c) => c === 'eth_getLogs').length, 2);
+  assert.deepEqual(chain.logQueries.slice(-2), [[DELAY], [MODULE_PROXY_FACTORY]]);
 
   // Something waits: the vault is read on every poll until the queue is empty again.
   chain.mine(12n);
@@ -599,17 +601,57 @@ test('--all reads a quiet Chronobox only when it queues something', async () => 
   assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
 });
 
-test('--all finds an older Chronobox when it queues a transaction', async () => {
+test('--all does not read logs of unknown contracts: an older Chronobox is found by START_BLOCK or by a Start', async () => {
+  // Anybody can deploy contracts that emit TransactionAdded. Reading those would let anybody fill a poll.
   const w = all();
   await w.poll();
   chain.mine(12n);
   chain.enqueue(STRANGER, ONE_HALF_ETH);
+  assert.equal(await w.poll(), true);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(w.state.vaults, {});
+  for (const q of chain.logQueries) assert.ok(q.length > 0 && q.every((a) => a === MODULE_PROXY_FACTORY), JSON.stringify(q));
+});
+
+test('--all: a flood of Delays from the factory waits in a queue, saved before any check, and drains a batch per poll', async () => {
+  // 50 Delays that are no Chronobox, then the real one.
+  for (let i = 0; i < 50; i++) chain.otherCreated.push({ delay: '0x' + (i + 1).toString(16).padStart(40, '0'), block: chain.head + 1 });
+  let now = 1_000_000;
+  const store = new MemoryStore();
+  const w = new AllWatcher(allConfig(), { log: (m) => logs.push(m), store, clock: () => now });
   await w.poll();
-  assert.equal(hooks().length, 1);
-  assert.equal(hooks()[0].json.vault, SAFE);
-  assert.match(hooks()[0].json.title, /Watching this Chronobox/);
-  assert.equal(hooks()[0].json.priority, 4);
-  assert.match(hooks()[0].json.message, /One request waits:\nSend 1\.5 ETH to 0xbaba…baba\. Its wait ends on /);
+  chain.mine(12n);
+  chain.create();
+  // No time at all: one batch per poll, and nothing else.
+  await w.poll({ deadline: now - 1 });
+  const saved = JSON.parse((await store.get('all'))!);
+  assert.equal(saved.lastBlock, chain.head, 'the search is saved, with the queue, so it is not done again');
+  assert.equal(saved.queue.length, 51 - 8);
+  assert.equal(w.report.queued, 43);
+  let polls = 1;
+  while (Object.keys(w.state.vaults).length === 0) { await w.poll({ deadline: now - 1 }); polls++; }
+  assert.equal(polls, 7, 'the real one was last in the queue');
+  assert.equal(w.report.queued, 0);
+  // With time (the CLI has no deadline), the whole queue at once.
+  chain = new MockChain();
+  for (let i = 0; i < 30; i++) chain.otherCreated.push({ delay: '0x' + (i + 1).toString(16).padStart(40, '0'), block: chain.head + 1 });
+  const cli = all({ STATE_DIR: path.join(dir, 'drain') });
+  await cli.poll();
+  chain.mine(12n);
+  chain.create();
+  await cli.poll();
+  assert.deepEqual(Object.keys(cli.state.vaults), [SAFE]);
+  assert.equal(cli.report.queued, 0);
+
+  // More than MAX_QUEUE: the rest is dropped and said so. A Chronobox among them is found when somebody presses Start.
+  chain = new MockChain();
+  const big = all({ STATE_DIR: path.join(dir, 'big') });
+  await big.poll();
+  for (let i = 0; i < MAX_QUEUE + 5; i++) chain.otherCreated.push({ delay: '0x' + (i + 1).toString(16).padStart(40, '0'), block: chain.head + 1 });
+  chain.mine(12n);
+  await big.poll({ deadline: Date.now() - 1 });
+  assert.match(logs.join('\n'), /5 new Delays were not queued: 1000 wait to be checked already/);
+  assert.equal(big.report.queued, MAX_QUEUE - 8);
 });
 
 test('--all with START_BLOCK finds Chronoboxes that are already there', async () => {
@@ -693,10 +735,10 @@ test('--all: a poll out of time goes on where it stopped, so busy vaults cannot 
   for (let i = 0; i < 5; i++) await w.poll({ deadline: now + 5 });
   assert.deepEqual(read, [vaults[0], vaults[1], vaults[2], vaults[3], vaults[0]], 'each in turn, then from the start');
   // Skipped vaults are reported with how long the oldest waits.
-  assert.deepEqual(w.report, { late: 3, overdueSeconds: 0 });
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 0, queued: 0 });
   now += 600_000;
   await w.poll({ deadline: now + 5 });
-  assert.deepEqual(w.report, { late: 3, overdueSeconds: 600 });
+  assert.deepEqual(w.report, { late: 3, overdueSeconds: 600, queued: 0 });
 
   // A read that never ends (the function is killed): the next run starts with the vault after it.
   read.length = 0;

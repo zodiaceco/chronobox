@@ -133,9 +133,11 @@ The functions are bundled by `build.mjs` and deployed as they are (the Build Out
 
 How it finds the Chronoboxes (on Vercel too):
 
-- A new Chronobox by the Delay that it deploys (the `ModuleProxyCreation` event of the Zodiac factory), and an older one when it asks for something (`TransactionAdded`, read from every contract on the chain), or when somebody presses Start for it.
+- A new Chronobox by the Delay that it deploys (the `ModuleProxyCreation` event of the Zodiac factory, for the master copy of the Delay), and any Chronobox when somebody presses Start for it.
+- It reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows. Anybody can deploy contracts that emit any event, so a search over every contract would let anybody fill a poll. That is why an older Chronobox is not found when it asks for something. Set `START_BLOCK` to the block of the first Chronobox to find them all from the factory.
+- A new Delay waits in a queue until it is checked. The queue is saved together with the search, before any check, so a search is never done twice. Each poll checks a batch of 8 at least, and new Delays get a quarter of its time at most, so a flood of Delays from the factory cannot take the time of the Chronoboxes that are known. The queue holds 1000 at most; more is dropped and logged. A Chronobox among them is still found when somebody presses Start for it.
 - It accepts an address only if it is a Safe whose single owner is the burn address and whose modules are that Delay, or that Delay and a Roles modifier.
-- A Chronobox where nothing waits cannot change until somebody asks for something. So the watcher reads a Chronobox only when something waits there, when something new was asked for, or when its "All quiet" message is due and a chat follows it. One log request per poll covers all quiet ones.
+- A Chronobox where nothing waits cannot change until somebody asks for something. So the watcher reads a Chronobox only when something waits there, when something new was asked for, or when its "All quiet" message is due and a chat follows it. One log request per poll (per 100 Chronoboxes) covers all quiet ones.
 - The first start begins at the newest block. Set `START_BLOCK` to search from an older block.
 
 How a person subscribes (on Vercel too):
@@ -159,7 +161,7 @@ A semicolon separates the networks, a comma the fallbacks of one network. Each n
 Things to know:
 
 - On a machine, the bot needs no domain and no open port. It asks Telegram for new messages (long polling). If the bot had a webhook (from the service on Vercel), remove it first: `curl https://api.telegram.org/bot<token>/deleteWebhook`.
-- The RPC must answer `eth_getLogs` without an address filter. Lower `LOG_CHUNK` if it limits the block range.
+- Lower `LOG_CHUNK` if the RPC limits the block range of `eth_getLogs`.
 - With `--once` the bot reads its messages one time per run, so an answer takes as long as the pause between two runs. Run the watcher as a service.
 - `CHRONOBOX`, `DELAY` and `STATE_FILE` do not work with `--all`. `WEBHOOK_URL` works, and gets the alerts of every Chronobox.
 - Not tested yet with the real Telegram, and not deployed to Vercel yet. The checks are the unit tests (with stand-ins for the chain, Telegram and Redis) and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
