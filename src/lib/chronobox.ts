@@ -1549,7 +1549,7 @@ export async function readSwapCoverage(rpc: Rpc, delay: Address, upTo: bigint): 
   const reach = upTo > line.txNonce ? upTo : line.txNonce;
   if (upTo > line.queueNonce || reach >= line.queueNonce) return swapCoverage(upTo, line);
   const [createdAt, cooldown, now] = await Promise.all([
-    read(rpc, delay, "txCreatedAt(uint256)", [reach], ["uint256"]).then((r) => r[0] as bigint),
+    read(rpc, delay, "getTxCreatedAt(uint256)", [reach], ["uint256"]).then((r) => r[0] as bigint),
     read(rpc, delay, "txCooldown()", [], ["uint256"]).then((r) => r[0] as bigint),
     chainTime(rpc),
   ]);

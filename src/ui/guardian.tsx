@@ -754,7 +754,8 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
           We could not read the line: {read.message}{" "}
           <button type="button" class="link-button" onClick={readLine}>
             Try again
-          </button>
+          </button>{" "}
+          You can still cancel everything that waits.
         </Notice>
       ) : coverage?.state === "uncovered" ? (
         <Notice kind="bad" title={coverage.left === 1n ? "One withdrawal waits that this change does not cancel." : `${coverage.left} withdrawals wait that this change does not cancel.`}>
@@ -770,7 +771,8 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        {coverage?.state === "uncovered" ? (
+        {/* Cancelling reads the line itself, so it stays at hand when the check could not be read. */}
+        {coverage?.state === "uncovered" || read.state === "error" ? (
           <Button kind="primary" busy={action.busy === "clear"} disabled={!!action.busy} onClick={clear}>
             {action.busy === "clear" ? "Confirm in your wallet" : "Cancel everything that waits"}
           </Button>
