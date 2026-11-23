@@ -1495,6 +1495,25 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
   ]);
 }
 
+/**
+ * What a swap request does to the line as it stands now. The guardian checks this before agreeing.
+ * The point of the line comes from a link, and the old wallet can make that link: it is one of
+ * the two owners of the shared Safe, so it can also carry out whatever the guardian agrees to.
+ *   - "impossible": the point is past the end of the line. No real request names it.
+ *   - "uncovered": `left` items wait that the change would not cancel. They must be cancelled
+ *     first, or they could still run after the change.
+ *   - "ok": the change cancels every item that waits now (`cancels` of them).
+ */
+export type SwapCoverage = { state: "impossible" } | { state: "uncovered"; left: bigint } | { state: "ok"; cancels: bigint };
+
+export function swapCoverage(upTo: bigint, line: { txNonce: bigint; queueNonce: bigint }): SwapCoverage {
+  const { txNonce, queueNonce } = line;
+  if (upTo > queueNonce) return { state: "impossible" };
+  const reach = upTo > txNonce ? upTo : txNonce;
+  if (reach < queueNonce) return { state: "uncovered", left: queueNonce - reach };
+  return { state: "ok", cancels: reach - txNonce };
+}
+
 /** Where the line of the Delay stands: items from txNonce up to queueNonce wait, or can run. */
 export async function delayNonces(rpc: Rpc, delay: Address): Promise<{ txNonce: bigint; queueNonce: bigint }> {
   const [txNonce, queueNonce] = await Promise.all([

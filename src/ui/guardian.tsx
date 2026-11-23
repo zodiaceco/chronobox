@@ -22,8 +22,10 @@ import {
   councilHash,
   councilOwners,
   councilApproved,
+  cancelTx,
   councilSwapTx,
   delayNonces,
+  swapCoverage,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -408,7 +410,7 @@ export async function prepareSwap(session: Session, chain: Chain, vault: VaultRe
   await sendAndWait(session.rpc, session.account, councilCreateTx(vault.safe, vault.controller, vault.guardian!), { chainId: chain.id, chainName: chain.name, ...waiting });
 }
 
-type Line = { state: "loading" } | { state: "error"; message: string } | { state: "read"; waiting: bigint };
+type Line = { state: "loading" } | { state: "error"; message: string } | { state: "read"; txNonce: bigint; queueNonce: bigint; waiting: bigint };
 
 /** What is still in the line of the Delay. Read again on request. */
 function useLine(rpc: Rpc, delay: Address, active = true): { line: Line; retry: () => void } {
@@ -419,7 +421,7 @@ function useLine(rpc: Rpc, delay: Address, active = true): { line: Line; retry: 
     let stale = false;
     setLine({ state: "loading" });
     delayNonces(rpc, delay).then(
-      ({ txNonce, queueNonce }) => !stale && setLine({ state: "read", waiting: queueNonce - txNonce }),
+      ({ txNonce, queueNonce }) => !stale && setLine({ state: "read", txNonce, queueNonce, waiting: queueNonce - txNonce }),
       (e) => !stale && setLine({ state: "error", message: errorText(e) }),
     );
     return () => {
@@ -567,14 +569,29 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   const { session, chain, vault, request } = props;
   const { to } = request;
   const { swap, retry } = useSwap(session.rpc, vault, request);
-  const changed = sameAddress(to, vault.controller) || swap.state === "done";
-  const { line } = useLine(session.rpc, vault.delay, changed);
+  const { line, retry: readLine } = useLine(session.rpc, vault.delay);
   const [spoke, setSpoke] = useState(false);
   const [sent, setSent] = useState(false);
   const action = useAction();
+  const sending = { chainId: chain.id, chainName: chain.name };
+  // What the request does to the line now. The link sets its point of the line, and the old wallet
+  // can make a link: the guardian agrees only when nothing that waits is left out.
+  const coverage = line.state === "read" && request.upTo !== null ? swapCoverage(request.upTo, line) : null;
+  const clear = () =>
+    action.run("clear", async (waiting) => {
+      const now = await delayNonces(session.rpc, vault.delay);
+      if (now.queueNonce > now.txNonce) await sendAndWait(session.rpc, session.account, cancelTx(vault.roles!, vault.delay, now.queueNonce - 1n), { ...sending, ...waiting });
+      readLine();
+    });
   const agree = () =>
     action.run("agree", async (waiting) => {
-      if (swap.state !== "ready") return;
+      if (swap.state !== "ready" || request.upTo === null) return;
+      // Read again just before agreeing: the line may have grown since the page read it.
+      const now = swapCoverage(request.upTo, await delayNonces(session.rpc, vault.delay));
+      if (now.state !== "ok") {
+        readLine();
+        throw new Error(now.state === "impossible" ? "This link names a point of the line that does not exist. Ask the owner for a new link." : "More withdrawals wait now. Cancel them first.");
+      }
       await sendAndWait(session.rpc, session.account, councilApproveTx(vault.council!, swap.hash), { chainId: chain.id, chainName: chain.name, ...waiting });
       setSent(true);
     });
@@ -638,6 +655,14 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       </Modal>
     );
   }
+  if (coverage?.state === "impossible") {
+    return (
+      <Modal title="This link does not fit" onClose={props.onClose}>
+        <p>It names a point of the line of this Chronobox that does not exist. Ask the owner for a new link.</p>
+        {closeOnly}
+      </Modal>
+    );
+  }
   if (swap.agreed || sent) {
     return (
       <Modal title="You agreed." onClose={props.onClose}>
@@ -656,12 +681,32 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
         Agree only if they tell you this address themselves. A message is not enough: a person who has their wallet can write to you too.
       </Notice>
       <Choice role="checkbox" on={spoke} title="I spoke to the owner, and the address is the same." disabled={!!action.busy} onClick={() => setSpoke(!spoke)} />
+      {line.state === "error" ? (
+        <Notice kind="bad">
+          We could not read the line: {line.message}{" "}
+          <button type="button" class="link-button" onClick={readLine}>
+            Try again
+          </button>
+        </Notice>
+      ) : coverage?.state === "uncovered" ? (
+        <Notice kind="bad" title={coverage.left === 1n ? "One withdrawal waits that this change does not cancel." : `${coverage.left} withdrawals wait that this change does not cancel.`}>
+          If the wallet of the owner is lost, they come from the person who has it, and they could still run after the change. Cancel everything that waits first. It happens at once, and nothing moves.
+        </Notice>
+      ) : coverage?.state === "ok" && coverage.cancels > 0n ? (
+        <p class="hint">The change also cancels the {coverage.cancels === 1n ? "withdrawal" : `${coverage.cancels} withdrawals`} that wait now.</p>
+      ) : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!spoke} busy={action.busy === "agree"} onClick={agree}>
-          {action.busy ? "Confirm in your wallet" : "Agree"}
-        </Button>
+        {coverage?.state === "uncovered" ? (
+          <Button kind="primary" busy={action.busy === "clear"} disabled={!!action.busy} onClick={clear}>
+            {action.busy === "clear" ? "Confirm in your wallet" : "Cancel everything that waits"}
+          </Button>
+        ) : (
+          <Button kind="primary" disabled={!spoke || coverage?.state !== "ok"} busy={action.busy === "agree"} onClick={agree}>
+            {action.busy ? "Confirm in your wallet" : "Agree"}
+          </Button>
+        )}
         <Button kind="quiet" onClick={props.onClose} disabled={!!action.busy}>
           Not now
         </Button>

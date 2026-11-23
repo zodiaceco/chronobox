@@ -28,6 +28,7 @@ import {
   councilOwners,
   councilSwapTx,
   createTx,
+  swapCoverage,
   delayNonces,
   depositTx,
   executeTx,
@@ -323,16 +324,29 @@ try {
   const councilD = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(d.safe, WALLET, GUARDIAN)))!;
   const ownersD = await councilOwners(rpc, councilD);
   const partsD = { ...d, controller: WALLET, guardian: GUARDIAN, council: councilD, members: stateD.members };
-  // The line is empty: the Delay refuses this txNonce, and the change must not depend on it.
+  // The old wallet makes the link itself: the right new wallet, but a point of the line that
+  // cancels nothing of the withdrawal it queued. The guardian must not agree to that as it is.
+  const stalePoint = (await delayNonces(rpc, d.delay)).queueNonce;
+  const queuedD = withdrawalTx(WALLET, null, 1n);
+  await sendAndWait(rpc, WALLET, queueTx(d.delay, queuedD));
+  assert.deepEqual(swapCoverage(stalePoint, await delayNonces(rpc, d.delay)), { state: "uncovered", left: 1n });
+  assert.deepEqual(swapCoverage(stalePoint + 2n, await delayNonces(rpc, d.delay)), { state: "impossible" });
+  const lineD = await delayNonces(rpc, d.delay);
+  await sendAndWait(rpc, GUARDIAN, cancelTx(d.roles, d.delay, lineD.queueNonce - 1n));
+  ok("a link that leaves a withdrawal out is refused until the guardian cancelled what waits");
+  // Now the line is empty: the Delay refuses this txNonce, and the change must not depend on it.
   const emptyLine = await delayNonces(rpc, d.delay);
   assert.equal(emptyLine.txNonce, emptyLine.queueNonce);
-  const swapD = councilSwapTx(partsD, ownersD, SECOND, emptyLine.queueNonce)!;
+  assert.deepEqual(swapCoverage(stalePoint, emptyLine), { state: "ok", cancels: 0n });
+  const swapD = councilSwapTx(partsD, ownersD, SECOND, stalePoint)!;
   await sendAndWait(rpc, GUARDIAN, councilApproveTx(councilD, await councilHash(rpc, councilD, swapD)));
   await sendAndWait(rpc, WALLET, councilExecTx(councilD, swapD, ownersD));
   const afterD = await inspect(rpc, d.safe);
   for (const check of afterD.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
   assert.equal(afterD.state, "locked");
   assert.ok(sameAddress(afterD.controller, SECOND));
+  await warp(DAY + 60n);
+  await reverts(STRANGER, executeTx(d.delay, queuedD), null, "the withdrawal of the old wallet runs after the change");
   ok("an empty line does not stop the change, and the history still proves the permissions");
 
   console.log("\nAll guardian checks passed.");
