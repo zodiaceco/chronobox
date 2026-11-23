@@ -570,6 +570,10 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   const { to } = request;
   const { swap, retry } = useSwap(session.rpc, vault, request);
   const { line, retry: readLine } = useLine(session.rpc, vault.delay);
+  // A second, separate read once the change has happened. The read above is from before the
+  // agreement: a lost wallet can queue after it and then carry the change out itself.
+  const changed = sameAddress(to, vault.controller) || swap.state === "done";
+  const { line: after, retry: readAfter } = useLine(session.rpc, vault.delay, changed);
   const [spoke, setSpoke] = useState(false);
   const [sent, setSent] = useState(false);
   const action = useAction();
@@ -582,6 +586,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       const now = await delayNonces(session.rpc, vault.delay);
       if (now.queueNonce > now.txNonce) await sendAndWait(session.rpc, session.account, cancelTx(vault.roles!, vault.delay, now.queueNonce - 1n), { ...sending, ...waiting });
       readLine();
+      if (changed) readAfter();
     });
   const agree = () =>
     action.run("agree", async (waiting) => {
@@ -602,18 +607,43 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       </Button>
     </div>
   );
-  if (sameAddress(to, vault.controller) || swap.state === "done") {
+  if (changed) {
+    const waits = after.state === "read" && after.waiting > 0n;
     return (
-      <Modal title="It is done." onClose={props.onClose}>
+      <Modal title="It is done." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <p>
           The wallet <AddressText address={to} /> holds this Chronobox now. You are still its guardian.
         </p>
-        {line.state === "read" && line.waiting > 0n ? (
-          <Notice kind="risk" title="Something still waits in the line.">
-            Unless the new wallet queued it, it comes from the old wallet, and it runs after the wait. Ask the owner, and cancel it if they did not.
+        {after.state === "loading" ? (
+          <p class="muted" role="status">
+            Checking that nothing of the old wallet still waits.
+          </p>
+        ) : after.state === "error" ? (
+          <Notice kind="bad">
+            We could not read the line: {after.message}{" "}
+            <button type="button" class="link-button" onClick={readAfter}>
+              Try again
+            </button>
+          </Notice>
+        ) : waits ? (
+          <Notice kind="risk" title={after.waiting === 1n ? "One item still waits in the line." : `${after.waiting} items still wait in the line.`}>
+            Unless the new wallet queued them, they come from the old wallet, and they run after the wait. Ask the owner, and cancel them if they did not.
           </Notice>
         ) : null}
-        {closeOnly}
+        <SlowNote action={action} />
+        {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+        {waits ? (
+          <div class="modal-actions">
+            <Button kind="primary" busy={action.busy === "clear"} disabled={!!action.busy} onClick={clear}>
+              {action.busy === "clear" ? "Confirm in your wallet" : "Cancel everything that waits"}
+            </Button>
+            <Button kind="quiet" onClick={readAfter} disabled={!!action.busy}>
+              Check again
+            </Button>
+          </div>
+        ) : (
+          closeOnly
+        )}
       </Modal>
     );
   }
