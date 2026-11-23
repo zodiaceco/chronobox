@@ -6,7 +6,7 @@ import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
+import { addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, readQueue, queueLength, cancelAllTx, QUEUE_PAGE, type Inspection, type QueueItem, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -338,4 +338,55 @@ test("a swap request is agreed to when nothing it leaves could run soon", () => 
   // No delay, or a time that makes no sense: never young.
   assert.deepEqual(swapCoverage(7n, line, { createdAt: 1000n, now: 1000n, cooldown: 0n }), { state: "uncovered", left: 2n });
   assert.deepEqual(swapCoverage(7n, line, { createdAt: 2000n, now: 1000n, cooldown: day }), { state: "uncovered", left: 2n });
+});
+
+test("a long line is read only at its front, and can be cancelled without reading it", async () => {
+  const delay = predictDelay(SAFE, WEEK, WEEK);
+  const roles = predictRoles(SAFE);
+  // A stolen wallet queued 500 items after the one that matters.
+  const line = { delay, txNonce: 7n, queueNonce: 507n } as Inspection;
+  const tx = withdrawalTx(WALLET, null, 1n);
+  const hash = delayTxHash(tx);
+  const asked = new Set<bigint>();
+  const rpc: Rpc = async (method, params: any[] = []) => {
+    if (method !== "eth_call") throw new Error(`unexpected ${method}`);
+    const data: string = params[0].data;
+    const nonce = BigInt("0x" + data.slice(10, 74));
+    asked.add(nonce);
+    if (data.startsWith(selector("getTxCreatedAt(uint256)"))) return encode(["uint256"], [1_000n + nonce]);
+    if (data.startsWith(selector("getTxHash(uint256)"))) return hash;
+    throw new Error(`unexpected call ${data.slice(0, 10)}`);
+  };
+  const cache = { get: () => tx, set: () => {} };
+  const seen: number[] = [];
+  const items = await readQueue(rpc, line, cache, { onItems: (front) => seen.push(front.length) });
+  assert.equal(items.length, QUEUE_PAGE);
+  assert.deepEqual(
+    items.map((item) => item.nonce),
+    Array.from({ length: QUEUE_PAGE }, (_, i) => 7n + BigInt(i)),
+    "oldest first, from txNonce",
+  );
+  assert.equal([...asked].reduce((a, b) => (a > b ? a : b)), 7n + BigInt(QUEUE_PAGE) - 1n, "nothing past the page is read");
+  assert.equal(seen[0], 3, "the first few are handed over before the rest is read");
+  assert.equal(seen[seen.length - 1], QUEUE_PAGE);
+  assert.equal(queueLength(line), 500n);
+
+  // Read again: what was found before is not asked for again.
+  asked.clear();
+  const again = await readQueue(rpc, { ...line, txNonce: 9n } as Inspection, cache, { known: items });
+  assert.equal(again[0].nonce, 9n);
+  assert.deepEqual([...asked], [7n + BigInt(QUEUE_PAGE), 8n + BigInt(QUEUE_PAGE)], "only the two new items at the end of the page");
+
+  // An item whose content was not found is asked again.
+  const unknown: QueueItem[] = [{ nonce: 9n, createdAt: 1_009n, hash, tx: null }];
+  asked.clear();
+  await readQueue(rpc, { ...line, txNonce: 9n, queueNonce: 10n } as Inspection, cache, { known: unknown });
+  assert.deepEqual([...asked], [9n]);
+
+  // Cancel all needs only the two numbers: it sets txNonce to queueNonce.
+  const all = cancelAllTx(roles, delay, line)!;
+  assert.deepEqual(all, cancelTx(roles, delay, 506n));
+  assert.ok(all.data.includes("46ba2307" + (507).toString(16).padStart(64, "0")));
+  assert.equal(cancelAllTx(roles, delay, { txNonce: 4n, queueNonce: 4n }), null, "nothing waits");
+  assert.equal(queueLength({ txNonce: 4n, queueNonce: 4n }), 0n);
 });
