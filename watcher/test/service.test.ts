@@ -254,6 +254,10 @@ test('Starts again and again: one that follows already reads nothing, and a chat
     await telegramWebhook(env(), message(BEN, `/start ${telegramStart(1, '0x' + String(i).padStart(40, '0'))}`), deps);
   }
   assert.equal(said.filter((m) => /asked for many Chronoboxes/.test(m.text)).length, 2, 'the two after the limit');
+  // Which chats use the bot is sealed: no name of a key in the store says it either.
+  const keys = [...redis.data.keys()];
+  assert.ok(keys.some((k) => k.includes('telegram-starts:')), JSON.stringify(keys));
+  for (const chat of [ANNA, BEN]) assert.ok(!keys.some((k) => k.includes(String(chat))), `chat ${chat} in ${JSON.stringify(keys)}`);
 });
 
 test('health: a network whose polls are all skipped is not healthy, however fresh the note of the poll is', async () => {

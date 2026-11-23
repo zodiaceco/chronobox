@@ -99,6 +99,8 @@ function sealKey(secret: string): Buffer {
 
 const WEBHOOK_LABEL = 'chronobox-telegram-webhook';
 const DELIVERY_LABEL = 'chronobox-telegram-delivery';
+/** For the names of the counters of Starts: a chat is never named in the store, only sealed (see `startsOf`). */
+const STARTS_LABEL = 'chronobox-telegram-starts';
 
 export type TelegramOptions = {
   fetch?: FetchFn;
@@ -120,6 +122,7 @@ export class Telegram implements Peer {
   private secret: string;
   private key: Buffer;
   private deliveryKey: Buffer;
+  private startsKey: Buffer;
   private api: string;
   private expected: number;
   private fetchFn: FetchFn;
@@ -136,6 +139,7 @@ export class Telegram implements Peer {
     this.secret = cfg.alertsKey;
     this.key = sealKey(cfg.alertsKey);
     this.deliveryKey = crypto.createHmac('sha256', cfg.alertsKey).update(DELIVERY_LABEL).digest();
+    this.startsKey = crypto.createHmac('sha256', cfg.alertsKey).update(STARTS_LABEL).digest();
     this.api = cfg.telegramApi;
     this.expected = cfg.networks.length;
     this.fetchFn = opts.fetch ?? fetch;
@@ -458,6 +462,15 @@ export class Telegram implements Peer {
     await this.say(chat, TG_HELP);
   }
 
+  /**
+   * The name of the counter of Starts of one chat. Which chats use the bot is kept sealed with ALERTS_KEY, so the name
+   * of a key in the store must not say it either: it is a keyed hash of the chat, which nobody without the key can
+   * match to a chat.
+   */
+  private startsOf(chat: number): string {
+    return 'telegram-starts:' + crypto.createHmac('sha256', this.startsKey).update(String(chat)).digest('base64url').slice(0, 22);
+  }
+
   private async subscribe(chat: number, arg: string): Promise<void> {
     const p = /^(\d{1,12})-(0x[0-9a-fA-F]{40})$/.exec(arg);
     if (!p) { await this.say(chat, TG_HELP); return; }
@@ -475,7 +488,7 @@ export class Telegram implements Peer {
     if (full(this.state)) { await this.say(chat, LIMIT); return; }
     // A chat that follows this vault already needs no check: the answer comes from what the watcher read last.
     const follows = (this.state.chats[chat] ?? []).includes(key);
-    if (!follows && (await this.store.hit(`telegram-starts:${chat}`, 3600)) > TELEGRAM_STARTS_PER_HOUR) {
+    if (!follows && (await this.store.hit(this.startsOf(chat), 3600)) > TELEGRAM_STARTS_PER_HOUR) {
       await this.say(chat, 'This chat asked for many Chronoboxes in the last hour. Try again later.');
       return;
     }
