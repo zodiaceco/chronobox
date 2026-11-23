@@ -15,9 +15,11 @@ import {
   type Inspection,
   type ItemStatus,
   type QueueItem,
+  type SwapRequest,
   cancelTx,
   changeDelayTx,
   changeWalletTx,
+  delayNonces,
   chainTime,
   classify,
   councilCompatible,
@@ -171,7 +173,7 @@ function saveReminders(nonce: bigint, status: ItemStatus, now: bigint) {
   download("chronobox-reminder.ics", calendarFile(reminders, Number(now)));
 }
 
-export function VaultPage(props: { session: Session; chain: Chain; safe: Address; swapTo?: Address | null }) {
+export function VaultPage(props: { session: Session; chain: Chain; safe: Address; swap?: { to: Address; upTo: bigint | null } | null }) {
   const { session, chain, safe } = props;
   const { data, error, refresh } = useVault(session, chain, safe);
   const now = useChainClock(data);
@@ -185,7 +187,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const cancelAction = useAction();
   const [confirming, setConfirming] = useState<QueueItem | null>(null);
   // A link from the owner can ask the guardian to agree to a new wallet. The sheet opens once.
-  const [agreeing, setAgreeing] = useState<Address | null>(props.swapTo ?? null);
+  const [agreeing, setAgreeing] = useState(props.swap ?? null);
   const sending = { chainId: chain.id, chainName: chain.name };
   const line = useRef<QueueItem[]>([]);
   line.current = data?.queue ?? [];
@@ -294,10 +296,10 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   return (
     <section class="page vault">
       <Status inspection={inspection} session={session} chain={chain} />
-      {props.swapTo && vault && !isGuardian && inspection.guardian && !sameAddress(props.swapTo, inspection.controller) ? (
+      {props.swap && vault && !isGuardian && inspection.guardian && !sameAddress(props.swap.to, inspection.controller) ? (
         <Notice kind="info" title="This link is for the guardian.">
           It asks the guardian <AddressText address={inspection.guardian} /> to agree to moving this Chronobox to{" "}
-          <AddressText address={props.swapTo} />. Connect that wallet to answer it.
+          <AddressText address={props.swap.to} />. Connect that wallet to answer it.
         </Notice>
       ) : null}
       {error ? (
@@ -451,7 +453,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           session={session}
           chain={chain}
           vault={vault}
-          to={agreeing}
+          request={agreeing}
           onClose={() => {
             setAgreeing(null);
             refresh();
@@ -1020,7 +1022,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
   const guard = vault.guardian && vault.council && vault.members ? { guardian: vault.guardian, council: vault.council, members: vault.members } : null;
   const [mode, setMode] = useState<"together" | "alone">(guard ? "together" : "alone");
   // A request that the guardian has not answered yet. The owner can close the page and come back to it.
-  const [asking, setAsking] = useState<Address | null>(() => (guard ? pendingSwap(props.chain.id, vault.safe) : null));
+  const [asking, setAsking] = useState<SwapRequest | null>(() => (guard ? pendingSwap(props.chain.id, vault.safe) : null));
   const next = parseAddress(text);
   // Base address check (independent of council replacement, which only "alone" mode needs).
   const baseValid = next ? changeWalletTx(vault.delay, vault.controller, next, vault.roles ?? null, vault.safe, null) !== null && (!guard || (!sameAddress(next, guard.guardian) && !sameAddress(next, guard.council))) : false;
@@ -1084,8 +1086,11 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
     action.run("ask", async (waiting) => {
       if (!sameAddress(vault.controller, session.account)) throw new Error(`Your wallet is on another account now. Only the wallet ${shortAddress(vault.controller)} can do this.`);
       await prepareSwap(session, props.chain, vault, waiting);
-      setPendingSwap(props.chain.id, vault.safe, next);
-      setAsking(next);
+      // The change cancels the line up to where it stands now. This point is part of what both
+      // sign, so it is fixed here, once, and a lost wallet cannot move it by queueing more.
+      const request = { to: next!, upTo: (await delayNonces(session.rpc, vault.delay)).queueNonce };
+      setPendingSwap(props.chain.id, vault.safe, request);
+      setAsking(request);
     });
   if (asking) {
     return (
@@ -1093,7 +1098,7 @@ function ChangeWalletSheet(props: { session: Session; chain: Chain; vault: Vault
         session={session}
         chain={props.chain}
         vault={vault}
-        to={asking}
+        request={asking}
         onDrop={() => {
           setPendingSwap(props.chain.id, vault.safe, null);
           setAsking(null);

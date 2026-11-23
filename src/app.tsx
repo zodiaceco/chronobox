@@ -12,7 +12,11 @@ import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { VaultPage } from "./ui/vault.tsx";
 
-/** `swapTo`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner asks for. */
+/**
+ * `swap`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner
+ * asks for and the point of the line the change cancels up to. `upTo` is null in links of an older
+ * version: they cannot be agreed to any more.
+ */
 type Route =
   | { page: "start" }
   | { page: "new" }
@@ -20,7 +24,7 @@ type Route =
   | { page: "privacy" }
   | { page: "terms" }
   | { page: "imprint" }
-  | { page: "vault"; chain: Chain; safe: Address; swapTo: Address | null }
+  | { page: "vault"; chain: Chain; safe: Address; swap: { to: Address; upTo: bigint | null } | null }
   | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
@@ -35,12 +39,13 @@ function parseRoute(hash: string): Route {
   if (path === "/privacy") return { page: "privacy" };
   if (path === "/terms") return { page: "terms" };
   if (path === "/imprint") return { page: "imprint" };
-  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40}))?$/.exec(path);
+  const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40})(?:&upTo=(\d{1,78}))?)?$/.exec(path);
   if (match) {
     const chain = chainByShort(match[1]);
     const safe = parseAddress(match[2]);
-    const swapTo = match[3] ? parseAddress(match[3]) : null;
-    if (chain && safe && (!match[3] || swapTo)) return { page: "vault", chain, safe, swapTo };
+    const to = match[3] ? parseAddress(match[3]) : null;
+    const swap = to ? { to, upTo: match[4] ? BigInt(match[4]) : null } : null;
+    if (chain && safe && (!match[3] || to)) return { page: "vault", chain, safe, swap };
   }
   return { page: "unknown" };
 }
@@ -173,7 +178,7 @@ export function App() {
     const before = prevAccount.current;
     prevAccount.current = session.account;
     setLastAccount(session.account);
-    if (before && !sameAddress(before, session.account) && route.page === "vault" && !route.swapTo) location.hash = "#/";
+    if (before && !sameAddress(before, session.account) && route.page === "vault" && !route.swap) location.hash = "#/";
   }, [session?.account]);
 
   const chain = useMemo(() => (session ? chainById(session.chainId) : undefined), [session?.chainId]);
@@ -248,7 +253,7 @@ export function App() {
       </section>
     );
   } else {
-    body = <VaultPage key={`${route.chain.id}:${route.safe}:${route.swapTo ?? ""}`} session={session} chain={route.chain} safe={route.safe} swapTo={route.swapTo} />;
+    body = <VaultPage key={`${route.chain.id}:${route.safe}:${route.swap?.to ?? ""}:${route.swap?.upTo ?? ""}`} session={session} chain={route.chain} safe={route.safe} swap={route.swap} />;
   }
 
   return (

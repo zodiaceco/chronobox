@@ -1449,13 +1449,27 @@ export function removeGuardianTx(vault: { roles: Address; guardian: Address; cou
 /** A transaction of the shared 2 of 2 Safe. */
 export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: number };
 
+/** What the owner asks the guardian to agree to: the new wallet, and the point of the line that the change cancels up to. */
+export type SwapRequest = { to: Address; upTo: bigint };
+
 /**
  * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The shared
  * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
  * right to cancel, and replaces the old wallet with the new one among its own two owners.
  * `owners` is the owner list of the shared Safe, in the contract's order.
+ *
+ * The same step empties the line: a lost wallet may have queued withdrawals before the owner
+ * noticed, and those would still run after the wait. Once the old wallet is disabled it cannot
+ * queue anything more, so in the same transaction the shared Safe gives itself the cancel role,
+ * sets the Delay's txNonce to `cancelUpTo` (the queueNonce when the request was read), and gives
+ * the role back. That call may fail without stopping the change (the line may have moved since
+ * the signatures), so a caller must still read the line afterwards: see `delayNonces`.
+ *
+ * `cancelUpTo` is fixed once, when the owner asks, and travels with the request (see
+ * `SwapRequest`). Never derive it from the line at the time of reading: a lost wallet can move
+ * the line, and with it the hash that the guardian agreed to.
  */
-export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null): CouncilTx | null {
+export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null, cancelUpTo: bigint): CouncilTx | null {
   const { delay, roles, controller: from, council, guardian } = vault;
   const dead = [ZERO, SENTINEL, delay, roles, vault.safe, council, guardian, CONTRACTS.burn, CONTRACTS.multiSend];
   if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
@@ -1463,16 +1477,50 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
   if (ownerAt < 0) return null;
   const members = new Members(vault.members);
   members.add(to);
-  const withRole = (target: Address, data: Hex) =>
-    batchItem(roles, call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [target, 0n, data, 0, COUNCIL_ROLE, true]));
+  const withRole = (target: Address, data: Hex, role: Hex = COUNCIL_ROLE, mustWork = true) =>
+    batchItem(roles, call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [target, 0n, data, 0, role, mustWork]));
   return batchTx([
     withRole(delay, call("enableModule(address)", [to])),
     withRole(delay, call("disableModule(address,address)", [to, from])),
+    // Everything the old wallet queued goes. The Delay refuses a txNonce that is not ahead of the
+    // current one, or that is past the queue: then nothing is left to cancel from this snapshot,
+    // and the change must still go through.
+    withRole(roles, assign(council, CANCEL_ROLE, true)),
+    withRole(delay, call("setTxNonce(uint256)", [cancelUpTo]), CANCEL_ROLE, false),
+    withRole(roles, assign(council, CANCEL_ROLE, false)),
     withRole(roles, assign(to, CANCEL_ROLE, true)),
     withRole(roles, assign(from, CANCEL_ROLE, false)),
     withRole(roles, call("disableModule(address,address)", [members.remove(from), from])),
     batchItem(council, call("swapOwner(address,address,address)", [ownerAt === 0 ? SENTINEL : owners[ownerAt - 1], from, to])),
   ]);
+}
+
+/**
+ * What a swap request does to the line as it stands now. The guardian checks this before agreeing.
+ * The point of the line comes from a link, and the old wallet can make that link: it is one of
+ * the two owners of the shared Safe, so it can also carry out whatever the guardian agrees to.
+ *   - "impossible": the point is past the end of the line. No real request names it.
+ *   - "uncovered": `left` items wait that the change would not cancel. They must be cancelled
+ *     first, or they could still run after the change.
+ *   - "ok": the change cancels every item that waits now (`cancels` of them).
+ */
+export type SwapCoverage = { state: "impossible" } | { state: "uncovered"; left: bigint } | { state: "ok"; cancels: bigint };
+
+export function swapCoverage(upTo: bigint, line: { txNonce: bigint; queueNonce: bigint }): SwapCoverage {
+  const { txNonce, queueNonce } = line;
+  if (upTo > queueNonce) return { state: "impossible" };
+  const reach = upTo > txNonce ? upTo : txNonce;
+  if (reach < queueNonce) return { state: "uncovered", left: queueNonce - reach };
+  return { state: "ok", cancels: reach - txNonce };
+}
+
+/** Where the line of the Delay stands: items from txNonce up to queueNonce wait, or can run. */
+export async function delayNonces(rpc: Rpc, delay: Address): Promise<{ txNonce: bigint; queueNonce: bigint }> {
+  const [txNonce, queueNonce] = await Promise.all([
+    read(rpc, delay, "txNonce()", [], ["uint256"]).then((r) => r[0] as bigint),
+    read(rpc, delay, "queueNonce()", [], ["uint256"]).then((r) => r[0] as bigint),
+  ]);
+  return { txNonce, queueNonce };
 }
 
 const SAFE_EXEC = "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)";

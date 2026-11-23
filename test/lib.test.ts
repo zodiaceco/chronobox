@@ -6,7 +6,7 @@ import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { addGuardianTx, councilSwapTx, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
+import { addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -227,9 +227,9 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   assert.equal(changeWalletTx(delay, WALLET, guardian, roles, SAFE, guarded), null);
 
   // Wallet and guardian together: never to the guardian, the shared Safe or the wallet itself.
-  for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad), null);
-  assert.ok(councilSwapTx(guarded, [WALLET, guardian], next));
-  assert.equal(councilSwapTx(guarded, [guardian], next), null, "the wallet must be an owner of the shared Safe");
+  for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad, 0n), null);
+  assert.ok(councilSwapTx(guarded, [WALLET, guardian], next, 0n));
+  assert.equal(councilSwapTx(guarded, [guardian], next, 0n), null, "the wallet must be an owner of the shared Safe");
 
   // Handing back to a previous wallet alone when its predicted council Safe is already the active council Safe is refused.
   const rotatedGuarded = { ...plain, controller: next, guardian, council, members: [next, council, guardian] as `0x${string}`[] };
@@ -313,4 +313,18 @@ test("the link to the Telegram bot carries the network and the address, and matc
   assert.match(telegramStart(11155111, safe), /^[-_A-Za-z0-9]{1,64}$/);
   const watcher = await import("../watcher/src/telegram.ts");
   assert.equal(watcher.telegramStart(11155111, safe), telegramStart(11155111, safe));
+});
+
+test("a swap request is agreed to only when it leaves nothing that waits", () => {
+  const line = { txNonce: 5n, queueNonce: 9n };
+  assert.deepEqual(swapCoverage(9n, line), { state: "ok", cancels: 4n });
+  // A point behind the line, or not ahead of it: what waits would survive the change.
+  assert.deepEqual(swapCoverage(7n, line), { state: "uncovered", left: 2n });
+  assert.deepEqual(swapCoverage(5n, line), { state: "uncovered", left: 4n });
+  assert.deepEqual(swapCoverage(0n, line), { state: "uncovered", left: 4n });
+  // A point that no real request can name.
+  assert.deepEqual(swapCoverage(10n, line), { state: "impossible" });
+  // An empty line: any point up to its end is fine, and the change cancels nothing.
+  assert.deepEqual(swapCoverage(3n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n });
+  assert.deepEqual(swapCoverage(9n, { txNonce: 9n, queueNonce: 9n }), { state: "ok", cancels: 0n });
 });

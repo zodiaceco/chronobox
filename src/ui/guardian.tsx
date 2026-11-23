@@ -13,15 +13,19 @@ import {
   type CouncilTx,
   type Inspection,
   type Rpc,
+  type SwapRequest,
   addGuardianTx,
   councilApproveTx,
-  councilApproved,
   councilCompatible,
   councilCreateTx,
   councilExecTx,
   councilHash,
   councilOwners,
+  councilApproved,
+  cancelTx,
   councilSwapTx,
+  delayNonces,
+  swapCoverage,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -30,9 +34,9 @@ import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, cop
 import { QrCode } from "./deposit.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 
-/** The page of this Chronobox, as a link for another person. `to`: with a request for a new wallet. */
-export function guardianLink(chain: Chain, safe: Address, to?: Address): string {
-  return `${location.origin}${location.pathname}#/v/${chain.short}:${safe}${to ? `?to=${to}` : ""}`;
+/** The page of this Chronobox, as a link for another person. `request`: with a request for a new wallet. */
+export function guardianLink(chain: Chain, safe: Address, request?: SwapRequest): string {
+  return `${location.origin}${location.pathname}#/v/${chain.short}:${safe}${request ? `?to=${request.to}&upTo=${request.upTo}` : ""}`;
 }
 
 /** A line of text that is copied with one tap. */
@@ -340,13 +344,15 @@ type Swap =
   | { state: "ready"; tx: CouncilTx; hash: Hex; owners: Address[]; agreed: boolean };
 
 /** Reads the request from the chain every few seconds: what both sign, and whether the guardian agreed. */
-function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: () => void } {
+function useSwap(rpc: Rpc, vault: VaultRef, request: { to: Address; upTo: bigint | null }): { swap: Swap; retry: () => void } {
   const [swap, setSwap] = useState<Swap>({ state: "loading" });
   const [round, setRound] = useState(0);
   const reading = useRef(false);
   const { council, guardian, roles, members } = vault;
+  const { to, upTo } = request;
   useEffect(() => {
-    if (!council || !guardian || !roles || !members) return setSwap({ state: "bad" });
+    // A link without a point of the line is from an older version: it cannot be agreed to.
+    if (!council || !guardian || !roles || !members || upTo === null) return setSwap({ state: "bad" });
     let stale = false;
     let hadAnswer = false;
     setSwap({ state: "loading" });
@@ -364,7 +370,10 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
           hadAnswer = true;
           return !stale && setSwap({ state: "done" });
         }
-        const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to);
+        // The change cancels the line up to the point fixed in the request. Both sides build the same
+        // transaction from it, whatever the line does meanwhile. What a lost wallet queues after that
+        // point is caught after the change (see SwapDoneSheet).
+        const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to, upTo);
         if (!tx) {
           hadAnswer = true;
           return !stale && setSwap({ state: "bad" });
@@ -387,7 +396,7 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
       reading.current = false;
       clearInterval(timer);
     };
-  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to, round]);
+  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to, upTo, round]);
   return { swap, retry: () => setRound((r) => r + 1) };
 }
 
@@ -401,13 +410,96 @@ export async function prepareSwap(session: Session, chain: Chain, vault: VaultRe
   await sendAndWait(session.rpc, session.account, councilCreateTx(vault.safe, vault.controller, vault.guardian!), { chainId: chain.id, chainName: chain.name, ...waiting });
 }
 
+type Line = { state: "loading" } | { state: "error"; message: string } | { state: "read"; txNonce: bigint; queueNonce: bigint; waiting: bigint };
+
+/** What is still in the line of the Delay. Read again on request. */
+function useLine(rpc: Rpc, delay: Address, active = true): { line: Line; retry: () => void } {
+  const [line, setLine] = useState<Line>({ state: "loading" });
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    let stale = false;
+    setLine({ state: "loading" });
+    delayNonces(rpc, delay).then(
+      ({ txNonce, queueNonce }) => !stale && setLine({ state: "read", txNonce, queueNonce, waiting: queueNonce - txNonce }),
+      (e) => !stale && setLine({ state: "error", message: errorText(e) }),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [rpc, delay, round, active]);
+  return { line, retry: () => setRound((r) => r + 1) };
+}
+
+/**
+ * After the change. The change cancels what waited, but something that the lost wallet queued
+ * after the guardian agreed can still be in the line, and it would run after the wait. The
+ * owner is told it is over only when the line is empty.
+ */
+function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }) {
+  const { line, retry } = useLine(props.rpc, props.vault.delay);
+  const close = (
+    <div class="modal-actions">
+      <Button kind="primary" onClick={props.onClose}>
+        Done
+      </Button>
+    </div>
+  );
+  if (line.state === "loading") {
+    return (
+      <Modal title="Checking the line" onClose={props.onClose}>
+        <p class="muted">The new wallet holds this Chronobox. One moment: we check that nothing the old wallet asked for still waits.</p>
+      </Modal>
+    );
+  }
+  if (line.state === "error" || line.waiting > 0n) {
+    const count = line.state === "read" ? (line.waiting === 1n ? "One item is" : `${line.waiting} items are`) : null;
+    return (
+      <Modal title="Not finished: cancel what waits." lead="The new wallet holds this Chronobox. But the old wallet can still get money out through what it queued before." onClose={props.onClose}>
+        {line.state === "error" ? (
+          <Notice kind="bad">
+            We could not read the line: {line.message}{" "}
+            <button type="button" class="link-button" onClick={retry}>
+              Try again
+            </button>
+          </Notice>
+        ) : (
+          <Notice kind="bad" title={`${count} still in the line.`}>
+            Unless your new wallet queued them, they come from the old wallet, and they run after the wait. Open this Chronobox with your new wallet, or ask your guardian, and cancel them now. This wallet cannot cancel any more.
+          </Notice>
+        )}
+        <CopyLine text={props.vault.safe} />
+        <div class="modal-actions">
+          <Button kind="primary" onClick={retry}>
+            Check again
+          </Button>
+          <Button kind="quiet" onClick={props.onClose}>
+            Close
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+  return (
+    <Modal
+      title="The new wallet holds this Chronobox."
+      lead="Nothing waits in the line, so nothing the old wallet asked for can run. This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it."
+      onClose={props.onClose}
+    >
+      <CopyLine text={props.vault.safe} />
+      {close}
+    </Modal>
+  );
+}
+
 /** The owner's side while the guardian decides. */
-export function AskGuardianSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onDrop: () => void; onClose: () => void }) {
-  const { session, chain, vault, to } = props;
-  const { swap, retry } = useSwap(session.rpc, vault, to);
+export function AskGuardianSheet(props: { session: Session; chain: Chain; vault: VaultRef; request: SwapRequest; onDrop: () => void; onClose: () => void }) {
+  const { session, chain, vault, request } = props;
+  const { to } = request;
+  const { swap, retry } = useSwap(session.rpc, vault, request);
   const [done, setDone] = useState(false);
   const action = useAction();
-  const link = guardianLink(chain, vault.safe, to);
+  const link = guardianLink(chain, vault.safe, request);
 
   useEffect(() => {
     if (swap.state === "done") {
@@ -424,16 +516,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
       setDone(true);
     });
   if (done || swap.state === "done") {
-    return (
-      <Modal title="The new wallet holds this Chronobox." lead="This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it." onClose={props.onClose}>
-        <CopyLine text={vault.safe} />
-        <div class="modal-actions">
-          <Button kind="primary" onClick={props.onClose}>
-            Done
-          </Button>
-        </div>
-      </Modal>
-    );
+    return <SwapDoneSheet rpc={session.rpc} vault={vault} onClose={props.onClose} />;
   }
   const agreed = swap.state === "ready" && swap.agreed;
   return (
@@ -482,15 +565,38 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
 }
 
 /** The guardian's side: a link from the owner asks for a new wallet. */
-export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onClose: () => void }) {
-  const { session, chain, vault, to } = props;
-  const { swap, retry } = useSwap(session.rpc, vault, to);
+export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; request: { to: Address; upTo: bigint | null }; onClose: () => void }) {
+  const { session, chain, vault, request } = props;
+  const { to } = request;
+  const { swap, retry } = useSwap(session.rpc, vault, request);
+  const { line, retry: readLine } = useLine(session.rpc, vault.delay);
+  // A second, separate read once the change has happened. The read above is from before the
+  // agreement: a lost wallet can queue after it and then carry the change out itself.
+  const changed = sameAddress(to, vault.controller) || swap.state === "done";
+  const { line: after, retry: readAfter } = useLine(session.rpc, vault.delay, changed);
   const [spoke, setSpoke] = useState(false);
   const [sent, setSent] = useState(false);
   const action = useAction();
+  const sending = { chainId: chain.id, chainName: chain.name };
+  // What the request does to the line now. The link sets its point of the line, and the old wallet
+  // can make a link: the guardian agrees only when nothing that waits is left out.
+  const coverage = line.state === "read" && request.upTo !== null ? swapCoverage(request.upTo, line) : null;
+  const clear = () =>
+    action.run("clear", async (waiting) => {
+      const now = await delayNonces(session.rpc, vault.delay);
+      if (now.queueNonce > now.txNonce) await sendAndWait(session.rpc, session.account, cancelTx(vault.roles!, vault.delay, now.queueNonce - 1n), { ...sending, ...waiting });
+      readLine();
+      if (changed) readAfter();
+    });
   const agree = () =>
     action.run("agree", async (waiting) => {
-      if (swap.state !== "ready") return;
+      if (swap.state !== "ready" || request.upTo === null) return;
+      // Read again just before agreeing: the line may have grown since the page read it.
+      const now = swapCoverage(request.upTo, await delayNonces(session.rpc, vault.delay));
+      if (now.state !== "ok") {
+        readLine();
+        throw new Error(now.state === "impossible" ? "This link names a point of the line that does not exist. Ask the owner for a new link." : "More withdrawals wait now. Cancel them first.");
+      }
       await sendAndWait(session.rpc, session.account, councilApproveTx(vault.council!, swap.hash), { chainId: chain.id, chainName: chain.name, ...waiting });
       setSent(true);
     });
@@ -501,13 +607,43 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       </Button>
     </div>
   );
-  if (sameAddress(to, vault.controller) || swap.state === "done") {
+  if (changed) {
+    const waits = after.state === "read" && after.waiting > 0n;
     return (
-      <Modal title="It is done." onClose={props.onClose}>
+      <Modal title="It is done." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <p>
           The wallet <AddressText address={to} /> holds this Chronobox now. You are still its guardian.
         </p>
-        {closeOnly}
+        {after.state === "loading" ? (
+          <p class="muted" role="status">
+            Checking that nothing of the old wallet still waits.
+          </p>
+        ) : after.state === "error" ? (
+          <Notice kind="bad">
+            We could not read the line: {after.message}{" "}
+            <button type="button" class="link-button" onClick={readAfter}>
+              Try again
+            </button>
+          </Notice>
+        ) : waits ? (
+          <Notice kind="risk" title={after.waiting === 1n ? "One item still waits in the line." : `${after.waiting} items still wait in the line.`}>
+            Unless the new wallet queued them, they come from the old wallet, and they run after the wait. Ask the owner, and cancel them if they did not.
+          </Notice>
+        ) : null}
+        <SlowNote action={action} />
+        {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+        {waits ? (
+          <div class="modal-actions">
+            <Button kind="primary" busy={action.busy === "clear"} disabled={!!action.busy} onClick={clear}>
+              {action.busy === "clear" ? "Confirm in your wallet" : "Cancel everything that waits"}
+            </Button>
+            <Button kind="quiet" onClick={readAfter} disabled={!!action.busy}>
+              Check again
+            </Button>
+          </div>
+        ) : (
+          closeOnly
+        )}
       </Modal>
     );
   }
@@ -549,6 +685,14 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
       </Modal>
     );
   }
+  if (coverage?.state === "impossible") {
+    return (
+      <Modal title="This link does not fit" onClose={props.onClose}>
+        <p>It names a point of the line of this Chronobox that does not exist. Ask the owner for a new link.</p>
+        {closeOnly}
+      </Modal>
+    );
+  }
   if (swap.agreed || sent) {
     return (
       <Modal title="You agreed." onClose={props.onClose}>
@@ -567,12 +711,32 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
         Agree only if they tell you this address themselves. A message is not enough: a person who has their wallet can write to you too.
       </Notice>
       <Choice role="checkbox" on={spoke} title="I spoke to the owner, and the address is the same." disabled={!!action.busy} onClick={() => setSpoke(!spoke)} />
+      {line.state === "error" ? (
+        <Notice kind="bad">
+          We could not read the line: {line.message}{" "}
+          <button type="button" class="link-button" onClick={readLine}>
+            Try again
+          </button>
+        </Notice>
+      ) : coverage?.state === "uncovered" ? (
+        <Notice kind="bad" title={coverage.left === 1n ? "One withdrawal waits that this change does not cancel." : `${coverage.left} withdrawals wait that this change does not cancel.`}>
+          If the wallet of the owner is lost, they come from the person who has it, and they could still run after the change. Cancel everything that waits first. It happens at once, and nothing moves.
+        </Notice>
+      ) : coverage?.state === "ok" && coverage.cancels > 0n ? (
+        <p class="hint">The change also cancels the {coverage.cancels === 1n ? "withdrawal" : `${coverage.cancels} withdrawals`} that wait now.</p>
+      ) : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!spoke} busy={action.busy === "agree"} onClick={agree}>
-          {action.busy ? "Confirm in your wallet" : "Agree"}
-        </Button>
+        {coverage?.state === "uncovered" ? (
+          <Button kind="primary" busy={action.busy === "clear"} disabled={!!action.busy} onClick={clear}>
+            {action.busy === "clear" ? "Confirm in your wallet" : "Cancel everything that waits"}
+          </Button>
+        ) : (
+          <Button kind="primary" disabled={!spoke || coverage?.state !== "ok"} busy={action.busy === "agree"} onClick={agree}>
+            {action.busy ? "Confirm in your wallet" : "Agree"}
+          </Button>
+        )}
         <Button kind="quiet" onClick={props.onClose} disabled={!!action.busy}>
           Not now
         </Button>
