@@ -15,14 +15,15 @@ import {
   type Rpc,
   addGuardianTx,
   councilApproveTx,
-  councilApproved,
   councilCompatible,
   councilCreateTx,
   councilExecTx,
   councilHash,
   councilOwners,
+  agreementCursor,
   councilSwapTx,
   delayNonces,
+  findAgreedSwap,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -340,16 +341,15 @@ type Swap =
   | { state: "error"; message: string }
   | { state: "ready"; tx: CouncilTx; hash: Hex; owners: Address[]; agreed: boolean };
 
-/** How many earlier points of the line an agreement of the guardian is looked for at. */
-const SNAPSHOTS = 4n;
-
 /** Reads the request from the chain every few seconds: what both sign, and whether the guardian agreed. */
 function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: () => void } {
   const [swap, setSwap] = useState<Swap>({ state: "loading" });
   const [round, setRound] = useState(0);
   const reading = useRef(false);
+  const cursor = useRef(agreementCursor());
   const { council, guardian, roles, members } = vault;
   useEffect(() => {
+    cursor.current = agreementCursor();
     if (!council || !guardian || !roles || !members) return setSwap({ state: "bad" });
     let stale = false;
     let hadAnswer = false;
@@ -368,24 +368,25 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
           hadAnswer = true;
           return !stale && setSwap({ state: "done" });
         }
-        // The change also cancels the whole line, up to where it stands now. If something was queued
-        // after the guardian agreed, the signed change names an earlier point: look a few back for it.
-        // Whatever it leaves behind is caught after the change (see LeftInLine).
-        const { queueNonce } = await delayNonces(rpc, vault.delay);
-        let found: { tx: CouncilTx; hash: Hex; agreed: boolean } | null = null;
-        for (let upTo = queueNonce; upTo >= 0n && queueNonce - upTo < SNAPSHOTS; upTo--) {
-          const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to, upTo);
-          if (!tx) {
-            hadAnswer = true;
-            return !stale && setSwap({ state: "bad" });
-          }
-          const hash = await councilHash(rpc, council, tx);
-          const agreed = await councilApproved(rpc, council, guardian, hash);
-          if (!found || agreed) found = { tx, hash, agreed };
-          if (agreed) break;
+        // The change also cancels the whole line, up to where it stands now. A lost wallet can queue
+        // after the guardian agreed, so the signed change may name an earlier point. That agreement
+        // stays good until the shared Safe moves on: find it, wherever the line is now. Whatever it
+        // leaves behind is caught after the change (see SwapDoneSheet).
+        const guarded = { ...vault, roles, guardian, council, members };
+        const agreed = await findAgreedSwap(rpc, guarded, owners, to, cursor.current);
+        if (agreed) {
+          hadAnswer = true;
+          return !stale && setSwap({ state: "ready", ...agreed, owners, agreed: true });
         }
+        const { queueNonce } = await delayNonces(rpc, vault.delay);
+        const tx = councilSwapTx(guarded, owners, to, queueNonce);
+        if (!tx) {
+          hadAnswer = true;
+          return !stale && setSwap({ state: "bad" });
+        }
+        const hash = await councilHash(rpc, council, tx);
         hadAnswer = true;
-        if (!stale && found) setSwap({ state: "ready", ...found, owners });
+        if (!stale) setSwap({ state: "ready", tx, hash, owners, agreed: false });
       } catch (e) {
         // After a first good read, a temporary failure keeps the last answer and asks again next round.
         if (!stale && !hadAnswer) setSwap({ state: "error", message: errorText(e) });
