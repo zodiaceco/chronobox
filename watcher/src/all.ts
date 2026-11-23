@@ -197,12 +197,27 @@ export class AllWatcher {
       if (!added) throw new Error(`${MAX_ADOPTED} adopted Chronoboxes wait for a poll already`);
       this.log(`new Chronobox ${vault} (Delay ${delay}), found because somebody asked for its alerts`);
     }
-    // The first read, so that the answer can say what waits. Once in a while at most: the poll reads it anyway.
-    if (await this.store.claim(`adopt-read:${vault}`, ADOPT_READ_EVERY_S)) {
-      const known: Known = { delay, active: true };
-      await this.store.lock(`vault:${vault}`, () => this.watcherOf(vault, known).poll(), { waitMs: ADOPT_WAIT_MS });
-    }
+    // The first read, so that the answer can say what waits. Every question waits for it, under the lock of this vault:
+    // one that came a moment after another must not answer from a read that has not ended. Once the vault was read and
+    // its state saved, a new read is done once in a while at most: the poll reads it anyway.
+    const known: Known = { delay, active: true };
+    await this.store.lock(`vault:${vault}`, async () => {
+      if ((await this.readState(vault)) && !(await this.store.claim(`adopt-read:${vault}`, ADOPT_READ_EVERY_S))) return;
+      await this.watcherOf(vault, known).poll();
+      // The window starts when there is a saved read to answer from, not before.
+      if (await this.readState(vault)) await this.store.claim(`adopt-read:${vault}`, ADOPT_READ_EVERY_S);
+    }, { waitMs: ADOPT_WAIT_MS });
     return true;
+  }
+
+  /** The saved state of a vault, if it was read to the end once. Null if not. */
+  private async readState(vault: string) {
+    try {
+      const st = parseState(await this.store.get(vault), vault);
+      return st.settings ? st : null;
+    } catch {
+      return null;
+    }
   }
 
   /** The vaults that somebody asked for, and that no poll has taken in yet: vault to Delay. */
@@ -234,11 +249,13 @@ export class AllWatcher {
     if (taken) await this.save();
   }
 
-  /** What waits in a vault, from the last read: one line per item. */
-  async pending(vault: string): Promise<string[]> {
-    let st;
-    try { st = parseState(await this.store.get(vault), vault); } catch { return []; }
-    if (!st.settings) return [];
+  /**
+   * What waits in a vault, from the last read: one line per item. Null if the vault was never read to the end: that is
+   * "not known", never "nothing waits".
+   */
+  async pending(vault: string): Promise<string[] | null> {
+    const st = await this.readState(vault);
+    if (!st?.settings) return null;
     const now = BigInt(Math.floor(Date.now() / 1000));
     return Object.values(st.items).sort((a, b) => a.nonce - b.nonce).map((it) =>
       waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(st.settings!.cooldown), BigInt(st.settings!.expiration), now)));

@@ -4,11 +4,11 @@ import { test, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as http from 'node:http';
 import {
-  BusyError, ConfigError, EMAIL_PER_VISITOR_HOUR, TELEGRAM_STARTS_PER_HOUR, RedisStore, Telegram, emailPages, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
+  BusyError, ConfigError, EMAIL_PER_VISITOR_HOUR, SEL, TELEGRAM_STARTS_PER_HOUR, RedisStore, Telegram, emailPages, health, parseConfig, poll, serviceConfig, telegramStart, telegramWebhook,
   type Env, type Request,
 } from '../src/index.ts';
 import { vercelFunction } from '../src/vercel.ts';
-import { DAY, FakeRedis, MockChain, OWNER_WALLET, SAFE, handle, startServer } from './mocks.ts';
+import { DAY, DELAY, FakeRedis, MockChain, OWNER_WALLET, SAFE, handle, startServer } from './mocks.ts';
 
 const TG_TOKEN = '123456:AAfake-token_for-the-service-0123456789';
 const TG_KEY = 'a-secret-for-the-service-test-that-is-long-0123';
@@ -238,6 +238,32 @@ test('a Start that reads the chain does not hold the network: the poll at the sa
   assert.equal((await start).status, 200);
   rpcDelayMs = 0;
   assert.ok(said.some((m) => /^You now get the alerts/.test(m.text)), JSON.stringify(said));
+});
+
+test('two Starts at once for a vault not read yet: neither answers before the first read has ended', async () => {
+  chain.withCancel();
+  await poll(env(), cron(), deps); // begins at the newest block: the Chronobox is not known
+  chain.create();
+  chain.enqueue(OWNER_WALLET, ONE_ETH);
+  rpcDelayMs = 10;
+  await Promise.all([telegramWebhook(env(), message(ANNA, START), deps), telegramWebhook(env(), message(BEN, START), deps)]);
+  rpcDelayMs = 0;
+  const answers = said.filter((m) => /^You now get the alerts/.test(m.text));
+  assert.deepEqual(answers.map((m) => m.chat).sort(), [ANNA, BEN]);
+  for (const a of answers) assert.match(a.text, /Right now one request waits there/, a.text);
+});
+
+test('a first read that fails is "not known", never "nothing waits"', async () => {
+  chain.withCancel();
+  await poll(env(), cron(), deps);
+  chain.create();
+  chain.enqueue(OWNER_WALLET, ONE_ETH);
+  chain.answers[`${DELAY}:${SEL.getTxCreatedAt}`] = 'limit'; // the vault is found, its line cannot be read
+  await telegramWebhook(env(), message(ANNA, START), deps);
+  const answer = said.find((m) => /^You now get the alerts/.test(m.text));
+  assert.ok(answer, JSON.stringify(said));
+  assert.doesNotMatch(answer.text, /Nothing waits/);
+  assert.match(answer.text, /I could not read yet what waits there/);
 });
 
 test('Starts again and again: one that follows already reads nothing, and a chat has a limit per hour', async () => {

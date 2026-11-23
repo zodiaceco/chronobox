@@ -45,8 +45,8 @@ export type Network = {
   chainId: number;
   /** Starts to watch the vault if it is a Chronobox. False if it is not one. Throws if the chain cannot be read. */
   adopt(vault: string): Promise<boolean>;
-  /** What waits in the vault now, one line per item. */
-  pending(vault: string): Promise<string[]>;
+  /** What waits in the vault now, one line per item. Null if the watcher could not read it yet: not known, not empty. */
+  pending(vault: string): Promise<string[] | null>;
 };
 
 type TelegramState = {
@@ -514,7 +514,8 @@ export class Telegram implements Peer {
     if (limit) { await this.say(chat, LIMIT); return; }
     if (added) this.log(`telegram: a chat follows ${vault} on chain ${chainId}`);
     const waits = await net.pending(vault);
-    const now = waits.length === 0 ? 'Nothing waits there right now.'
+    const now = waits === null ? 'I could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive here.'
+      : waits.length === 0 ? 'Nothing waits there right now.'
       : `Right now ${waits.length === 1 ? 'one request waits' : `${waits.length} requests wait`} there:\n${waits.join('\n')}`;
     await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${TG_NEVER}`);
   }
