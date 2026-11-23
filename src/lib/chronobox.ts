@@ -17,7 +17,7 @@
  */
 import { call, decode, encode, selector, topic } from "./abi.ts";
 import { CONTRACTS, SENTINEL, ZERO } from "./chains.ts";
-import { assertWallet, isTemporary } from "./wallet.ts";
+import { answerOrStop, assertWallet, isTemporary } from "./wallet.ts";
 import {
   type Address,
   type Hex,
@@ -399,6 +399,11 @@ export type SendOptions = {
 
 /** After this long, a wait is called long and gets a way out. A test can set a shorter time. */
 export const slowAfterMs = (): number => (globalThis as { __CHRONOBOX_SLOW_MS?: number }).__CHRONOBOX_SLOW_MS ?? 75_000;
+/**
+ * How long the wallet may take to answer before the page offers a way out. Shorter than the
+ * wait for the chain: a request that the owner lost sight of never gets an answer by itself.
+ */
+export const askSlowAfterMs = (): number => Math.min(slowAfterMs(), 20_000);
 
 /**
  * Sends a transaction through the wallet and waits until it is mined.
@@ -417,7 +422,8 @@ export async function sendAndWait(rpc: Rpc, from: Address, tx: TxRequest, option
   // asks for a signature, and a plain transfer to a Safe gets enough gas.
   const estimate = toBigInt(await rpc("eth_estimateGas", [request]));
   request.gas = toQuantity((estimate * 5n) / 4n + 10_000n);
-  const hash = (await rpc("eth_sendTransaction", [request])) as Hex;
+  // The wallet asks its owner now. That can take minutes, and it can also never end: the owner can stop waiting.
+  const hash = (await answerOrStop(rpc("eth_sendTransaction", [request]), opts.shouldStop)) as Hex;
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
     throw new Error("Your wallet did not confirm that it sent the transaction. Look in your wallet before you try again.");
   }

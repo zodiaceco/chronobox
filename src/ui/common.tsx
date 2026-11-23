@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState, useRef } from "preact/hooks";
 import type { Chain, Token } from "../lib/chains.ts";
 import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
-import { type Rpc, readBalances } from "../lib/chronobox.ts";
+import { type Rpc, askSlowAfterMs, readBalances } from "../lib/chronobox.ts";
 import { customTokens } from "../lib/store.ts";
 import { moreTokens } from "../lib/token-list.ts";
 import { type WalletOption, errorText } from "../lib/wallet.ts";
@@ -239,11 +239,14 @@ export function useAction() {
     setSlow(false);
     setBusy(name);
     setError(null);
+    // A wallet that does not answer (a lost popup, a locked wallet) must not hold the page for ever: the way out shows after a while.
+    const timer = setTimeout(() => setSlow(true), askSlowAfterMs());
     try {
       await action({ onSlow: () => setSlow(true), shouldStop: () => stopped.current });
     } catch (e) {
       setError(errorText(e));
     } finally {
+      clearTimeout(timer);
       running.current = false;
       setBusy(null);
       setSlow(false);

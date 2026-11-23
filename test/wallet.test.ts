@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { parseUnits, plainNumber } from "../src/lib/format.ts";
 import { Replaced, StoppedWaiting, changeWalletTx, sendAndWait } from "../src/lib/chronobox.ts";
 import { CHAINS, CONTRACTS } from "../src/lib/chains.ts";
-import { BatchUnknown, type Provider, RpcTimeout, WalletMoved, assertWallet, errorText, isRejection, isTemporary, rpcOf, sendBatch, switchChain } from "../src/lib/wallet.ts";
+import { BatchUnknown, type Provider, RpcTimeout, StoppedAsking, WalletMoved, answerOrStop, assertWallet, errorText, isRejection, isTemporary, rpcOf, sendBatch, switchChain } from "../src/lib/wallet.ts";
 
 const A = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const B = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
@@ -154,6 +154,28 @@ test("a wait that never ends can be stopped, and a failed transaction says so", 
 
   const noHash = provider({ eth_estimateGas: () => "0x5208", eth_sendTransaction: () => null });
   await assert.rejects(sendAndWait(rpcOf(noHash), A, { to: B, data: "0x" }), /did not confirm/);
+});
+
+test("a wallet that never answers does not hold the page: the owner can stop, and nothing counts as sent", async () => {
+  const never = () => new Promise(() => undefined);
+  let stop = false;
+  setTimeout(() => (stop = true), 300);
+  const silent = provider({ eth_estimateGas: () => "0x5208", eth_sendTransaction: never });
+  await assert.rejects(sendAndWait(rpcOf(silent), A, { to: B, data: "0x" }, { shouldStop: () => stop }), StoppedAsking);
+  // The receipt was never asked for: no hash, no wait for the chain.
+  assert.ok(!silent.calls.includes("eth_getTransactionReceipt"));
+
+  let stopBatch = false;
+  setTimeout(() => (stopBatch = true), 300);
+  const silentBatch = provider({ wallet_sendCalls: never });
+  await assert.rejects(sendBatch(silentBatch, A, 1, [{ to: B, data: "0x" }], undefined, () => stopBatch), StoppedAsking);
+  // It is not asked a second time in the older form.
+  assert.equal(silentBatch.calls.filter((m) => m === "wallet_sendCalls").length, 1);
+
+  // An answer that comes in time is used as always, and a late "no" is no stray error.
+  assert.equal(await answerOrStop(Promise.resolve(7), () => false), 7);
+  await assert.rejects(answerOrStop(Promise.reject(rpcError(4001, "User rejected the request.")), () => false), /rejected/);
+  assert.match(errorText(new StoppedAsking()), /Nothing was sent/);
 });
 
 test("a batch is not sent twice, and an unknown outcome is not called a failure", async () => {
