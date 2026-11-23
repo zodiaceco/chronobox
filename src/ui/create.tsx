@@ -33,10 +33,11 @@ import {
   safeFromReceipt,
   sendAndWait,
   setupCalls,
+  askSlowAfterMs,
   slowAfterMs,
   tokenBalance,
 } from "../lib/chronobox.ts";
-import { assertWallet, canBatch, errorText, isRejection, isTemporary, sendBatch, signTyped } from "../lib/wallet.ts";
+import { StoppedAsking, answerOrStop, assertWallet, canBatch, errorText, isRejection, isTemporary, sendCalls, signTyped, waitForBatch } from "../lib/wallet.ts";
 import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalancesState } from "./common.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
@@ -134,6 +135,13 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [slow, setSlow] = useState(false);
   const stop = useRef(false);
   const running = useRef(false);
+  // Has the wallet answered the question of the step that runs now? Then the transaction is on its way.
+  const [sent, setSent] = useState(false);
+  // "Ask my wallet again": stop the question that got no answer, and start the setup again at once.
+  const again = useRef(false);
+  const runAgain = useRef<() => void>(() => undefined);
+  // The setup batch that the wallet may still hold after "Stop waiting". The next press waits for it again.
+  const pending = useRef<{ id: string; chainId: number; wallet: Address; safe: Address } | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -171,12 +179,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     };
   }, [session.rpc, session.account, chain, reload]);
 
+  // Each step starts with a question to the wallet. `sent` turns true when the wallet has answered it.
+  useEffect(() => setSent(false), [progress]);
+  const answered = sent || progress === "waiting";
   useEffect(() => {
     setSlow(false);
     if (!progress || progress === "check") return;
-    const timer = setTimeout(() => setSlow(true), slowAfterMs());
+    // A wallet that does not answer gets a way out sooner than a transaction that is on its way.
+    const timer = setTimeout(() => setSlow(true), answered ? slowAfterMs() : askSlowAfterMs());
     return () => clearTimeout(timer);
-  }, [progress]);
+  }, [progress, answered]);
 
   const assets: Asset[] = useMemo(() => (chain ? assetsOf(chain) : []), [chain]);
   const balanceState = useBalancesState(session.rpc, chain ? session.account : null, assets, balancesRound);
@@ -366,7 +378,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     setDemoted([]);
     makes.current = !plan.created;
     setProgress(batch ? "batch" : "start");
-    const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current };
+    const send = { chainId: chain.id, chainName: chain.name, shouldStop: () => stop.current, onHash: () => setSent(true) };
+    let retry = false;
     const money = chosen.filter((d) => d.amount !== null && d.amount > 0n);
     const line = (d: Chosen, amount: bigint): Line => ({ symbol: d.asset.symbol, text: formatAmount(amount, d.asset.decimals) });
     // Snapshot the confirmed contribution from the review screen so a hidden contribution is never sent quietly.
@@ -381,6 +394,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     let target = plan.safe;
     // True from the moment a request goes to the wallet. After that, the chain says what happened, not an error.
     let asked = false;
+    // True when this press waited for a request sent by an earlier press.
+    let resumed = false;
     try {
       let now = await findPlan();
       setPlan(now);
@@ -395,7 +410,16 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       const stayed: Line[] = [];
       let later: Chosen[] = [];
 
-      if (batch) {
+      const last = pending.current;
+      if (last && !(last.chainId === chain.id && sameAddress(last.wallet, session.account) && sameAddress(last.safe, now.safe) && !now.created)) pending.current = null;
+      if (batch && pending.current) {
+        // The wallet still has the first request. A second one could end up in the same transaction and make it fail.
+        asked = true;
+        await waitForBatch(session.wallet.provider, pending.current.id, () => setProgress("waiting"), () => stop.current);
+        pending.current = null;
+        // The amounts of that first request may differ from the ones chosen now.
+        resumed = true;
+      } else if (batch) {
         const held = await nativeBalance(session.rpc, session.account);
         // A contribution that nothing can pay is left out. It never stops the setup.
         const parts = splitContribution(money.map((d) => toPick(d, true)), confirmedGive, held, 0n) ?? splitContribution(money.map((d) => toPick(d, true)), null, held, 0n)!;
@@ -411,7 +435,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         inside = money.map((d, i) => line(d, parts.stays[i]));
         if (parts.from !== "none") gave = giveText;
         asked = true;
-        await sendBatch(session.wallet.provider, session.account, chain.id, calls, () => setProgress("waiting"), () => stop.current);
+        const id = await sendCalls(session.wallet.provider, session.account, chain.id, calls, () => stop.current);
+        pending.current = { id, chainId: chain.id, wallet: session.account, safe: now.safe };
+        await waitForBatch(session.wallet.provider, id, () => setProgress("waiting"), () => stop.current);
+        pending.current = null;
       } else {
         if (!now.created) {
           setProgress("create");
@@ -430,7 +457,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           const way = wayOf(d);
           if (!d.asset.token || !way || way.kind === "transfer") continue;
           setProgress(`sign:${d.index}`);
-          const pull = await signPull(session.rpc, (data) => signTyped(session.wallet.provider, session.account, data), way, d.asset.token, session.account, now.safe, d.amount!);
+          const pull = await signPull(session.rpc, (data) => answerOrStop(signTyped(session.wallet.provider, session.account, data), () => stop.current), way, d.asset.token, session.account, now.safe, d.amount!);
           if (pull) pulls.push(pull);
           else {
             failed.push(d.index);
@@ -503,28 +530,38 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           open = false;
         }
       }
+      if (resumed) return finish(target, state, null, [], money.length > 0);
       return finish(target, state, inside, stayed);
     } catch (e) {
+      // The wallet never answered, and the owner stopped waiting. That question sent nothing.
+      const noAnswer = e instanceof StoppedAsking;
+      // Only "Stop waiting" leaves the request with the wallet. After any other end, the next press may send again.
+      if (!stop.current) pending.current = null;
       if (asked && !isRejection(e)) {
         // Something may have reached the chain all the same. Look before saying that it failed.
         setProgress("check");
-        const state = await verify(target, 2);
+        const state = noAnswer ? null : await verify(target, 2);
         if (state === "locked" || state === "unverified") return finish(target, state, null, [], money.length > 0);
         try {
           const next = await findPlan();
           setPlan(next);
           // The first step did land. The page says so, and the next press goes on from there.
-          if (next.created && !plan.created) return setError(null);
+          if (next.created && !plan.created && !noAnswer) return setError(null);
         } catch {
           // The plan stays as it was. The next try reads it again.
         }
       }
-      setError(errorText(e));
+      if (noAnswer && again.current) retry = true;
+      else setError(errorText(e));
     } finally {
+      again.current = false;
       running.current = false;
       setProgress(null);
+      if (retry) setTimeout(() => runAgain.current(), 0);
     }
   };
+
+  runAgain.current = run;
 
   // --- The result ----------------------------------------------------------
   if (done) {
@@ -638,7 +675,32 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               );
             })}
           </ol>
-          {slow ? (
+          {slow && !answered ? (
+            <div class="wiz-slow">
+              <p class="wiz-note">Your wallet has not answered yet. Look in your wallet: the request may still wait for you there.</p>
+              <div class="wiz-slow-actions">
+                <Button
+                  small
+                  onClick={() => {
+                    again.current = true;
+                    stop.current = true;
+                  }}
+                >
+                  Ask my wallet again
+                </Button>
+                <button
+                  type="button"
+                  class="link-button"
+                  onClick={() => {
+                    stop.current = true;
+                  }}
+                >
+                  Go back
+                </button>
+              </div>
+              <p class="wiz-note">Nothing was sent so far. If the old request shows up in your wallet later, reject it.</p>
+            </div>
+          ) : slow ? (
             <div class="wiz-slow">
               <p class="wiz-note">This takes longer than usual. Look in your wallet: the request may still wait for you there, or the network is busy.</p>
               <button
@@ -650,7 +712,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               >
                 Stop waiting
               </button>
-              <p class="wiz-note">That does not undo anything. This page then looks at the chain and shows where your setup stands.</p>
+              <p class="wiz-note">
+                That does not undo anything. This page then looks at the chain and shows where your setup stands. If you try again, the page waits for the
+                same request in your wallet. It does not send a second one.
+              </p>
             </div>
           ) : null}
         </Screen>

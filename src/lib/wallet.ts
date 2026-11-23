@@ -75,6 +75,7 @@ const READS = new Set([
   "eth_call",
   "eth_getBalance",
   "eth_getCode",
+  "eth_getStorageAt",
   "eth_getLogs",
   "eth_blockNumber",
   "eth_getBlockByNumber",
@@ -251,12 +252,23 @@ export async function sendBatch(
   onWaiting?: () => void,
   shouldStop?: () => boolean,
 ): Promise<{ blockNumber: bigint | null }> {
+  return waitForBatch(provider, await sendCalls(provider, account, chainId, calls, shouldStop), onWaiting, shouldStop);
+}
+
+/** Gives the calls to the wallet as one atomic batch. Returns the id of the batch. */
+export async function sendCalls(
+  provider: Provider,
+  account: Address,
+  chainId: number,
+  calls: TxRequest[],
+  shouldStop?: () => boolean,
+): Promise<string> {
   // A call that only sends ETH has no data. Wallets reject "0x" there, so the field is left out.
   const list = calls.map((c) => ({ to: c.to, ...(c.data === "0x" ? {} : { data: c.data }), value: toQuantity(c.value ?? 0n) }));
   const base = { from: account, chainId: toQuantity(chainId), calls: list };
   let result: unknown;
   try {
-    result = await provider.request({ method: "wallet_sendCalls", params: [{ version: "2.0.0", atomicRequired: true, ...base }] });
+    result = await answerOrStop(provider.request({ method: "wallet_sendCalls", params: [{ version: "2.0.0", atomicRequired: true, ...base }] }), shouldStop);
   } catch (error) {
     // Only a wallet that does not know version 2 of the standard gets the first draft. Any other
     // failure may come after the owner approved, and a second request could send the batch twice.
@@ -264,13 +276,27 @@ export async function sendBatch(
     const unknownVersion = code === -32602 || code === 5700 || /version|atomicrequired|unsupported|not supported/i.test(messageOf(error));
     if (!unknownVersion) throw error;
     try {
-      result = await provider.request({ method: "wallet_sendCalls", params: [{ version: "1.0", ...base }] });
+      result = await answerOrStop(provider.request({ method: "wallet_sendCalls", params: [{ version: "1.0", ...base }] }), shouldStop);
     } catch (second) {
       throw isRejection(second) ? second : error;
     }
   }
   const id = typeof result === "string" ? result : (result as { id?: string })?.id;
   if (!id) throw new Error("Your wallet did not confirm that it took the request. Look in your wallet before you try again.");
+  return id;
+}
+
+/**
+ * Waits until the batch with this id is on chain. A batch that the wallet still
+ * holds is waited for again, not sent again: some wallets (Ambire) put a second
+ * request into the same transaction as the first.
+ */
+export async function waitForBatch(
+  provider: Provider,
+  id: string,
+  onWaiting?: () => void,
+  shouldStop?: () => boolean,
+): Promise<{ blockNumber: bigint | null }> {
   onWaiting?.();
   const rpc = rpcOf(provider);
   let misses = 0;
@@ -301,6 +327,39 @@ export async function sendBatch(
 
 type CallsStatus = { status?: number | string; receipts?: { blockNumber?: string; status?: string }[] };
 
+/**
+ * The person stopped waiting before the wallet gave an answer. As far as the page knows,
+ * nothing was sent. But the request can still be open in the wallet, and a yes there
+ * sends it after all.
+ */
+export class StoppedAsking extends Error {
+  constructor() {
+    super("Your wallet did not answer, so this page stopped waiting. Nothing was sent. If the request is still open in your wallet, reject it there: if you confirm it later, it still goes through.");
+    this.name = "StoppedAsking";
+  }
+}
+
+/**
+ * Waits for the wallet to answer a question to its owner, but not for ever. A request that the
+ * owner lost sight of (a closed popup, a locked wallet) never gets an answer, so the page must
+ * be able to stop on its own: `shouldStop` is asked a few times each second. An answer that
+ * comes after that is dropped.
+ */
+export async function answerOrStop<T>(asking: Promise<T>, shouldStop?: () => boolean): Promise<T> {
+  if (!shouldStop) return asking;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    timer = setInterval(() => shouldStop() && reject(new StoppedAsking()), 200);
+  });
+  // A late "no" from the wallet must not show up as an error that nobody handles.
+  asking.catch(() => undefined);
+  try {
+    return await Promise.race([asking, stopped]);
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 /** The wallet cannot say what became of a batch. The chain has the answer. */
 export class BatchUnknown extends Error {
   constructor() {
@@ -326,7 +385,7 @@ const REASONS: [RegExp, string][] = [
   [/GS013/, "The Chronobox refused this step. Reload the page and look at its state before you try again."],
   [/GS02[0-9]|GS03[0-9]/, "Your wallet is not allowed to do this with this Chronobox."],
   [/not authorized|NotAuthorized|NoMembership|ConditionViolation/i, "Your wallet is not allowed to do this with this Chronobox."],
-  [/create2 call failed/i, "This Chronobox exists already. Reload the page."],
+  [/create2 call failed/i, "This Chronobox exists already, or your wallet has the setup twice in one request. Reject the request in your wallet, reload the page and start again."],
 ];
 
 /** A short, plain message for an error that came from a wallet or an RPC. */
@@ -336,7 +395,7 @@ export function errorText(error: unknown): string {
   const text = messageOf(error);
   const lower = text.toLowerCase();
 
-  if (error instanceof WalletMoved || error instanceof BatchUnknown || e?.name === "Replaced" || e?.name === "StoppedWaiting") return text;
+  if (error instanceof WalletMoved || error instanceof BatchUnknown || error instanceof StoppedAsking || e?.name === "Replaced" || e?.name === "StoppedWaiting") return text;
   if (code === 4001 || /user rejected|user denied|rejected the request|user cancel/.test(lower)) return "You rejected the request in your wallet.";
   if (code === -32002 || /already pending|already processing/.test(lower)) return "Your wallet already has a request open. Open your wallet and answer it.";
   if (code === 4100 || /unauthorized|not been authorized/.test(lower)) return "Your wallet did not allow this. Unlock it and connect this page again.";
