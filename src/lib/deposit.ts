@@ -17,8 +17,8 @@
  * and to label, never to set an amount), round amounts for the slider, and
  * who pays the contribution when everything goes in.
  */
-import { call, decode } from "./abi.ts";
-import type { Chain, Token } from "./chains.ts";
+import { call, decode, encode, selector } from "./abi.ts";
+import { type Chain, CONTRACTS, type Token } from "./chains.ts";
 import { type Call, type Rpc, chainTime, coinPriceUsd, readMany } from "./chronobox.ts";
 import { type Address, type Hex, bytesToHex, concat, keccak, sameAddress, size, strip, toBigInt, uintWord, utf8, word } from "./hex.ts";
 
@@ -396,7 +396,28 @@ export function pullMessage(way: Exclude<Way, { kind: "transfer" }>, wallet: Add
 }
 
 /** A signed pull, ready for the setup batch: the calls that the Chronobox makes. */
-export type Pull = { token: Address; amount: bigint; kind: "authorization" | "permit"; calls: Call[] };
+export type Pull = {
+  token: Address;
+  amount: bigint;
+  kind: "authorization" | "permit";
+  calls: Call[];
+  /** For a permit: the permit call itself. Anybody who sees it can send it; the calls above do not depend on that. */
+  permit?: Call;
+};
+
+const AGGREGATE3 = selector("aggregate3((address,bool,bytes)[])");
+
+/**
+ * One call that may fail without failing the batch around it: Multicall3's aggregate3 with
+ * allowFailure. Multicall3 is the caller of `data`, so this suits only a call that does not care
+ * who sends it, like a permit, which checks a signature.
+ */
+export function tolerantCall(target: Address, data: Hex): Call {
+  // aggregate3 takes one dynamic array of (address target, bool allowFailure, bytes callData). A tuple
+  // with a dynamic member is encoded like an argument list, behind its offset in the array.
+  const tuple = strip(encode(["address", "bool", "bytes"], [target, true, data]));
+  return { to: CONTRACTS.multicall3, data: (AGGREGATE3 + uintWord(32) + uintWord(1) + uintWord(32) + tuple) as Hex };
+}
 
 /** The three parts of a plain signature of 65 bytes. Null for anything else (a contract wallet signs in another way). */
 export function splitSignature(signature: string): { v: number; r: Hex; s: Hex } | null {
@@ -419,10 +440,17 @@ export function pullCalls(way: Exclude<Way, { kind: "transfer" }>, token: Addres
       },
     ];
   }
+  // A permit is public once it is sent: anybody who sees the setup waiting can send the same permit
+  // first. Then the permit in the batch fails, though the approval is in place. So the permit may
+  // fail, and the transfer, which needs the approval, must not: without one, the setup fails as before.
   return [
-    { to: token, data: call("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)", [wallet, safe, amount, deadline, v, r, s]) },
+    tolerantCall(token, permitData(wallet, safe, amount, deadline, signature)),
     { to: token, data: call("transferFrom(address,address,uint256)", [wallet, safe, amount]) },
   ];
+}
+
+function permitData(wallet: Address, safe: Address, amount: bigint, deadline: bigint, signature: { v: number; r: Hex; s: Hex }): Hex {
+  return call("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)", [wallet, safe, amount, deadline, signature.v, signature.r, signature.s]);
 }
 
 /** How long a signed message stays good. Long enough for a slow setup, short enough to be gone the same day. */
@@ -448,13 +476,15 @@ export async function signPull(
   const signature = splitSignature(await sign(pullMessage(way, wallet, safe, amount, deadline, salt)));
   if (!signature) return null;
   const calls = pullCalls(way, token, wallet, safe, amount, deadline, salt, signature);
+  // The permit itself is tried, not the call that lets it fail: that one never fails.
+  const permit = way.kind === "permit" ? { to: token, data: permitData(wallet, safe, amount, deadline, signature) } : undefined;
   try {
     // The Chronobox is the caller. For EIP-3009 only the receiver can collect, so the test must come from its address.
-    await rpc("eth_call", [{ from: safe, to: token, data: calls[0].data }, "latest"]);
+    await rpc("eth_call", [{ from: safe, to: token, data: (permit ?? calls[0]).data }, "latest"]);
   } catch {
     return null;
   }
-  return { token, amount, kind: way.kind, calls };
+  return { token, amount, kind: way.kind, calls, ...(permit ? { permit } : {}) };
 }
 
 /**

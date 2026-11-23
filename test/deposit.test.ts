@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONTRIBUTION_STEPS } from "../src/lib/chains.ts";
+import { call, decode, encode, selector } from "../src/lib/abi.ts";
+import { CONTRACTS, CONTRIBUTION_STEPS } from "../src/lib/chains.ts";
 import {
   type Pick,
   amountAt,
@@ -227,7 +228,25 @@ test("the signed message names the Chronobox, the amount and the time limit", ()
   assert.equal(pullCalls({ kind: "authorization", domain }, USDC, WALLET, SAFE, 1n, 2n, salt, signature).length, 1);
   const calls = pullCalls({ kind: "permit", domain, nonce: 7n }, USDC, WALLET, SAFE, 1n, 2n, salt, signature);
   assert.equal(calls.length, 2);
-  // transferFrom(wallet, safe, 1)
+  // The permit may fail (somebody sent it first): it goes through Multicall3's aggregate3 with allowFailure.
+  assert.equal(calls[0].to, CONTRACTS.multicall3);
+  assert.ok(calls[0].data.startsWith(selector("aggregate3((address,bool,bytes)[])")));
+  const permitCall = call("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)", [WALLET, SAFE, 1n, 2n, 27, signature.r, signature.s]);
+  assert.equal(
+    calls[0].data,
+    selector("aggregate3((address,bool,bytes)[])") +
+      // offset of the array, its length, offset of its one tuple
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      "0000000000000000000000000000000000000000000000000000000000000001" +
+      "0000000000000000000000000000000000000000000000000000000000000020" +
+      encode(["address", "bool", "bytes"], [USDC, true, permitCall]).slice(2),
+  );
+  const [target, allowFailure, inner] = decode(["address", "bool", "bytes"], ("0x" + calls[0].data.slice(10 + 64 * 3)) as Hex);
+  assert.equal(String(target).toLowerCase(), USDC.toLowerCase());
+  assert.equal(allowFailure, true);
+  assert.equal(inner, permitCall);
+  // The transfer must not fail: transferFrom(wallet, safe, 1), straight to the token.
+  assert.equal(calls[1].to, USDC);
   assert.ok(calls[1].data.startsWith("0x23b872dd"));
 });
 

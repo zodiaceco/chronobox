@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { call } from "../src/lib/abi.ts";
 import { CHAINS } from "../src/lib/chains.ts";
 import { EXPIRATION_SECONDS, type Rpc, createTx, inspect, lockTx, nativeBalance, safeFromReceipt, sendAndWait, tokenBalance } from "../src/lib/chronobox.ts";
-import { type Pull, freshPulls, readPrices, signPull, splitContribution, tokenPayment, waysIn } from "../src/lib/deposit.ts";
+import { type Pull, freshPulls, readPrices, signPull, splitContribution, tokenPayment, tolerantCall, waysIn } from "../src/lib/deposit.ts";
 import { type Address, type Hex, toBigInt } from "../src/lib/hex.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
@@ -155,16 +155,21 @@ try {
   const usdsWay = (await waysIn(rpc, 1, WALLET, [token("USDS").address]))[0];
   assert.ok(usdsWay.kind === "permit");
   const permit = await signPull(rpc, signAs(WALLET), usdsWay, token("USDS").address, WALLET, safe3, units("USDS", 500n));
-  assert.ok(permit && permit.calls.length === 2);
-  await sendAndWait(rpc, STRANGER, { to: permit.calls[0].to, data: permit.calls[0].data });
-  const spoiled = lockTx(WALLET, safe3, DAY, EXPIRATION_SECONDS, null, { coin: 0n, calls: permit.calls });
-  await assert.rejects(rpc("eth_call", [{ from: WALLET, to: spoiled.to, data: spoiled.data }, "latest"]), "the used permit makes the setup fail");
-  const fresh = await freshPulls(rpc, WALLET, safe3, [permit]);
-  assert.equal(fresh[0].calls.length, 1, "the pull goes on without the permit call");
-  await sendAndWait(rpc, WALLET, lockTx(WALLET, safe3, DAY, EXPIRATION_SECONDS, null, { coin: 0n, calls: fresh.flatMap((p) => p.calls) }));
+  assert.ok(permit && permit.calls.length === 2 && permit.permit);
+  // A permit that fails, and no approval in place: the transfer fails, and so does the whole setup.
+  const forged = { ...permit.permit, data: (permit.permit.data.slice(0, -2) + (permit.permit.data.endsWith("00") ? "01" : "00")) as Hex };
+  const broken = lockTx(WALLET, safe3, DAY, EXPIRATION_SECONDS, null, { coin: 0n, calls: [tolerantCall(forged.to, forged.data), permit.calls[1]] });
+  await assert.rejects(rpc("eth_call", [{ from: WALLET, to: broken.to, data: broken.data }, "latest"]), "no approval: the transfer fails the setup");
+  ok("a permit that fails with no approval in place still fails the setup: nothing moves without the approval");
+  // Somebody sees the setup waiting, and sends its permit first. The batch is sent as it was signed: unchanged.
+  await sendAndWait(rpc, STRANGER, permit.permit);
+  // freshPulls leaves the used permit out when it sees the approval in time: that saves its gas. Not needed any more.
+  assert.equal((await freshPulls(rpc, WALLET, safe3, [permit]))[0].calls.length, 1);
+  await sendAndWait(rpc, WALLET, lockTx(WALLET, safe3, DAY, EXPIRATION_SECONDS, null, { coin: 0n, calls: permit.calls }));
   assert.equal(await tokenBalance(rpc, token("USDS").address, safe3), units("USDS", 500n));
   assert.equal((await inspect(rpc, safe3)).state, "locked");
-  ok("the approval was in place, and the tokens went in");
+  ok("the permit somebody sent first fails inside the setup without stopping it: the approval is in place, and the tokens went in");
+
 
   step("5. A setup whose token pull fails moves nothing");
   const safe4 = safeFromReceipt(await sendAndWait(rpc, WALLET, createTx(WALLET, 43)))!;
