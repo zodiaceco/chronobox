@@ -285,6 +285,32 @@ try {
   ok("the list of chats on disk is sealed: no address in it");
   assert.doesNotMatch(logs.join("\n"), new RegExp(TOKEN));
 
+  step("10. In one block: a withdrawal is carried out, and the request after it is cancelled");
+  // Somebody with the wallet takes the money and cancels a decoy in the same block. The state of the block before
+  // says nothing about which was which; the logs of the Safe do.
+  const decoy = withdrawalTx(ANNA, null, 1n);
+  await sendAndWait(rpc, ANNA, queueTx(anna.delay, decoy));
+  const decoyNonce = BigInt(await rpc("eth_call", [{ to: anna.delay, data: "0xde8dd91d" }, "latest"])) - 1n; // queueNonce - 1
+  assert.equal(await watcher.poll(), true);
+  heard();
+  await warp(DAY + 60n);
+  await rpc("evm_setAutomine", [false]);
+  const send = (from: Address, tx: { to: string; data: string }) => rpc("eth_sendTransaction", [{ from, to: tx.to, data: tx.data, gas: "0x200000" }]);
+  const hashes = [await send(CARL, executeTx(anna.delay, annaOut)), await send(ANNA, cancelTx(anna.roles, anna.delay, decoyNonce))];
+  await rpc("evm_mine", []);
+  await rpc("evm_setAutomine", [true]);
+  const receipts = await Promise.all(hashes.map((h) => rpc("eth_getTransactionReceipt", [h])));
+  assert.deepEqual(receipts.map((r: any) => r.status), ["0x1", "0x1"]);
+  assert.equal(receipts[0].blockNumber, receipts[1].blockNumber, "one block");
+  assert.equal(await watcher.poll(), true);
+  told = heard();
+  plain(told);
+  assert.deepEqual(told.map((m) => m.text.split("\n")[0]), ["Done: Withdraw 1 ETH", "Cancelled: Withdraw 0.000000000000000001 ETH"]);
+  assert.match(told[0].text, /was carried out\. The money left this Chronobox\./);
+  assert.doesNotMatch(told[0].text, /No money moved/);
+  ok("the withdrawal is reported as carried out, and only the decoy as cancelled");
+  show(told.map((m) => m.text).join("\n\n"));
+
   console.log("\nAll alert checks passed.");
 } finally {
   await rpc("evm_revert", [snapshot]);

@@ -1,7 +1,7 @@
 // Stand-ins for the outside world: a chain that answers JSON-RPC, and a tiny HTTP server.
 import * as http from 'node:http';
 import {
-  BURN_ADDRESS, MASTER_COPY, MODULE_PROXY_FACTORY, SEL, SENTINEL, TOPIC_MODULE_PROXY_CREATION, TOPIC_SAFE_MODULE_TRANSACTION,
+  BURN_ADDRESS, MASTER_COPY, MODULE_PROXY_FACTORY, SEL, SENTINEL, TOPIC_MODULE_FAILURE, TOPIC_MODULE_PROXY_CREATION, TOPIC_MODULE_SUCCESS, TOPIC_SAFE_MODULE_TRANSACTION,
   TOPIC_TRANSACTION_ADDED, TOPIC_TX_NONCE_SET, encAddr, encUint, proxyCode,
 } from '../src/index.ts';
 
@@ -67,16 +67,43 @@ export class MockChain {
   withCancel(order: 'delay-first' | 'roles-first' = 'delay-first') {
     this.safeModules = order === 'delay-first' ? [DELAY, ROLES] : [ROLES, DELAY];
   }
-  // Each of these is a transaction in a new block.
-  private setNonce(n: number) {
-    this.mine(12n);
+  /** What the Safe (a SafeL2 1.4.1) logs: each call of a module, and its result right after it. In chain order. */
+  safeLogs: { block: number; topics: string[]; data: string }[] = [];
+  private moduleCall(module: string, to: string, value: bigint, data: string, operation: number, success: boolean) {
+    const d = data.slice(2);
+    this.safeLogs.push({
+      block: this.head, topics: [TOPIC_SAFE_MODULE_TRANSACTION],
+      data: '0x' + encAddr(module) + encAddr(to) + u(value) + u(160) + u(operation) + u(d.length / 2) + d.padEnd(Math.ceil(d.length / 64) * 64, '0'),
+    });
+    this.safeLogs.push({ block: this.head, topics: [success ? TOPIC_MODULE_SUCCESS : TOPIC_MODULE_FAILURE, '0x' + encAddr(module)], data: '0x' });
+  }
+  // Each of these is a transaction in a new block, or in the block of the one before (`sameBlock`).
+  private setNonce(n: number, sameBlock: boolean) {
+    if (!sameBlock) this.mine(12n);
     this.txNonce = n;
     this.nonceHistory.push({ block: this.head, nonce: n });
   }
-  /** executeNextTx or skipExpired: no Delay event. */
-  execute() { this.setNonce(this.txNonce + 1); }
-  /** setTxNonce(n) through the Roles modifier: emits TxNonceSet(n). */
-  cancel(n: number) { this.setNonce(n); this.nonceSets.push({ block: this.head, nonce: n }); }
+  /** executeNextTx: the Delay calls the Safe with the request at the head of the queue. */
+  execute(sameBlock = false) {
+    const q = this.queue[this.txNonce];
+    this.setNonce(this.txNonce + 1, sameBlock);
+    this.moduleCall(DELAY, q.to, q.value, q.data, q.operation, true);
+  }
+  /** skipExpired: no log at all. */
+  skipExpired() { this.setNonce(this.txNonce + 1, false); }
+  /** setTxNonce(n) through the Roles modifier. With an event TxNonceSet(n) on a Delay that has it. */
+  cancel(n: number, sameBlock = false) {
+    this.setNonce(n, sameBlock);
+    // Another call of the cancel contract first, which is no cancel.
+    this.moduleCall(ROLES, OWNER_WALLET, 0n, '0x', 0, true);
+    this.moduleCall(ROLES, DELAY, 0n, '0x46ba2307' + u(n), 0, true);
+    this.nonceSets.push({ block: this.head, nonce: n });
+  }
+  /** A cancel that failed inside a call that did not revert: logged, and nothing changed. */
+  failedCancel(n: number) {
+    this.mine(12n);
+    this.moduleCall(ROLES, DELAY, 0n, '0x46ba2307' + u(n), 0, false);
+  }
   txNonceAt(block: number) {
     if (block >= this.head) return this.txNonce;
     let v = 0;
@@ -140,15 +167,14 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
         }
         return { result: out };
       }
-      if (f.topics[0] === TOPIC_SAFE_MODULE_TRANSACTION && addrs.includes(SAFE)) {
-        // Every module call in the Safe: the cancels (Roles calls setTxNonce on the Delay) and one other call.
-        const moduleTx = (module: string, to: string, data: string) =>
-          '0x' + encAddr(module) + encAddr(to) + u(0) + u(160) + u(0) + u((data.length - 2) / 2) + data.slice(2).padEnd(128, '0');
-        for (const l of chain.nonceSets) {
-          if (l.block < from || l.block > to) continue;
-          const at = '0x' + l.block.toString(16);
-          out.push({ address: SAFE, blockNumber: at, logIndex: '0x0', topics: [TOPIC_SAFE_MODULE_TRANSACTION], data: moduleTx(DELAY, OWNER_WALLET, '0x') });
-          out.push({ address: SAFE, blockNumber: at, logIndex: '0x1', topics: [TOPIC_SAFE_MODULE_TRANSACTION], data: moduleTx(ROLES, DELAY, '0x46ba2307' + u(l.nonce)) });
+      if (addrs.includes(SAFE)) {
+        const wanted: string[] = [f.topics[0]].flat();
+        const index = new Map<number, number>();
+        for (const l of chain.safeLogs) {
+          const i = index.get(l.block) ?? 0;
+          index.set(l.block, i + 1);
+          if (l.block < from || l.block > to || !wanted.includes(l.topics[0])) continue;
+          out.push({ address: SAFE, blockNumber: '0x' + l.block.toString(16), logIndex: '0x' + i.toString(16), topics: l.topics, data: l.data });
         }
         return { result: out };
       }

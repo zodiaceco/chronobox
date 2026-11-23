@@ -3,13 +3,13 @@
 import * as path from 'node:path';
 import {
   BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
-  TOPIC_TX_NONCE_SET, ZERO_ADDRESS, cleanSymbol, decodeAbiString, decodeAddressArray, decodeAddresses, decodeCancel,
+  TOPIC_MODULE_FAILURE, TOPIC_MODULE_SUCCESS, ZERO_ADDRESS, addressWord, cleanSymbol, decodeAbiString, decodeAddressArray, decodeAddresses, decodeModuleTransaction, strip,
   decodeAddress, decodeTransactionAdded, decodeUint, encAddr, encUint, hex, proxyCode, toAddr, toBig, word,
 } from './chain.ts';
 import type { Config } from './config.ts';
 import { type DescribeCtx, type TokenMeta, describeTx } from './describe.ts';
 import { fmtDuration, fmtWhen, lowerFirst, networkName } from './format.ts';
-import { type CloseReason, type NonceSet, closeReason, expiryLead, itemStatus, waitLine } from './status.ts';
+import { type CloseReason, type VaultEvent, expiryLead, itemStatus, replayQueue, waitLine } from './status.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
 import type { Telegram } from './telegram.ts';
 import type { Alert, Item, Settings, State } from './types.ts';
@@ -408,40 +408,37 @@ export class Watcher {
       }
     }
 
-    // Items that left the queue since the last poll: cancelled (TxNonceSet) or executed/skipped (no event).
+    // Items that left the queue since the last poll: carried out, cancelled, or removed because their time ran out.
+    // The Safe of the vault logs each call of a module and its result, in order; the replay reads them.
     const closing = [...Object.values(s.items), ...newItems].filter((it) => it.nonce < txNonce);
-    const reasons = new Map<number, CloseReason>();
+    let reasons = new Map<number, CloseReason>();
     if (!first && closing.length) {
-      const sets: NonceSet[] = [];
+      const events: VaultEvent[] = [];
       if (head > s.lastBlock!) {
-        // A cancel shows as TxNonceSet on a Delay that has the event, and always as a module call in the vault.
-        const found = new Map<string, { blockNumber: string; logIndex?: string; nonce: number }>();
-        for (const l of await this.getLogs(s.lastBlock! + 1, head, [TOPIC_TX_NONCE_SET], delay)) {
-          const nonce = Number(toBig(word(l.data, 0)));
-          found.set(`${l.blockNumber}:${nonce}`, { blockNumber: l.blockNumber, logIndex: l.logIndex, nonce });
-        }
-        for (const l of await this.getLogs(s.lastBlock! + 1, head, [TOPIC_SAFE_MODULE_TRANSACTION], vault)) {
-          const nonce = decodeCancel(l, delay);
-          if (nonce === null || found.has(`${l.blockNumber}:${nonce}`)) continue;
-          found.set(`${l.blockNumber}:${nonce}`, { blockNumber: l.blockNumber, logIndex: l.logIndex, nonce });
-        }
-        const logs = [...found.values()];
-        logs.sort((a, b) => Number(BigInt(a.blockNumber) - BigInt(b.blockNumber)) || Number(BigInt(a.logIndex ?? 0) - BigInt(b.logIndex ?? 0)));
+        const logs = await this.getLogs(s.lastBlock! + 1, head, [[TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_MODULE_SUCCESS, TOPIC_MODULE_FAILURE]], vault);
+        logs.sort((x, y) => Number(BigInt(x.blockNumber) - BigInt(y.blockNumber)) || Number(BigInt(x.logIndex ?? 0) - BigInt(y.logIndex ?? 0)));
         for (const l of logs) {
+          if (String(l.address).toLowerCase() !== vault) continue;
           const block = Number(BigInt(l.blockNumber));
-          let before: number | null = null;
-          try {
-            before = Number(await this.callUint(delay, SEL.txNonce, hex(block - 1)));
-          } catch (e) {
-            this.log(`could not read txNonce at block ${block - 1} (${errText(e)}); cancel detection is less precise`);
+          const index = Number(BigInt(l.logIndex ?? 0));
+          if (l.topics[0] === TOPIC_SAFE_MODULE_TRANSACTION) {
+            const call = decodeModuleTransaction(l);
+            // A call that cannot be read still opens a call, so that its result is not taken for another one.
+            events.push(call ? { kind: 'call', block, index, ...call } : { kind: 'call', block, index, module: '', to: '', value: 0n, data: '0x', operation: 0 });
+          } else {
+            let module = '';
+            try { module = addressWord(strip(l.topics[1] ?? '')); } catch { /* not the ABI: matches no call */ }
+            events.push({ kind: 'result', block, index, module, success: l.topics[0] === TOPIC_MODULE_SUCCESS });
           }
-          sets.push({ nonce: l.nonce, block, ts: await this.timestampOf(block), before });
         }
       }
-      const lastTs = await this.timestampOf(Math.min(s.lastBlock!, head));
-      for (const it of closing) {
-        reasons.set(it.nonce, closeReason(it.nonce, BigInt(it.createdAt), sets, cooldown, expiration, lastTs, now));
-      }
+      const times = new Map<number, bigint>();
+      for (const e of events) if (e.kind === 'result' && e.success && !times.has(e.block)) times.set(e.block, await this.timestampOf(e.block));
+      reasons = replayQueue({
+        from: s.txNonce ?? txNonce, to: txNonce, events, delay, cooldown, expiration, now,
+        items: new Map(closing.map((it) => [it.nonce, { createdAt: BigInt(it.createdAt), to: it.to, value: it.value, data: it.data, operation: it.operation }])),
+        timeOf: (block) => times.get(block) ?? now,
+      });
     }
 
     // Commit phase.
@@ -507,7 +504,7 @@ export class Watcher {
     // Closed items.
     for (const it of Object.values(s.items).sort((a, b) => a.nonce - b.nonce)) {
       if (it.nonce >= txNonce) continue;
-      const r = reasons.get(it.nonce) ?? { how: 'executed_or_expired' };
+      const r: CloseReason = reasons.get(it.nonce) ?? { how: 'executed_or_cancelled' };
       const money = it.kind === 'withdrawal' || it.kind === 'transfer_other';
       if (r.how === 'cancelled') {
         this.push({
@@ -519,11 +516,11 @@ export class Watcher {
         const text = {
           executed: [`Done: ${it.summary}`, `${Request(it)} was carried out. ${money ? 'The money left this Chronobox.' : 'The change is in force.'}`],
           expired: [`Removed: ${it.summary}`, `${Request(it)} was not finished in time and was removed. ${money ? 'No money moved.' : 'Nothing changed.'}`],
-          executed_or_expired: [`Closed: ${it.summary}`, `${Request(it)} is closed. It was carried out just before its time ran out, or its time ran out and it was removed. Open your Chronobox to see which.`],
-          executed_or_cancelled: [`Closed: ${it.summary}`, `${Request(it)} is closed. It was carried out, or it was cancelled. The alert service could not see which. Open your Chronobox to see it.`],
+          executed_or_cancelled: [`Closed: ${it.summary}`, `${Request(it)} is closed. It was carried out, or it was cancelled. The alert service could not see which.${money ? ' If nobody cancelled it, the money left this Chronobox.' : ''} Open your Chronobox to see it.`],
         }[r.how];
         this.push({
-          event: 'closed', nonce: it.nonce, priority: 3, at: Number(now),
+          // Money that may have left is told as loud as money that goes to another address.
+          event: 'closed', nonce: it.nonce, priority: r.how === 'executed_or_cancelled' && money ? 4 : 3, at: Number(now),
           title: text[0], message: text[1],
         });
       }

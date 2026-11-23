@@ -449,17 +449,46 @@ test('an execution followed by a cancel in the same poll interval is told apart'
   assert.deepEqual(hooks().map((h) => `${h.json.event}:${h.json.nonce}`), ['closed:0', 'cancelled:1', 'cancelled:2']);
   assert.match(hooks()[0].json.message, /was carried out\. The money left this Chronobox\.$/);
 
-  // Without old state at the RPC, a cancelled item that was ready is not called "cancelled".
-  chain.noArchive = true;
-  chain.enqueue(OWNER_WALLET, 3n); // #3, ready at the cancel
+  // The case of the finding: in ONE block, a request that is ready is carried out, and the one after it is
+  // cancelled. The state of the block before says nothing about that. The logs of the Safe do.
+  chain.enqueue(STRANGER, 3n); // #3, ready at the cancel
   chain.mine(2n * DAY + 60n);
   chain.enqueue(OWNER_WALLET, 4n); // #4, still waiting at the cancel
   await w.poll();
   sent = [];
-  chain.cancel(5);
+  chain.execute();
+  chain.cancel(5, true);
   await w.poll();
   assert.deepEqual(hooks().map((h) => `${h.json.event}:${h.json.nonce}`), ['closed:3', 'cancelled:4']);
-  assert.match(hooks()[0].json.message, /is closed\. It was carried out, or it was cancelled\. The alert service could not see which\./);
+  assert.equal(hooks()[0].json.title, 'Done: Send 0.000000000000000003 ETH to 0xbaba…baba');
+  assert.match(hooks()[0].json.message, /was carried out\. The money left this Chronobox\.$/);
+  assert.doesNotMatch(hooks()[0].json.message, /No money moved/);
+});
+
+test('a cancel that failed is no cancel, and what the logs cannot explain never says that no money moved', async () => {
+  chain.withCancel();
+  const w = watcher();
+  await w.poll();
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH); // #0
+  chain.enqueue(OWNER_WALLET, 1n); // #1
+  chain.mine(2n * DAY + 60n);
+  await w.poll();
+  sent = [];
+  // A cancel that failed is logged by the Safe, with its failure. Nothing changed.
+  chain.failedCancel(2);
+  await w.poll();
+  assert.deepEqual(hooks(), []);
+  // The Delay carries out #0, but the Safe logs something else than #0 asked for: the replay does not trust itself.
+  chain.execute();
+  const call = chain.safeLogs.at(-2)!;
+  call.data = call.data.replace(encAddr(OWNER_WALLET), encAddr(STRANGER));
+  chain.execute(true);
+  await w.poll();
+  assert.deepEqual(hooks().map((h) => `${h.json.event}:${h.json.nonce}:${h.json.priority}`), ['closed:0:4', 'closed:1:4']);
+  for (const h of hooks()) {
+    assert.match(h.json.message, /It was carried out, or it was cancelled\. The alert service could not see which\. If nobody cancelled it, the money left this Chronobox\./);
+    assert.doesNotMatch(h.json.message, /No money moved/);
+  }
 });
 
 test('an execution is reported as executed, an expired item as expired and removed', async () => {
@@ -482,7 +511,7 @@ test('an execution is reported as executed, an expired item as expired and remov
   chain.mine(2n * DAY + 7n * DAY + 60n);
   await w.poll(); // Expired alert
   sent = [];
-  chain.execute(); // skipExpired
+  chain.skipExpired();
   await w.poll();
   assert.deepEqual(hooks().map((h) => `${h.json.event}:${h.json.nonce}`), ['closed:1']);
   assert.equal(hooks()[0].json.title, 'Removed: Withdraw 0.000000000000000001 ETH');

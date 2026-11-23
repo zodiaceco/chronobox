@@ -13,6 +13,10 @@ export const TOPIC_TX_NONCE_SET = '0xb80aa44b2e3f25cf4fbdf2a6c561d9a3d961528ccfc
 // The Delay 1.0.1 that Chronobox pins has no TxNonceSet event, so a cancel is read from the vault: it shows
 // every call a module made, and a cancel is the call setTxNonce on the Delay.
 export const TOPIC_SAFE_MODULE_TRANSACTION = '0xb648d3644f584ed1c2232d53c46d87e693586486ad0d1175f8656013110b714e';
+// ExecutionFromModuleSuccess(address indexed module) and ExecutionFromModuleFailure(address indexed module): the
+// result of each call of a module, right after it. Every Safe from 1.3 on logs them.
+export const TOPIC_MODULE_SUCCESS = '0x6895c13664aa4f67288b25d7a21d7aaa34916e355fb9b6fae0a139a9085becb8';
+export const TOPIC_MODULE_FAILURE = '0xacd2c8702804128fdb0db2bb49f6d127dd0181c13fd45dbfe16de0930e2bd375';
 export const SET_TX_NONCE = '0x46ba2307';
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
 // ModuleProxyCreation(address indexed proxy, address indexed masterCopy), from the Zodiac ModuleProxyFactory.
@@ -148,15 +152,23 @@ export function decodeAddress(ret: string): string {
   return addressWord(wordAt(strip(ret), 0, 'address'));
 }
 
-/** The new nonce if this SafeModuleTransaction log is the call setTxNonce on the Delay, else null. */
-export function decodeCancel(log: { data: string }, delay: string): number | null {
-  const d = log.data;
-  if (toAddr(word(d, 1)) !== delay) return null;
-  const off = Number(toBig(word(d, 3)));
-  const len = Number(toBig(wordAtByte(d, off)));
-  const data = '0x' + strip(d).slice((off + 32) * 2, (off + 32 + len) * 2);
-  if (len !== 36 || !data.toLowerCase().startsWith(SET_TX_NONCE)) return null;
-  return Number(toBig(data.slice(10)));
+/** A SafeModuleTransaction log: which module asked the Safe for what. Null if it is not that ABI. */
+export function decodeModuleTransaction(log: { data: string }): { module: string; to: string; value: bigint; data: string; operation: number } | null {
+  const d = strip(log.data);
+  try {
+    const module = addressWord(d.slice(0, 64));
+    const to = addressWord(d.slice(64, 128));
+    const value = toBig(d.slice(128, 192));
+    const off = Number(toBig(d.slice(192, 256)));
+    const operation = Number(toBig(d.slice(256, 320)));
+    if (off !== 160 || d.length < (off + 32) * 2) return null;
+    const len = Number(toBig(d.slice(off * 2, off * 2 + 64)));
+    const data = d.slice((off + 32) * 2, (off + 32 + len) * 2);
+    if (data.length !== len * 2 || operation > 1) return null;
+    return { module, to, value, data: '0x' + data, operation };
+  } catch {
+    return null;
+  }
 }
 
 export function decodeTransactionAdded(log: { topics: string[]; data: string; blockNumber: string }) {

@@ -272,8 +272,8 @@ For one Chronobox with cron, `--once` checks one time and exits. Always run it f
 - It names a new wallet, a new guardian and the end of a guardian by their shape, and does not prove them. See "What it reports".
 - With only `DELAY` set (no `CHRONOBOX`) it does not look for the cancel contract and does not report who can cancel.
 - It reports who can cancel, and who can change that. It does not read what the cancel contract allows them to do. The app checks that, from the whole history of the contract.
-- The Delay of a Chronobox has no event for a cancel. The watcher reads a cancel from the module calls of the Safe (`SafeModuleTransaction`, which a SafeL2 emits). A Safe that is not a SafeL2 has no such event, and a cancel there is reported as "Closed".
-- To tell a cancel from a request that was carried out, it reads the state one block before each cancel. If your RPC no longer has that block, a request whose wait was over at the time is reported as "carried out, or cancelled".
+- The Delay of a Chronobox has no event for a cancel or for a request that was carried out. The watcher reads both from the Safe of the Chronobox, a SafeL2: it logs each call of a module (`SafeModuleTransaction`) and its result (`ExecutionFromModuleSuccess` or `…Failure`), in the order of the chain. The watcher replays them from the last poll, so a request that was carried out and a cancel in the same block are told apart, and a cancel that failed counts for nothing. It needs no old state from the RPC.
+- What the replay cannot explain (a call that does not match the request, a Safe that is not a SafeL2) is reported as "carried out, or cancelled", never as "No money moved". For money, that message is as loud as money that goes to another address.
 - All times in a message are UTC. The watcher does not know where the reader lives.
 
 ## The code
