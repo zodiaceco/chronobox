@@ -68,7 +68,7 @@ export class Watcher {
     this.telegram = opts.telegram;
     this.fetchFn = opts.fetch ?? fetch;
     this.rpc = new Rpc(cfg.rpcUrls, this.fetchFn, 20000,
-      cfg.rpcTokenSecret ? { host: cfg.rpcTokenHost, secret: cfg.rpcTokenSecret, subject: cfg.rpcTokenSubject } : undefined);
+      cfg.rpcServiceKey ? { host: cfg.rpcServiceHost, key: cfg.rpcServiceKey } : undefined);
     const out = opts.log ?? defaultLog;
     this.log = (m: string) => out(this.redact(m));
     this.store = opts.store ?? (cfg.dryRun ? new DryRunStore(stateFileStore(cfg.stateFile)) : stateFileStore(cfg.stateFile));
@@ -96,7 +96,7 @@ export class Watcher {
     if (this.cfg.webhookUrl) secrets.push([this.cfg.webhookUrl, '[webhook]']);
     if (this.cfg.telegramToken) out = out.split(this.cfg.telegramToken).join('[telegram token]');
     if (this.cfg.telegramKey) out = out.split(this.cfg.telegramKey).join('[telegram key]');
-    if (this.cfg.rpcTokenSecret) out = out.split(this.cfg.rpcTokenSecret).join('[rpc token secret]');
+    if (this.cfg.rpcServiceKey) out = out.split(this.cfg.rpcServiceKey).join('[rpc service key]');
     for (const [secret, label] of secrets) {
       out = out.split(secret).join(label);
       try {

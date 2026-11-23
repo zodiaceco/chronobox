@@ -72,8 +72,8 @@ an uptime monitor ───────────▶ /api/health     503 when 
    | `TELEGRAM_TOKEN` | The token from step 1. |
    | `TELEGRAM_KEY` | The first secret from step 2. It encrypts the list of chats. |
    | `CRON_SECRET` | The second secret. Vercel Cron sends it with each call, and `/api/poll` refuses a call without it. |
-   | `RPC_TOKEN_SECRET` | Optional. The `RPC_TOKEN_SECRET` of the internal RPC of Zodiac (see below). |
-   | `RPC_TOKEN_HOST`, `RPC_TOKEN_SUBJECT` | Optional. Where the token goes (default `rpc.zodiac.eco`) and whom it names (default `chronobox-watcher`). |
+   | `RPC_SERVICE_KEY` | Optional. The service key of chronobox for the internal RPC of Zodiac (see below). |
+   | `RPC_SERVICE_HOST` | Optional. Where the key goes (default `rpc.zodiac.eco`). |
    | `WEBHOOK_URL` | Optional. Gets every alert of every Chronobox as a JSON POST. |
    | `START_BLOCK_<chain id>` | Optional. The first block to search for Chronoboxes. Default: the newest block at the first poll. |
    | `PUBLIC_URL` | Optional. The address where Telegram reaches the bot. Default: the production domain of the project. |
@@ -91,19 +91,19 @@ an uptime monitor ───────────▶ /api/health     503 when 
 
 Zodiac runs its own RPC (a Cloudflare Worker in front of Alchemy, `deployables/rpc` in zodiac-os), on two hosts:
 
-- `rpc.zodiac.eco` answers only with `Authorization: Bearer <token>`: a short-lived HS256 JWT signed with the worker's `RPC_TOKEN_SECRET`. A `server` token gets the limit of our own servers (12000 calls a minute). With `RPC_TOKEN_SECRET` set, the watcher signs such a token (10 minutes, renewed before it runs out) and sends it only to `RPC_TOKEN_HOST`. Every function of the service names the same subject.
+- `rpc.zodiac.eco` answers only with `Authorization: Bearer <credential>`. Chronobox is one of its services: it sends a static key, the same value as the worker's `CHRONOBOX_SERVICE_KEY`. The worker reads with the Alchemy app of chronobox and counts the calls against the limit of chronobox (3000 calls a minute), not against the share of the Zodiac app. With `RPC_SERVICE_KEY` set, the watcher sends the key, and only to `RPC_SERVICE_HOST`.
 - `public-rpc.zodiac.eco` answers anyone, with a limit per IP address. Vercel functions share their addresses with others, so it is the fallback, not the first choice.
 
-Without `RPC_URL`, the service uses both: `https://rpc.zodiac.eco/{chainId},https://public-rpc.zodiac.eco/{chainId}` when `RPC_TOKEN_SECRET` is set, else the public host only. So this is all it takes:
+Without `RPC_URL`, the service uses both: `https://rpc.zodiac.eco/{chainId},https://public-rpc.zodiac.eco/{chainId}` when `RPC_SERVICE_KEY` is set, else the public host only. So this is all it takes:
 
 ```
 CHAINS=1,100,8453,42161
-RPC_TOKEN_SECRET=<the RPC_TOKEN_SECRET of the production worker>
+RPC_SERVICE_KEY=<the CHRONOBOX_SERVICE_KEY of the production worker>
 ```
 
 Each RPC must be on the chain it is used for. The service checks that, and stops a network whose RPC is on another chain.
 
-A refused token (a wrong secret) does not stop the alerts: the watcher goes on with the fallback, and the internal host logs the 401. Whoever holds `RPC_TOKEN_SECRET` can sign any token for that RPC, so it is as sensitive as the other secrets: Production only.
+A refused key, or a service over its limit, does not stop the alerts: the watcher goes on with the fallback. The worker logs it (`limitedBy: service`, or a 401 without a subject). The key lets anybody draw on the limit of chronobox, so it is as sensitive as the other secrets: Production only. The dev worker (`rpc-dev.zodiac.eco`) has its own key. Use it with `RPC_SERVICE_HOST=rpc-dev.zodiac.eco` and an `RPC_URL` on that host.
 
 ### How it runs
 

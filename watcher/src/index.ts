@@ -12,4 +12,4 @@ export * from './telegram.ts';
 export type * from './types.ts';
 export * from './util.ts';
 export * from './watcher.ts';
-export * from './rpcToken.ts';
+export * from './rpcAuth.ts';

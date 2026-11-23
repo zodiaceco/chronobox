@@ -29,10 +29,9 @@ export type Config = {
   telegramApi: string;
   // The secret that encrypts the list of chats on disk. It is not stored with the list.
   telegramKey?: string;
-  // A token for the internal RPC of Zodiac: signed with this secret, sent only to rpcTokenHost.
-  rpcTokenSecret?: string;
-  rpcTokenHost: string;
-  rpcTokenSubject: string;
+  // The service key of the watcher for the internal RPC of Zodiac, sent only to rpcServiceHost.
+  rpcServiceKey?: string;
+  rpcServiceHost: string;
 };
 
 
@@ -57,9 +56,8 @@ Settings (environment variable or --flag value):
   STATE_FILE       --state-file       where the watcher remembers what it sent (default ./chronobox-watch-state.json)
   FAIL_POLLS       --fail-polls       failed polls in a row before a "watcher problem" alert (default 3)
   LOG_CHUNK        --log-chunk        blocks per eth_getLogs request (default 2000, halved on error)
-  RPC_TOKEN_SECRET --rpc-token-secret the secret of the internal RPC of Zodiac. The watcher signs short-lived tokens with it
-                                      and sends them only to RPC_TOKEN_HOST (default rpc.zodiac.eco)
-  RPC_TOKEN_SUBJECT --rpc-token-subject who the tokens name, for the rate limit and the logs of the RPC (default chronobox-watcher)
+  RPC_SERVICE_KEY  --rpc-service-key  the key of chronobox for the internal RPC of Zodiac (CHRONOBOX_SERVICE_KEY of the worker).
+                                      Sent only to RPC_SERVICE_HOST (default rpc.zodiac.eco)
 
 With --all (instead of CHRONOBOX, DELAY and STATE_FILE):
   STATE_DIR        --state-dir        folder for the state files (default ./chronobox-watch-state)
@@ -105,7 +103,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   }
   const cfg: Config = {
     rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './chronobox-watch-state.json',
-    failPolls: 3, logChunk: 2000, maxScanBlocks: 50000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org', rpcTokenHost: 'rpc.zodiac.eco', rpcTokenSubject: 'chronobox-watcher', ...bools,
+    failPolls: 3, logChunk: 2000, maxScanBlocks: 50000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org', rpcServiceHost: 'rpc.zodiac.eco', ...bools,
   };
   if (bools.help) return cfg;
 
@@ -166,11 +164,12 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   cfg.stateFile = str('STATE_FILE') ?? cfg.stateFile;
   if (cfg.all && str('START_BLOCK') !== undefined) cfg.startBlock = num('START_BLOCK', 0, 0, true);
   cfg.maxScanBlocks = num('MAX_SCAN_BLOCKS', 50000, 0, true);
-  cfg.rpcTokenSecret = str('RPC_TOKEN_SECRET');
-  cfg.rpcTokenHost = str('RPC_TOKEN_HOST')?.toLowerCase() ?? cfg.rpcTokenHost;
-  cfg.rpcTokenSubject = str('RPC_TOKEN_SUBJECT') ?? cfg.rpcTokenSubject;
-  if (cfg.rpcTokenSecret && !cfg.networks.flat().some((u) => { try { const h = new URL(u); return h.host === cfg.rpcTokenHost || h.hostname === cfg.rpcTokenHost; } catch { return false; } })) {
-    throw new ConfigError(`RPC_TOKEN_SECRET is set, but no RPC_URL is on ${cfg.rpcTokenHost} (RPC_TOKEN_HOST). The token goes to that host only.`);
+  cfg.rpcServiceKey = str('RPC_SERVICE_KEY');
+  cfg.rpcServiceHost = str('RPC_SERVICE_HOST')?.toLowerCase() ?? cfg.rpcServiceHost;
+  // The key is a secret, so no message repeats it.
+  if (cfg.rpcServiceKey && cfg.rpcServiceKey.length < 32) throw new ConfigError('RPC_SERVICE_KEY is too short to be the service key of the RPC (32 characters or more).');
+  if (cfg.rpcServiceKey && !cfg.networks.flat().some((u) => { try { const h = new URL(u); return h.host === cfg.rpcServiceHost || h.hostname === cfg.rpcServiceHost; } catch { return false; } })) {
+    throw new ConfigError(`RPC_SERVICE_KEY is set, but no RPC_URL is on ${cfg.rpcServiceHost} (RPC_SERVICE_HOST). The key goes to that host only.`);
   }
   return cfg;
 }
@@ -178,5 +177,5 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
 const KNOWN_KEYS = [
   'RPC_URL', 'CHRONOBOX', 'DELAY', 'WEBHOOK_URL', 'POLL_SECONDS',
   'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK', 'STATE_DIR', 'START_BLOCK', 'MAX_SCAN_BLOCKS',
-  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'RPC_TOKEN_SECRET', 'RPC_TOKEN_HOST', 'RPC_TOKEN_SUBJECT',
+  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];

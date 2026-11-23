@@ -27,7 +27,7 @@ export type Deps = { fetch?: FetchFn; log?: Log };
 /** Settings that the service passes on to the watcher. RPC_URL and START_BLOCK are per network. */
 const PASSED = [
   'WEBHOOK_URL', 'HEARTBEAT_HOURS', 'FAIL_POLLS', 'LOG_CHUNK', 'MAX_SCAN_BLOCKS', 'TELEGRAM_TOKEN', 'TELEGRAM_KEY', 'TELEGRAM_API',
-  'RPC_TOKEN_SECRET', 'RPC_TOKEN_HOST', 'RPC_TOKEN_SUBJECT',
+  'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];
 
 /** Where the chain id goes in RPC_URL. The RPC of Zodiac takes it as the path. */
@@ -61,7 +61,7 @@ export function serviceConfig(env: Env): ServiceConfig {
     if (id !== undefined && str(k) && !chainIds.includes(Number(id))) throw new ConfigError(`${k} is set, but ${id} is not in CHAINS.`);
   }
   // One template for every chain, or the RPC of Zodiac. RPC_URL_<chain id> is for a provider with a host per chain.
-  const template = str('RPC_URL') ?? (str('RPC_TOKEN_SECRET') ? `${ZODIAC_RPC},${ZODIAC_PUBLIC_RPC}` : ZODIAC_PUBLIC_RPC);
+  const template = str('RPC_URL') ?? (str('RPC_SERVICE_KEY') ? `${ZODIAC_RPC},${ZODIAC_PUBLIC_RPC}` : ZODIAC_PUBLIC_RPC);
   if (!template.includes(CHAIN_ID)) throw new ConfigError(`RPC_URL must have ${CHAIN_ID} in it, where the chain id goes, for example ${ZODIAC_PUBLIC_RPC}.`);
   const rpcOf = (id: number) => str(`RPC_URL_${id}`) ?? template.split(CHAIN_ID).join(String(id));
   if (!str('TELEGRAM_TOKEN') && !str('WEBHOOK_URL')) throw new ConfigError('Set TELEGRAM_TOKEN and TELEGRAM_KEY for the bot, WEBHOOK_URL, or both: the alerts must go somewhere.');
@@ -118,7 +118,7 @@ async function setup(env: Env, deps: Deps): Promise<Setup> {
   const store = new RedisStore({ ...sc.redis, lockTtlMs: LOCK_TTL_MS, fetch: deps.fetch });
   const out = deps.log ?? defaultLog;
   // The secrets of the watcher never reach the log.
-  const secrets = [sc.redis.token, sc.cronSecret, sc.base.telegramToken, sc.base.telegramKey, sc.base.rpcTokenSecret, sc.base.webhookUrl, ...sc.base.networks.flat()]
+  const secrets = [sc.redis.token, sc.cronSecret, sc.base.telegramToken, sc.base.telegramKey, sc.base.rpcServiceKey, sc.base.webhookUrl, ...sc.base.networks.flat()]
     .filter((s): s is string => Boolean(s));
   const log: Log = (m) => out(secrets.reduce((t, s) => t.split(s).join('[secret]'), m));
   const telegram = sc.base.telegramToken ? await Telegram.open(sc.base, { store, fetch: deps.fetch, log }) : undefined;

@@ -91,9 +91,9 @@ test('settings of the service', () => {
   assert.deepEqual(c.networks[2].cfg.rpcUrls, ['https://base-a', 'https://base-b']);
   assert.equal(c.networks[2].cfg.startBlock, 7);
   assert.equal(c.networks[2].cfg.chainId, 8453);
-  // Without RPC_URL: the RPC of Zodiac, the internal one first when there is a token secret.
+  // Without RPC_URL: the RPC of Zodiac, the internal one first when there is a service key.
   assert.deepEqual(serviceConfig(env({ RPC_URL: undefined })).networks[0].cfg.rpcUrls, ['https://public-rpc.zodiac.eco/1']);
-  assert.deepEqual(serviceConfig(env({ RPC_URL: undefined, RPC_TOKEN_SECRET: 'the-rpc-token-secret-0123456789' })).networks[0].cfg.rpcUrls,
+  assert.deepEqual(serviceConfig(env({ RPC_URL: undefined, RPC_SERVICE_KEY: 'the-service-key-of-chronobox-0123456789' })).networks[0].cfg.rpcUrls,
     ['https://rpc.zodiac.eco/1', 'https://public-rpc.zodiac.eco/1']);
   assert.equal(c.webhookUrl, 'https://alerts.example/api/telegram');
   assert.equal(c.redis.prefix, 'chronobox:');
@@ -277,25 +277,15 @@ test('the Vercel function answers JSON', async () => {
   await new Promise((r) => server.close(r));
 });
 
-test('the internal RPC of Zodiac gets a signed server token, and no other RPC does', async () => {
-  const { signRpcToken, Rpc } = await import('../src/index.ts');
-  const secret = 'the-rpc-token-secret-for-the-tests-0123456789';
-  // The token: HS256, the claims that @zodiac/rpc/auth checks.
-  const token = signRpcToken(secret, 'chronobox-watcher', 1_800_000_000);
-  const [head, body, sig] = token.split('.');
-  assert.deepEqual(JSON.parse(Buffer.from(head, 'base64url').toString()), { alg: 'HS256' });
-  assert.deepEqual(JSON.parse(Buffer.from(body, 'base64url').toString()), {
-    scope: 'server', iss: 'zodiac-app', aud: 'zodiac-rpc', sub: 'chronobox-watcher', iat: 1_800_000_000, exp: 1_800_000_600,
-  });
-  const crypto = await import('node:crypto');
-  assert.equal(sig, crypto.createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url'));
-
-  // The internal host answers 401 without the token; the fallback is another host and must not see it.
+test('the internal RPC of Zodiac gets the service key, and no other RPC does', async () => {
+  const { Rpc, Watcher } = await import('../src/index.ts');
+  const key = 'the-service-key-of-chronobox-for-the-tests-0123456789';
+  // The internal host answers 401 without the key; the fallback is another host and must not see it.
   const seen: { at: string; auth?: string }[] = [];
   let refuse = false;
   const internal = await startServer((req, b, res) => {
     seen.push({ at: 'internal', auth: req.headers.authorization });
-    if (refuse || !req.headers.authorization?.startsWith('Bearer ')) { res.writeHead(401).end('{}'); return; }
+    if (refuse || req.headers.authorization !== `Bearer ${key}`) { res.writeHead(401).end('{}'); return; }
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: JSON.parse(b).id, result: '0x1' }));
   });
   const fallback = await startServer((req, b, res) => {
@@ -304,26 +294,27 @@ test('the internal RPC of Zodiac gets a signed server token, and no other RPC do
   });
   try {
     const host = new URL(internal.url).host;
-    const cfg = parseConfig([], { RPC_URL: `${internal.url}/1,${fallback.url}/1`, CHRONOBOX: SAFE, WEBHOOK_URL: 'https://h/x', RPC_TOKEN_SECRET: secret, RPC_TOKEN_HOST: host });
-    assert.equal(cfg.rpcTokenSubject, 'chronobox-watcher');
-    const rpcClient = new Rpc(cfg.rpcUrls, fetch, 5000, { host: cfg.rpcTokenHost, secret, subject: cfg.rpcTokenSubject });
+    const cfg = parseConfig([], { RPC_URL: `${internal.url}/1,${fallback.url}/1`, CHRONOBOX: SAFE, WEBHOOK_URL: 'https://h/x', RPC_SERVICE_KEY: key, RPC_SERVICE_HOST: host });
+    const rpcClient = new Rpc(cfg.rpcUrls, fetch, 5000, { host: cfg.rpcServiceHost, key });
     assert.equal(await rpcClient.call('eth_chainId'), '0x1');
-    assert.equal(seen.length, 1);
-    assert.match(seen[0].auth!, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
-    // A refused token falls back to the other RPC, which gets no token.
+    assert.deepEqual(seen, [{ at: 'internal', auth: `Bearer ${key}` }]);
+    // A refused key (or the limit of the service) falls back to the other RPC, which gets no key.
     refuse = true;
     assert.equal(await rpcClient.call('eth_chainId'), '0x1');
-    assert.deepEqual(seen.slice(1).map((s) => [s.at, s.auth]), [['internal', seen[0].auth], ['fallback', undefined]]);
-    // The secret never reaches the log of a watcher.
-    const { Watcher } = await import('../src/index.ts');
-    assert.doesNotMatch(new Watcher(cfg).redact(`oops ${secret}`), new RegExp(secret));
+    assert.deepEqual(seen.slice(1), [{ at: 'internal', auth: `Bearer ${key}` }, { at: 'fallback', auth: undefined }]);
+    // The key never reaches the log of a watcher.
+    assert.doesNotMatch(new Watcher(cfg).redact(`oops ${key}`), new RegExp(key));
   } finally {
     await internal.close();
     await fallback.close();
   }
-  // A secret without a URL on its host is a mistake: the token would go nowhere.
-  assert.throws(() => parseConfig([], { RPC_URL: 'https://public-rpc.zodiac.eco/1', CHRONOBOX: SAFE, WEBHOOK_URL: 'https://h/x', RPC_TOKEN_SECRET: secret }), /no RPC_URL is on rpc\.zodiac\.eco/);
+  const base = { CHRONOBOX: SAFE, WEBHOOK_URL: 'https://h/x' };
+  // A key without a URL on its host is a mistake: the key would go nowhere.
+  assert.throws(() => parseConfig([], { ...base, RPC_URL: 'https://public-rpc.zodiac.eco/1', RPC_SERVICE_KEY: key }), /no RPC_URL is on rpc\.zodiac\.eco/);
+  // A short one is not the service key, and the message does not repeat it.
+  assert.throws(() => parseConfig([], { ...base, RPC_URL: 'https://rpc.zodiac.eco/1', RPC_SERVICE_KEY: 'too-short' }), (e: Error) => /too short/.test(e.message) && !/too-short/.test(e.message));
   // The service passes it on.
-  const sc = serviceConfig(env({ RPC_URL: 'https://rpc.zodiac.eco/{chainId},https://public-rpc.zodiac.eco/{chainId}', RPC_TOKEN_SECRET: secret }));
-  assert.equal(sc.networks[0].cfg.rpcTokenSecret, secret);
+  const sc = serviceConfig(env({ RPC_URL: undefined, RPC_SERVICE_KEY: key }));
+  assert.equal(sc.networks[0].cfg.rpcServiceKey, key);
+  assert.deepEqual(sc.networks[0].cfg.rpcUrls, ['https://rpc.zodiac.eco/1', 'https://public-rpc.zodiac.eco/1']);
 });

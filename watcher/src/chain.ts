@@ -1,5 +1,5 @@
 // The chain: pinned constants, ABI helpers, and a JSON-RPC client with fallbacks.
-import { type RpcAuth, rpcAuthHeaders } from './rpcToken.ts';
+import { type RpcAuth, rpcAuthHeaders } from './rpcAuth.ts';
 import { type FetchFn, errText } from './util.ts';
 
 // ---------------------------------------------------------------------------
