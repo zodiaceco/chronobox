@@ -22,6 +22,7 @@ import {
   councilHash,
   councilOwners,
   councilSwapTx,
+  delayNonces,
   removeGuardianTx,
   sendAndWait,
 } from "../lib/chronobox.ts";
@@ -339,6 +340,9 @@ type Swap =
   | { state: "error"; message: string }
   | { state: "ready"; tx: CouncilTx; hash: Hex; owners: Address[]; agreed: boolean };
 
+/** How many earlier points of the line an agreement of the guardian is looked for at. */
+const SNAPSHOTS = 4n;
+
 /** Reads the request from the chain every few seconds: what both sign, and whether the guardian agreed. */
 function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: () => void } {
   const [swap, setSwap] = useState<Swap>({ state: "loading" });
@@ -364,15 +368,24 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
           hadAnswer = true;
           return !stale && setSwap({ state: "done" });
         }
-        const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to);
-        if (!tx) {
-          hadAnswer = true;
-          return !stale && setSwap({ state: "bad" });
+        // The change also cancels the whole line, up to where it stands now. If something was queued
+        // after the guardian agreed, the signed change names an earlier point: look a few back for it.
+        // Whatever it leaves behind is caught after the change (see LeftInLine).
+        const { queueNonce } = await delayNonces(rpc, vault.delay);
+        let found: { tx: CouncilTx; hash: Hex; agreed: boolean } | null = null;
+        for (let upTo = queueNonce; upTo >= 0n && queueNonce - upTo < SNAPSHOTS; upTo--) {
+          const tx = councilSwapTx({ ...vault, roles, guardian, council, members }, owners, to, upTo);
+          if (!tx) {
+            hadAnswer = true;
+            return !stale && setSwap({ state: "bad" });
+          }
+          const hash = await councilHash(rpc, council, tx);
+          const agreed = await councilApproved(rpc, council, guardian, hash);
+          if (!found || agreed) found = { tx, hash, agreed };
+          if (agreed) break;
         }
-        const hash = await councilHash(rpc, council, tx);
-        const agreed = await councilApproved(rpc, council, guardian, hash);
         hadAnswer = true;
-        if (!stale) setSwap({ state: "ready", tx, hash, owners, agreed });
+        if (!stale && found) setSwap({ state: "ready", ...found, owners });
       } catch (e) {
         // After a first good read, a temporary failure keeps the last answer and asks again next round.
         if (!stale && !hadAnswer) setSwap({ state: "error", message: errorText(e) });
@@ -387,7 +400,7 @@ function useSwap(rpc: Rpc, vault: VaultRef, to: Address): { swap: Swap; retry: (
       reading.current = false;
       clearInterval(timer);
     };
-  }, [rpc, vault.safe, vault.controller, council, guardian, roles, members?.join(","), to, round]);
+  }, [rpc, vault.safe, vault.delay, vault.controller, council, guardian, roles, members?.join(","), to, round]);
   return { swap, retry: () => setRound((r) => r + 1) };
 }
 
@@ -399,6 +412,88 @@ export async function prepareSwap(session: Session, chain: Chain, vault: VaultRe
   const code = (await session.rpc("eth_getCode", [vault.council!, "latest"])) as string;
   if (typeof code === "string" && code.length > 2) return;
   await sendAndWait(session.rpc, session.account, councilCreateTx(vault.safe, vault.controller, vault.guardian!), { chainId: chain.id, chainName: chain.name, ...waiting });
+}
+
+type Line = { state: "loading" } | { state: "error"; message: string } | { state: "read"; waiting: bigint };
+
+/** What is still in the line of the Delay. Read again on request. */
+function useLine(rpc: Rpc, delay: Address, active = true): { line: Line; retry: () => void } {
+  const [line, setLine] = useState<Line>({ state: "loading" });
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    let stale = false;
+    setLine({ state: "loading" });
+    delayNonces(rpc, delay).then(
+      ({ txNonce, queueNonce }) => !stale && setLine({ state: "read", waiting: queueNonce - txNonce }),
+      (e) => !stale && setLine({ state: "error", message: errorText(e) }),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [rpc, delay, round, active]);
+  return { line, retry: () => setRound((r) => r + 1) };
+}
+
+/**
+ * After the change. The change cancels what waited, but something that the lost wallet queued
+ * after the guardian agreed can still be in the line, and it would run after the wait. The
+ * owner is told it is over only when the line is empty.
+ */
+function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }) {
+  const { line, retry } = useLine(props.rpc, props.vault.delay);
+  const close = (
+    <div class="modal-actions">
+      <Button kind="primary" onClick={props.onClose}>
+        Done
+      </Button>
+    </div>
+  );
+  if (line.state === "loading") {
+    return (
+      <Modal title="Checking the line" onClose={props.onClose}>
+        <p class="muted">The new wallet holds this Chronobox. One moment: we check that nothing the old wallet asked for still waits.</p>
+      </Modal>
+    );
+  }
+  if (line.state === "error" || line.waiting > 0n) {
+    const count = line.state === "read" ? (line.waiting === 1n ? "One item is" : `${line.waiting} items are`) : null;
+    return (
+      <Modal title="Not finished: cancel what waits." lead="The new wallet holds this Chronobox. But the old wallet can still get money out through what it queued before." onClose={props.onClose}>
+        {line.state === "error" ? (
+          <Notice kind="bad">
+            We could not read the line: {line.message}{" "}
+            <button type="button" class="link-button" onClick={retry}>
+              Try again
+            </button>
+          </Notice>
+        ) : (
+          <Notice kind="bad" title={`${count} still in the line.`}>
+            Unless your new wallet queued them, they come from the old wallet, and they run after the wait. Open this Chronobox with your new wallet, or ask your guardian, and cancel them now. This wallet cannot cancel any more.
+          </Notice>
+        )}
+        <CopyLine text={props.vault.safe} />
+        <div class="modal-actions">
+          <Button kind="primary" onClick={retry}>
+            Check again
+          </Button>
+          <Button kind="quiet" onClick={props.onClose}>
+            Close
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
+  return (
+    <Modal
+      title="The new wallet holds this Chronobox."
+      lead="Nothing waits in the line, so nothing the old wallet asked for can run. This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it."
+      onClose={props.onClose}
+    >
+      <CopyLine text={props.vault.safe} />
+      {close}
+    </Modal>
+  );
 }
 
 /** The owner's side while the guardian decides. */
@@ -424,16 +519,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
       setDone(true);
     });
   if (done || swap.state === "done") {
-    return (
-      <Modal title="The new wallet holds this Chronobox." lead="This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it." onClose={props.onClose}>
-        <CopyLine text={vault.safe} />
-        <div class="modal-actions">
-          <Button kind="primary" onClick={props.onClose}>
-            Done
-          </Button>
-        </div>
-      </Modal>
-    );
+    return <SwapDoneSheet rpc={session.rpc} vault={vault} onClose={props.onClose} />;
   }
   const agreed = swap.state === "ready" && swap.agreed;
   return (
@@ -485,6 +571,8 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
 export function AgreeSheet(props: { session: Session; chain: Chain; vault: VaultRef; to: Address; onClose: () => void }) {
   const { session, chain, vault, to } = props;
   const { swap, retry } = useSwap(session.rpc, vault, to);
+  const changed = sameAddress(to, vault.controller) || swap.state === "done";
+  const { line } = useLine(session.rpc, vault.delay, changed);
   const [spoke, setSpoke] = useState(false);
   const [sent, setSent] = useState(false);
   const action = useAction();
@@ -507,6 +595,11 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
         <p>
           The wallet <AddressText address={to} /> holds this Chronobox now. You are still its guardian.
         </p>
+        {line.state === "read" && line.waiting > 0n ? (
+          <Notice kind="risk" title="Something still waits in the line.">
+            Unless the new wallet queued it, it comes from the old wallet, and it runs after the wait. Ask the owner, and cancel it if they did not.
+          </Notice>
+        ) : null}
         {closeOnly}
       </Modal>
     );

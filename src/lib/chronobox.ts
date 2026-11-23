@@ -1454,8 +1454,15 @@ export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: numb
  * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
  * right to cancel, and replaces the old wallet with the new one among its own two owners.
  * `owners` is the owner list of the shared Safe, in the contract's order.
+ *
+ * The same step empties the line: a lost wallet may have queued withdrawals before the owner
+ * noticed, and those would still run after the wait. Once the old wallet is disabled it cannot
+ * queue anything more, so in the same transaction the shared Safe gives itself the cancel role,
+ * sets the Delay's txNonce to `cancelUpTo` (the queueNonce when the request was read), and gives
+ * the role back. That call may fail without stopping the change (the line may have moved since
+ * the signatures), so a caller must still read the line afterwards: see `delayNonces`.
  */
-export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null): CouncilTx | null {
+export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Address | null, cancelUpTo: bigint): CouncilTx | null {
   const { delay, roles, controller: from, council, guardian } = vault;
   const dead = [ZERO, SENTINEL, delay, roles, vault.safe, council, guardian, CONTRACTS.burn, CONTRACTS.multiSend];
   if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
@@ -1463,16 +1470,31 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
   if (ownerAt < 0) return null;
   const members = new Members(vault.members);
   members.add(to);
-  const withRole = (target: Address, data: Hex) =>
-    batchItem(roles, call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [target, 0n, data, 0, COUNCIL_ROLE, true]));
+  const withRole = (target: Address, data: Hex, role: Hex = COUNCIL_ROLE, mustWork = true) =>
+    batchItem(roles, call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [target, 0n, data, 0, role, mustWork]));
   return batchTx([
     withRole(delay, call("enableModule(address)", [to])),
     withRole(delay, call("disableModule(address,address)", [to, from])),
+    // Everything the old wallet queued goes. The Delay refuses a txNonce that is not ahead of the
+    // current one, or that is past the queue: then nothing is left to cancel from this snapshot,
+    // and the change must still go through.
+    withRole(roles, assign(council, CANCEL_ROLE, true)),
+    withRole(delay, call("setTxNonce(uint256)", [cancelUpTo]), CANCEL_ROLE, false),
+    withRole(roles, assign(council, CANCEL_ROLE, false)),
     withRole(roles, assign(to, CANCEL_ROLE, true)),
     withRole(roles, assign(from, CANCEL_ROLE, false)),
     withRole(roles, call("disableModule(address,address)", [members.remove(from), from])),
     batchItem(council, call("swapOwner(address,address,address)", [ownerAt === 0 ? SENTINEL : owners[ownerAt - 1], from, to])),
   ]);
+}
+
+/** Where the line of the Delay stands: items from txNonce up to queueNonce wait, or can run. */
+export async function delayNonces(rpc: Rpc, delay: Address): Promise<{ txNonce: bigint; queueNonce: bigint }> {
+  const [txNonce, queueNonce] = await Promise.all([
+    read(rpc, delay, "txNonce()", [], ["uint256"]).then((r) => r[0] as bigint),
+    read(rpc, delay, "queueNonce()", [], ["uint256"]).then((r) => r[0] as bigint),
+  ]);
+  return { txNonce, queueNonce };
 }
 
 const SAFE_EXEC = "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)";

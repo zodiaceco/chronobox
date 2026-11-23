@@ -28,6 +28,7 @@ import {
   councilOwners,
   councilSwapTx,
   createTx,
+  delayNonces,
   depositTx,
   executeTx,
   inspect,
@@ -175,9 +176,14 @@ try {
   await reverts(council, viaRoles(roles, call("allowTarget(bytes32,address,uint8)", [COUNCIL_ROLE, safe, 3]), COUNCIL_ROLE), null, "both together widen their own permission");
   await reverts(council, viaRoles(roles, call("transferOwnership(address)", [council]), COUNCIL_ROLE), null, "both together take the Roles modifier");
 
+  // The key of the wallet leaked: the thief queues a withdrawal before the owner notices.
+  const balance = await nativeBalance(rpc, safe);
+  const early = withdrawalTx(WALLET, null, ETH);
+  await sendAndWait(rpc, WALLET, queueTx(delay, early));
   const owners = await councilOwners(rpc, council);
-  const swap = councilSwapTx(parts() as any, owners, SECOND)!;
-  for (const bad of [WALLET, GUARDIAN, council, safe, null]) assert.equal(councilSwapTx(parts() as any, owners, bad), null);
+  const requested = await delayNonces(rpc, delay);
+  const swap = councilSwapTx(parts() as any, owners, SECOND, requested.queueNonce)!;
+  for (const bad of [WALLET, GUARDIAN, council, safe, null]) assert.equal(councilSwapTx(parts() as any, owners, bad, requested.queueNonce), null);
   const hash = await councilHash(rpc, council, swap);
   const exec = councilExecTx(council, swap, owners);
   await reverts(WALLET, exec, /GS025/, "the wallet changes the wallet without the guardian");
@@ -187,7 +193,21 @@ try {
   await sendAndWait(rpc, GUARDIAN, councilApproveTx(council, hash));
   assert.equal(await councilApproved(rpc, council, GUARDIAN, hash), true);
   await reverts(STRANGER, exec, /GS025/, "a stranger carries it out after the guardian agreed");
+  // And once more after the guardian agreed, just before the change: the signed change cannot know of it.
+  const late = withdrawalTx(WALLET, null, ETH / 2n);
+  await sendAndWait(rpc, WALLET, queueTx(delay, late));
   console.log(`  gas used by the change: ${gas(await sendAndWait(rpc, WALLET, exec))}`);
+  const line = await delayNonces(rpc, delay);
+  assert.equal(line.txNonce, requested.queueNonce, "the change cancelled everything up to the request");
+  assert.equal(line.queueNonce - line.txNonce, 1n, "what came after the agreement is still in the line");
+  ok("the change cancelled the withdrawal that the old wallet queued before the request");
+  await sendAndWait(rpc, GUARDIAN, cancelTx(roles, delay, line.txNonce));
+  assert.deepEqual(await delayNonces(rpc, delay), { txNonce: line.queueNonce, queueNonce: line.queueNonce });
+  await warp(DAY + 60n);
+  await reverts(STRANGER, executeTx(delay, early), null, "the withdrawal queued before the request runs after the wait");
+  await reverts(STRANGER, executeTx(delay, late), null, "the withdrawal queued after the agreement runs after the guardian cancelled it");
+  assert.equal(await nativeBalance(rpc, safe), balance);
+  ok("the guardian cancelled the rest at once, and nothing of the old wallet runs after the wait");
   state = await inspect(rpc, safe);
   for (const check of state.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
   assert.equal(state.state, "locked");
@@ -290,6 +310,25 @@ try {
   assert.equal(stateC.state, "invalid");
   assert.equal(stateC.checks.find((check) => check.id === "council")?.ok, false);
   ok("a shared Safe that needs only one owner: invalid");
+
+  step("10. The change goes through when there is nothing left to cancel");
+  const d = await make(WALLET, 4);
+  await through(d.delay, WALLET, addGuardianTx({ ...d, controller: WALLET }, GUARDIAN)!);
+  const stateD = await inspect(rpc, d.safe);
+  const councilD = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(d.safe, WALLET, GUARDIAN)))!;
+  const ownersD = await councilOwners(rpc, councilD);
+  const partsD = { ...d, controller: WALLET, guardian: GUARDIAN, council: councilD, members: stateD.members };
+  // The line is empty: the Delay refuses this txNonce, and the change must not depend on it.
+  const emptyLine = await delayNonces(rpc, d.delay);
+  assert.equal(emptyLine.txNonce, emptyLine.queueNonce);
+  const swapD = councilSwapTx(partsD, ownersD, SECOND, emptyLine.queueNonce)!;
+  await sendAndWait(rpc, GUARDIAN, councilApproveTx(councilD, await councilHash(rpc, councilD, swapD)));
+  await sendAndWait(rpc, WALLET, councilExecTx(councilD, swapD, ownersD));
+  const afterD = await inspect(rpc, d.safe);
+  for (const check of afterD.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
+  assert.equal(afterD.state, "locked");
+  assert.ok(sameAddress(afterD.controller, SECOND));
+  ok("an empty line does not stop the change, and the history still proves the permissions");
 
   console.log("\nAll guardian checks passed.");
 } finally {

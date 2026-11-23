@@ -227,9 +227,9 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   assert.equal(changeWalletTx(delay, WALLET, guardian, roles, SAFE, guarded), null);
 
   // Wallet and guardian together: never to the guardian, the shared Safe or the wallet itself.
-  for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad), null);
-  assert.ok(councilSwapTx(guarded, [WALLET, guardian], next));
-  assert.equal(councilSwapTx(guarded, [guardian], next), null, "the wallet must be an owner of the shared Safe");
+  for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad, 0n), null);
+  assert.ok(councilSwapTx(guarded, [WALLET, guardian], next, 0n));
+  assert.equal(councilSwapTx(guarded, [guardian], next, 0n), null, "the wallet must be an owner of the shared Safe");
 
   // Handing back to a previous wallet alone when its predicted council Safe is already the active council Safe is refused.
   const rotatedGuarded = { ...plain, controller: next, guardian, council, members: [next, council, guardian] as `0x${string}`[] };
