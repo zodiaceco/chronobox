@@ -122,6 +122,7 @@ Read these. They are the honest edge of what a delay can do.
 - The production page loads only its own files and makes no other network requests. The Content Security Policy is `connect-src 'none'`. All chain data comes through your wallet, so no extra party learns which vault you look at.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
+- Alerts are the exception, and you choose them. Our alert service must know who follows a Chronobox to send an alert, and we can see that. If you do not want that, run the alert service yourself. See "Get told" below.
 
 ## Get told: calendar and alerts
 
@@ -133,7 +134,7 @@ Alerts have two parts. The app has one button. The alert service is a project of
 
 The alert service has no runtime dependencies. It watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
 
-`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, a Chronobox shows "Get told" with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
+`ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, "Get told" has the way "Telegram", with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
 The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
 
@@ -144,6 +145,18 @@ What this gives and what it does not:
 - Telegram knows the phone number of the account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 - A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat that followed for a day or more stops, every other chat that follows the same Chronobox is told, once an hour at most. A stranger who follows and stops again cannot ring the phones of the others.
 - The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
+
+### The choice, and what our alert service costs in privacy
+
+"Get told" opens with one question: how do you want to hear about it?
+
+- **Telegram**: a message from our alert service (`ALERTS_TELEGRAM`).
+- **Email**: not there yet. While `ALERTS_EMAIL_SOON` is true and `ALERTS_EMAIL` is `null`, the list shows it as "Coming soon", and it cannot be chosen. `ALERTS_EMAIL` will be the page of the alert service where a person gives an email address. With it set, the row opens that page.
+- **Your own alert service**: one button that opens the guide "Run it yourself" in `watcher/README.md` (`ALERTS_GUIDE`).
+
+Under the list, the sheet says it in plain words: our alert service is not private. To send an alert it must know who follows a Chronobox, and we can see that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
+
+A way whose setting is `null` is not in the list. With one way left and `ALERTS_EMAIL_SOON` false, "Get told" opens on that way, without the question.
 
 ## Run it
 
@@ -233,6 +246,7 @@ src/lib/chains.ts    contract addresses, networks, main tokens
 src/lib/token-list.ts  the long token list (written by tools/token-list.ts)
 src/lib/wallet.ts    EIP-6963 discovery, EIP-1193 wrapper
 src/lib/alerts.ts    the link to the Telegram bot
+src/ui/alerts.tsx    the sheet "Get told"
 src/ui/              screens
 watcher/             the alert service: a project of its own (Vercel functions, or a CLI)
 build.mjs            build, dev server, build hash

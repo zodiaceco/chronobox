@@ -1427,6 +1427,24 @@ test('config, time and status helpers', () => {
   assert.match(dc.detail, /delegate call/);
 });
 
+test('the CLI: a Start that waits at Telegram when the watcher starts gets its answer, not "try again"', async () => {
+  chain.withCancel();
+  chain.create();
+  // Somebody wrote to the bot before the watcher ran, or in its first second.
+  person(ANNA, START);
+  const log = console.log;
+  console.log = () => {};
+  const until = Date.now() + 10_000;
+  try {
+    const env = { RPC_URL: rpc.url, STATE_DIR: path.join(dir, 'cli-all'), HEARTBEAT_HOURS: '0', POLL_SECONDS: '1', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: TG_KEY, TELEGRAM_API: telegramApi.url };
+    assert.equal(await main(['--all'], env, () => saidTo(ANNA).length > 0 || Date.now() > until), 0);
+  } finally {
+    console.log = log;
+  }
+  assert.equal(saidTo(ANNA).length, 1);
+  assert.match(saidTo(ANNA)[0], /^You now get the alerts of the Chronobox 0x5a5a…5a5a on Ethereum\./);
+});
+
 test('the CLI: --dry-run writes nothing, --once writes STATE_FILE, and each network of --all has its own folder', async () => {
   const printed: string[] = [];
   const log = console.log;

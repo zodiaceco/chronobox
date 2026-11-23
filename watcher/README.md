@@ -23,6 +23,75 @@ npm run build     # .vercel/output/ and dist/watch.mjs
 
 The property test plays 150 random runs on the stand-in chain: requests, time, executions, skipExpired, cancels, cancels that fail, timing changes, several of them in one block, polls at any point. The chain keeps what really happened to each request, and every message must fit it: a request that was carried out is never "Cancelled" or "Removed", and "Done" is said only of one that was. A failure prints its seed and steps. More runs, or others: `FUZZ_RUNS=5000 FUZZ_SEED=1 npm test`.
 
+## Run it yourself
+
+You do not need the alert service of anybody else. The watcher is open source, and you can run it yourself. Then it writes only to you (and to whoever you give your bot to), nobody else keeps a list that links you to your Chronobox, and it does not need us.
+
+| | Alerts in Telegram | Alerts for your own tools |
+|---|---|---|
+| **What it is** | Your own Telegram bot sends you a message. | Every alert goes to a web address of yours (a webhook), as JSON. |
+| **Good for** | You, on your phone. | A script, a home automation, the chat of a team. |
+| **It watches** | Every Chronobox on the network. You follow yours with one message to your bot. | Only your Chronobox. |
+| **You need** | A bot from BotFather, a key for the list of chats, and an RPC. | An RPC for the network of your Chronobox. |
+| **How** | [The alert service on a machine](#the-alert-service-on-a-machine---all) | [One Chronobox, to a webhook](#one-chronobox-to-a-webhook) |
+
+### What you need
+
+- **A machine that stays on**: a small server, or a computer at home that never sleeps. A laptop that sleeps sends no alerts. Where it runs is your choice: any host that can run a Node.js program all the time, or start it every minute, will do.
+- **A terminal** with git and Node.js 22.18 or newer.
+- **An RPC** for the network of your Chronobox. A free public one is enough. An RPC sees your IP address and which Chronobox you read. So do not use an RPC of Zodiac (`rpc.zodiac.eco`, `public-rpc.zodiac.eco`) if we are to learn nothing about you.
+- **For Telegram, a bot of your own** from [BotFather](https://t.me/BotFather). Telegram still sees that your account follows your Chronobox, and it can read what your bot sends. Only we are out of it. With a webhook, nobody but you and your RPC sees anything.
+
+If an AI agent does such things for you, give it this page. Every step is a command that it can run. Two steps are yours: the bot from BotFather, and the choice of the machine.
+
+### The short way
+
+```sh
+git clone https://github.com/zodiaceco/chronobox.git
+cd chronobox/watcher
+npm install
+npm run build
+RPC_URL=https://your-rpc CHRONOBOX=0xYourChronobox node dist/watch.mjs --once --dry-run
+```
+
+The last line sends nothing. It must print "Watching this Chronobox" with the delay and the wallet of your Chronobox. Then you know that the RPC and the address are right.
+
+For alerts in Telegram, make the key for the list of chats one time and keep it. Without it the list is lost.
+
+```sh
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+```sh
+export RPC_URL=https://your-rpc
+export TELEGRAM_TOKEN=<the token from BotFather>
+export TELEGRAM_KEY=<the key from the line above>
+export STATE_DIR=$HOME/chronobox-watcher
+node dist/watch.mjs --all
+```
+
+When the line `telegram: the bot is @<your bot>` shows, write to your bot (see below). It answers within a few seconds.
+
+That runs as long as the terminal is open. To keep it running, see [Run it as a service](#run-it-as-a-service).
+
+### Your bot and the app
+
+With your own bot, the button "Get alerts in Telegram" in the Chronobox app does not lead to it. Open your bot in Telegram and send it the network and the address of your Chronobox:
+
+```
+/start 1-0xYourChronobox
+```
+
+The number is the chain ID: 1 for Ethereum, 8453 for Base, 42161 for Arbitrum One, 100 for Gnosis. The bot answers with what waits in your Chronobox right now.
+
+Where it runs: on a machine that stays on, in a terminal for a first try or [as a service](#run-it-as-a-service). With cron (`--once`), Telegram answers late; use cron for the webhook.
+
+Before you rely on it:
+
+- Try it first with `--dry-run`. It prints the messages and sends nothing.
+- Ask your Chronobox for a small withdrawal and cancel it. You must get two messages.
+- The watcher says "All quiet" once a day (in Telegram and to the webhook). If that message stops, the watcher has stopped.
+
 ## What it reports
 
 The messages use the words of the Chronobox app. No message has a link in it.
@@ -167,7 +236,7 @@ Things to know:
 - Lower `LOG_CHUNK` if the RPC limits the block range of `eth_getLogs`.
 - With `--once` the bot reads its messages one time per run, so an answer takes as long as the pause between two runs. Run the watcher as a service.
 - `CHRONOBOX`, `DELAY` and `STATE_FILE` do not work with `--all`. `WEBHOOK_URL` works, and gets the alerts of every Chronobox.
-- Not tested yet with the real Telegram, and not deployed to Vercel yet. The checks are the unit tests (with stand-ins for the chain, Telegram and Redis) and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
+- The service on Vercel runs with the real Telegram. The checks of the CLI are the unit tests (with stand-ins for the chain, Telegram and Redis) and `npm run test:fork:alerts`, which runs the watcher against the real contracts on a fork with a stand-in for the Telegram API.
 
 ### What the service keeps
 

@@ -96,6 +96,27 @@ export const CONTRIBUTION_RECEIVER: Address | null = "0x625D2B087A7027e0FC8a7da8
 export const ALERTS_TELEGRAM: string | null = "zodiac_chronobox_bot";
 
 /**
+ * The page of the alert service where a person gives an email address, for
+ * example "https://alerts.example.org/api/email". The same alert service
+ * serves it, with RESEND_KEY (see watcher/README.md). Null means: no alerts
+ * by email. The app only opens that page. It never sees an email address.
+ */
+export const ALERTS_EMAIL: string | null = null;
+
+/**
+ * Alerts by email are not there yet, but they will be. While this is true and
+ * ALERTS_EMAIL is null, "Get told" shows email as "Coming soon". Set it to
+ * false in a copy of the app that will not have alerts by email.
+ */
+export const ALERTS_EMAIL_SOON = true;
+
+/**
+ * Where a person reads how to run the alert service on a machine of their
+ * own: the guide in the repository. Null means: the app does not point to it.
+ */
+export const ALERTS_GUIDE: string | null = "https://github.com/zodiaceco/chronobox/tree/main/watcher#run-it-yourself";
+
+/**
  * The suggested contribution in US dollars, by how much money is in play:
  * what goes into the Chronobox during the setup, or what the wallet holds
  * when nothing goes in yet. Each entry is [from this many dollars, suggest

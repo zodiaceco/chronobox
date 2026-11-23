@@ -37,7 +37,7 @@ import {
   MIN_COOLDOWN,
 } from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
-import { AlertsSheet, BOT } from "./alerts.tsx";
+import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
@@ -420,7 +420,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             value={verified ? `All ${passed} passed` : `${passed} of ${inspection.checks.length} passed`}
             onClick={() => setSheet("checks")}
           />
-          {BOT ? <Row label="Get told" value="Alerts in Telegram" onClick={() => setSheet("alerts")} /> : null}
+          {ALERTS ? <Row label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
         </ul>
       ) : inspection.checks.length > 0 ? (
