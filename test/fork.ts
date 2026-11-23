@@ -446,6 +446,51 @@ try {
   await rpc("anvil_setCode", [GUARD, "0x600160005260206000f3"]);
   await tampered(10, "a guard on the Delay", (_evil, evilDelay) => [{ to: evilDelay, data: call("setGuard(address)", [GUARD]) }]);
 
+  step("10a. A Safe that still has an owner cannot leave a passing check behind");
+  {
+    // The full setup, but the wallet stays owner of the Safe. A visitor looks at it while it is like this.
+    const live = safeFromReceipt(await sendAndWait(rpc, WALLET, createTx(WALLET, 11)))!;
+    const liveDelay = predictDelay(live, WEEK, EXPIRATION_SECONDS);
+    const liveRoles = predictRoles(live);
+    const salt = toBigInt(keccak("0x7a6f646961632d74696d65626f783a7631"));
+    await sendAndWait(
+      rpc,
+      WALLET,
+      ownerBatchTx(WALLET, live, [
+        { to: CONTRACTS.moduleProxyFactory, data: call("deployModule(address,bytes,uint256)", [CONTRACTS.delayMastercopy, delayInitializer(live, WEEK, EXPIRATION_SECONDS), salt]) },
+        { to: CONTRACTS.moduleProxyFactory, data: call("deployModule(address,bytes,uint256)", [CONTRACTS.rolesMastercopy, rolesInitializer(live), salt]) },
+        { to: liveRoles, data: call("scopeTarget(bytes32,address)", [CANCEL_ROLE, liveDelay]) },
+        { to: liveRoles, data: call("allowFunction(bytes32,address,bytes4,uint8)", [CANCEL_ROLE, liveDelay, "0x46ba2307", 0]) },
+        { to: liveRoles, data: call("assignRoles(address,bytes32[],bool[])", [WALLET, [CANCEL_ROLE], [true]]) },
+        { to: live, data: call("enableModule(address)", [liveDelay]) },
+        { to: live, data: call("enableModule(address)", [liveRoles]) },
+        { to: liveDelay, data: call("enableModule(address)", [WALLET]) },
+      ]),
+    );
+    // The same network and the same reader, as a page that refreshes: a pass could be kept between the two looks.
+    const hints: BlockHints = { chainId: 1, get: () => null, set: () => undefined };
+    const before = await inspect(rpc, live, hints);
+    assert.equal(before.state, "invalid");
+    assert.equal(before.checks.find((c) => c.id === "owner")?.ok, false);
+    assert.equal(before.checks.find((c) => c.id === "cancel-only")?.ok, true, "the permission itself is clean at this point");
+    // Then the owner widens the permission directly, without the Delay, and burns its ownership in the same transaction.
+    const BACKDOOR = keccak("0x6261636b646f6f72");
+    await sendAndWait(
+      rpc,
+      WALLET,
+      ownerBatchTx(WALLET, live, [
+        { to: liveRoles, data: call("allowTarget(bytes32,address,uint8)", [BACKDOOR, live, 3]) },
+        { to: liveRoles, data: call("assignRoles(address,bytes32[],bool[])", [WALLET, [BACKDOOR], [true]]) },
+        { to: live, data: call("swapOwner(address,address,address)", [SENTINEL, WALLET, CONTRACTS.burn]) },
+      ]),
+    );
+    const after = await inspect(rpc, live, hints);
+    assert.equal(after.checks.find((c) => c.id === "owner")?.ok, true, "no person owns it now");
+    assert.equal(after.checks.find((c) => c.id === "cancel-only")?.ok, false, "the widened permission is read, not taken from before");
+    assert.equal(after.state, "invalid");
+    ok("the check of the permission is read again: a pass from while the Safe had an owner is not kept");
+  }
+
   step("10b. A contribution rides in the lock transaction");
   const RECEIVER: Address = "0x000000000000000000000000000000000000c0de";
   const fee = ETH / 200n;
