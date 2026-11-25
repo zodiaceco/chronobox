@@ -198,3 +198,12 @@ export function setupAmountsFor(chainId: number, wallet: Address): Record<number
 export function clearSetupAmounts(): void {
   setupAmounts = null;
 }
+
+/** Did the person switch on third-party services (see lookup.ts)? Off unless they said yes in this browser. */
+export function lookupAllowed(): boolean {
+  return load<unknown>("chronobox:lookup", false) === true;
+}
+
+export function setLookupAllowed(allowed: boolean): void {
+  save("chronobox:lookup", allowed);
+}

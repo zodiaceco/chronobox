@@ -45,8 +45,9 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
-const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src 'self' http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
+// The page talks to nobody but the token index of third-party services, and only after they are switched on.
+const PROD_CONNECT = "connect-src https://eth.blockscout.com https://eth-sepolia.blockscout.com";
+const DEV_CONNECT = `${PROD_CONNECT} 'self' http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546`;
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */

@@ -52,6 +52,8 @@ import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { Ring } from "./ring.tsx";
+import { LookupSheet, OwnerHoldings } from "./holdings.tsx";
+import { lookupAllowed } from "../lib/store.ts";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
 import { RecoverySection, type RecoveryWaiting, guarded } from "./recovery.tsx";
@@ -81,7 +83,7 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | "lookup" | null;
 
 /** The parts of a locked Chronobox, in the form that the builders want. */
 function vaultOf(safe: Address, inspection: Inspection): VaultRef {
@@ -281,6 +283,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [sheet, setSheet] = useState<Sheet>(null);
   const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  // Counts the times third-party services were switched: the list then reads again.
+  const [lookupRound, setLookupRound] = useState(0);
   // What was cancelled a moment ago, and how much of its wait was still ahead: for the sheet that shows the cancel.
   const [cancelled, setCancelled] = useState<{ title: string; left: number; count: number } | null>(null);
   const [cancellingAll, setCancellingAll] = useState(false);
@@ -511,15 +515,22 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               You are the guardian
             </p>
           ) : null}
-          <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
-          <ul class="balances">
-            {shown.map((h) => (
-              <li key={h.asset.token ?? "native"}>
-                <span class="balance-amount">{h.amount === null ? "…" : formatAmount(h.amount, h.asset.decimals)}</span>
-                <span class="balance-symbol">{h.asset.symbol}</span>
-              </li>
-            ))}
-          </ul>
+          {isController ? (
+            // The owner sees one list: what the wallet holds (unlocked) next to what the Chronobox holds (locked).
+            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound} onLookup={() => setSheet("lookup")} />
+          ) : (
+            <>
+              <p class="eyebrow">{`A Chronobox on ${chain.name}`}</p>
+              <ul class="balances">
+                {shown.map((h) => (
+                  <li key={h.asset.token ?? "native"}>
+                    <span class="balance-amount">{h.amount === null ? "…" : formatAmount(h.amount, h.asset.decimals)}</span>
+                    <span class="balance-symbol">{h.asset.symbol}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
           {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {locked ? (
@@ -644,6 +655,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           />
           {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
+          {isController && chain.indexer ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
@@ -688,6 +700,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         />
       ) : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
+      {sheet === "lookup" ? <LookupSheet chain={chain} onClose={() => setSheet(null)} onChanged={() => setLookupRound((r) => r + 1)} onAddToken={() => setSheet("token")} /> : null}
       {sheet === "checks" ? (
         <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
           <ul class="checks">

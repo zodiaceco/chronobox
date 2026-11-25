@@ -95,7 +95,7 @@ const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:
  * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing
  * would hide what becomes of it. A wait that gets long has its own way out ("Stop waiting").
  */
-export function Modal(props: { title: string; lead?: string; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
+export function Modal(props: { title: string; lead?: ComponentChildren; wide?: boolean; busy?: boolean; onClose: () => void; children: ComponentChildren }) {
   const dialog = useRef<HTMLDivElement>(null);
   const close = () => {
     if (!props.busy) props.onClose();

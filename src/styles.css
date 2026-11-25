@@ -3592,3 +3592,119 @@ img.token-badge.token-icon {
   background: transparent;
   object-fit: contain;
 }
+
+/* The owner's list: Unlocked, Locked and Total, for every asset in the wallet or in the Chronobox */
+.funds-head {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.funds-network {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.funds-network .select {
+  min-height: 36px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.notice-line {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--blue-wash);
+  color: var(--blue-text);
+  font-size: 0.9rem;
+}
+
+.holdings {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  justify-items: center;
+}
+
+.holdings-table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.holdings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 0 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.holdings-row + .holdings-row {
+  border-top: 1px solid var(--line);
+}
+
+.holdings-row > :nth-child(n + 2) {
+  text-align: right;
+}
+
+.holdings-header {
+  min-height: 38px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.holdings-asset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.holdings-asset > span {
+  display: grid;
+  min-width: 0;
+}
+
+.holdings-asset small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+}
+
+.holdings-locked {
+  color: var(--blue-text);
+  font-weight: 600;
+}
+
+.holdings-lookup {
+  font-size: 0.9rem;
+}
+
+.lead-link {
+  color: inherit;
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .holdings-row {
+    grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr));
+  }
+
+  .holdings-row > :nth-child(4) {
+    display: none;
+  }
+}

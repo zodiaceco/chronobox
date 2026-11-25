@@ -13,6 +13,7 @@ import { formatAmount, parseUnits } from "../lib/format.ts";
 import { setSetupAmounts } from "../lib/store.ts";
 import { assetsOf, Button, type Session, useBalancesState } from "./common.tsx";
 import { FundList } from "./fund.tsx";
+import { NetworkHeader } from "./holdings.tsx";
 
 export function WalletPreview(props: { session: Session; chain: Chain }) {
   const { session, chain } = props;
@@ -74,6 +75,7 @@ export function WalletPreview(props: { session: Session; chain: Chain }) {
 
   return (
     <div class="preview">
+      <NetworkHeader session={session} chain={chain} />
       <h2>What your wallet holds on {chain.name}</h2>
       <p class="preview-lead">Pick what should not leave in a hurry. Next you choose how long every withdrawal waits.</p>
       <FundList
