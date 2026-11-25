@@ -21,6 +21,7 @@ export type Settings = {
   councilOwners?: string[]; // [] while the Safe is not made
   councilThreshold?: string;
   councilModules?: string[];
+  councilGuard?: string;
   recovery?: RecoverySettings;
 };
 
@@ -31,6 +32,7 @@ export type RecoverySettings = {
   owner: string;
   avatar: string;
   target: string;
+  guard?: string;
   /** Who can put something into its line. With the recovery on: the guardian, and nobody else. */
   modules: string[];
   cooldown: string;
