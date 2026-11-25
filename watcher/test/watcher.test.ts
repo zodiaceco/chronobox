@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   Watcher, AllWatcher, MemoryStore, NOTICE_GAP_MS, NOTICE_MIN_FOLLOW_MS, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
-  encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL,
+  encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL, predictRecoveryDelay,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
 import {
@@ -780,9 +780,9 @@ test('--all reads a quiet Chronobox only when it queues something', async () => 
   chain.mine(600n);
   await w.poll();
   assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
-  // Two searches: the requests of the known Delays, and new Delays from the factory. Never all contracts.
+  // Two searches: the known Delays (for withdrawals and for a recovery), and new Delays from the factory. Never all contracts.
   assert.equal(chain.calls.filter((c) => c === 'eth_getLogs').length, 2);
-  assert.deepEqual(chain.logQueries.slice(-2), [[DELAY], [MODULE_PROXY_FACTORY]]);
+  assert.deepEqual(chain.logQueries.slice(-2), [[DELAY, predictRecoveryDelay(SAFE)], [MODULE_PROXY_FACTORY]]);
 
   // Something waits: the vault is read on every poll until the queue is empty again.
   chain.mine(12n);

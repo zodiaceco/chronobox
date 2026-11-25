@@ -14,6 +14,9 @@ export type DescribeCtx = {
   roles?: string;
   /** The delay of the vault now, in seconds. */
   cooldown?: bigint;
+  /** The recovery Delay of the vault, and how long a recovery waits now. Only known with CHRONOBOX. */
+  recoveryDelay?: string;
+  recoveryWait?: bigint;
   tokenMeta?: TokenMeta;
 };
 
@@ -37,6 +40,7 @@ const ENABLE_MODULE = '0x610b5925';
 const DISABLE_MODULE = '0xe009cfde';
 const SET_TX_COOLDOWN = '0xebb2b4a2';
 const ASSIGN_ROLES = '0x957ed2b3'; // assignRoles(address,bytes32[],bool[])
+const SET_RECOVERY_WAIT = SET_TX_COOLDOWN;
 const CANCEL_ROLE = '63616e63656c'.padEnd(64, '0'); // bytes32("cancel")
 
 /** The calls of a MultiSend batch. Null when the transaction is not a batch of plain calls that send no coin. */
@@ -85,9 +89,13 @@ const LOOKS = 'Open your Chronobox to check that the request is what it looks li
 const NOT_THE_APP = 'The Chronobox app does not make such a request.';
 
 /** What a call on a part of the Chronobox does, in one plain sentence. `a`: its first address, `b`: its second. */
-function meaning(part: 'delay' | 'vault' | 'roles', fn: string | undefined, a: string, b: string, data: string): string {
+function meaning(part: 'delay' | 'vault' | 'roles' | 'recovery', fn: string | undefined, a: string, b: string, data: string): string {
   const name = fn ? fn.slice(0, fn.indexOf('(')) : '';
   if (part === 'roles') return 'It changes who can cancel, or what they can do.';
+  if (part === 'recovery') {
+    if (name === 'enableModule') return `It lets ${a} start a recovery: a change of the wallet of this Chronobox after a wait.`;
+    return 'It changes the recovery of this Chronobox.';
+  }
   if (part === 'delay') {
     if (name === 'disableModule') return `It takes this Chronobox away from the wallet ${b}.`;
     if (name === 'setTxExpiration') {
@@ -158,31 +166,71 @@ export function describeTx(
   if (tx.operation === 0 && to === ctx.delay && tx.value === 0n && selector === ENABLE_MODULE && strip(data).length === 72) {
     return handover(toAddr(strip(data).slice(8)), false);
   }
+  // The recovery: how long it waits, alone.
+  const rd = ctx.recoveryDelay;
+  if (rd && tx.operation === 0 && to === rd && tx.value === 0n && selector === SET_RECOVERY_WAIT && strip(data).length === 72) {
+    const next = toBig(strip(data).slice(8));
+    if (next === 0n) {
+      return {
+        kind: 'recovery_wait', summary: 'Remove the recovery wait', priority: 5,
+        detail: 'After this, a recovery does not wait at all. The guardian can hand this Chronobox to another wallet at once.',
+      };
+    }
+    const now = ctx.recoveryWait;
+    return {
+      kind: 'recovery_wait', summary: `Change the recovery wait to ${fmtDuration(next)}`, priority: 5,
+      detail: `After this, a recovery waits ${fmtDuration(next)} before it can be carried out.${now === undefined || now === next ? '' : ` It is ${fmtDuration(now)} now.`}`,
+    };
+  }
   const calls = batchCalls(tx);
   if (calls) {
     const onDelay = calls.filter((c) => c.to === ctx.delay);
     const onRoles = ctx.roles ? calls.filter((c) => c.to === ctx.roles) : [];
+    const onRecovery = rd ? calls.filter((c) => c.to === rd) : [];
+    // How long a recovery waits after this batch: what it sets, else what it is now.
+    const waitCall = onRecovery.find((c) => c.data.startsWith(SET_RECOVERY_WAIT) && strip(c.data).length === 72);
+    const wait = waitCall ? toBig(strip(waitCall.data).slice(8)) : ctx.recoveryWait;
+    const recoveryOn = onRecovery.find((c) => c.data.startsWith(ENABLE_MODULE) && strip(c.data).length === 72);
+    const recoveryOff = onRecovery.some((c) => c.data.startsWith(DISABLE_MODULE));
+    const waits = wait === undefined
+      ? ''
+      : wait === 0n
+        ? ' Warning: the recovery wait is zero, so a recovery can be carried out at once.'
+        : ` A recovery waits ${fmtDuration(wait)}, and the wallet and the guardian can stop it in that time.`;
     const enable = onDelay.find((c) => c.data.startsWith(ENABLE_MODULE) && strip(c.data).length === 72);
-    if (enable) {
+    if (enable && onDelay.length + onRoles.length + onRecovery.length === calls.length) {
       const removes = onDelay.some((c) => c.data.startsWith(DISABLE_MODULE) && ctx.controllers.includes(toAddr(strip(c.data).slice(72, 136))));
       return handover(toAddr(strip(enable.data).slice(8)), removes);
     }
-    if (onRoles.length === calls.length && calls.length > 0) {
+    if (onRoles.length + onRecovery.length === calls.length && onRoles.length > 0) {
       const assigns = onRoles.filter((c) => c.data.startsWith(ASSIGN_ROLES)).map((c) => decodeAssign(c.data)).filter((a) => a !== null);
       const added = assigns.find((a) => a.grants.some((g) => g.on && g.key === CANCEL_ROLE));
       if (added) {
         return {
-          kind: 'guardian_add', summary: `Add the guardian ${shortAddr(added.module)}`, priority: 5,
-          detail: `After this, ${added.module} can stop every withdrawal. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once. ${LOOKS}`,
+          kind: 'guardian_add', summary: `Add the guardian ${shortAddr(added.module)}${recoveryOn ? ' with a recovery' : ''}`, priority: 5,
+          detail: `After this, ${added.module} can stop every withdrawal. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once.` +
+            (recoveryOn ? ` The guardian can also start a recovery to a new wallet that the guardian chooses.${waits}` : '') + ` ${LOOKS}`,
         };
       }
       const removed = assigns.find((a) => !ctx.controllers.includes(a.module) && a.grants.some((g) => !g.on && g.key === CANCEL_ROLE));
       if (removed) {
         return {
           kind: 'guardian_remove', summary: 'Remove the guardian', priority: 5,
-          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel. ${LOOKS}`,
+          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.${recoveryOff ? ' The recovery goes too.' : ''} ${LOOKS}`,
         };
       }
+      if (recoveryOn) {
+        return {
+          kind: 'recovery_on', summary: 'Turn on the recovery', priority: 5,
+          detail: `After this, the guardian ${toAddr(strip(recoveryOn.data).slice(8))} can start a recovery to a new wallet that the guardian chooses.${waits} ${LOOKS}`,
+        };
+      }
+    }
+    if (recoveryOff && onRecovery.length === calls.length) {
+      return {
+        kind: 'recovery_off', summary: 'Turn off the recovery', priority: 5,
+        detail: `After this, the guardian cannot start a recovery. A recovery that waits then can never be carried out. ${LOOKS}`,
+      };
     }
     const targets = [...new Set(calls.map((c) => c.to))].join(', ');
     return {
@@ -192,12 +240,13 @@ export function describeTx(
   }
 
   // Anything else is a call that the app does not make.
-  let part: 'delay' | 'vault' | 'roles' | null = null;
+  let part: 'delay' | 'vault' | 'roles' | 'recovery' | null = null;
   let where = `the contract ${to}`;
   let fn: string | undefined;
   if (to === ctx.delay) { part = 'delay'; where = `the delay contract ${to}`; fn = DELAY_FUNCTIONS[selector]; }
   else if (to === ctx.vault) { part = 'vault'; where = `the Safe of the Chronobox ${to}`; fn = SAFE_FUNCTIONS[selector]; }
   else if (ctx.roles && to === ctx.roles) { part = 'roles'; where = `the cancel contract ${to}`; fn = ROLES_FUNCTIONS[selector]; }
+  else if (rd && to === rd) { part = 'recovery'; where = `the recovery contract ${to}`; fn = DELAY_FUNCTIONS[selector]; }
   const approve = !fn && selector === APPROVE_SELECTOR;
   if (approve) fn = 'approve(address,uint256)';
   const name = fn ? fn.slice(0, fn.indexOf('(')) : selector ? `the function ${selector}` : 'no function';

@@ -5,13 +5,18 @@
 // Zodiac factory, and older ones when somebody asks for their alerts. The alerts of a vault go to the Telegram
 // chats and the email addresses that follow it, and to the webhook.
 //
-// The watcher reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows.
+// The watcher reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows (the
+// Delay for withdrawals, and the recovery Delay at its fixed address).
 // Anybody can deploy contracts that emit any event, so logs from every contract would let anybody fill a poll.
 //
 // What it knows is in the store, under "all" (the network) and under the address of each vault. Every poll and
 // every question of the bot reads it again under the lock "all", because on Vercel a cron run and the webhook
 // work at the same time, in different places.
-import { MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED, encAddr, hex, strip, toAddr } from './chain.ts';
+import {
+  MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_DISABLED_MODULE, TOPIC_ENABLED_MODULE, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED,
+  encAddr, hex, strip, toAddr,
+} from './chain.ts';
+import { predictRecoveryDelay } from './guardian.ts';
 import type { Config } from './config.ts';
 import { itemStatus, waitLine } from './status.ts';
 import { BusyError, DryRunStore, FileStore, type Store } from './store.ts';
@@ -257,8 +262,16 @@ export class AllWatcher {
     const st = await this.readState(vault);
     if (!st?.settings) return null;
     const now = BigInt(Math.floor(Date.now() / 1000));
-    return Object.values(st.items).sort((a, b) => a.nonce - b.nonce).map((it) =>
-      waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(st.settings!.cooldown), BigInt(st.settings!.expiration), now)));
+    const rec = st.settings.recovery;
+    const read = Object.keys(st.recoveryItems ?? {}).length;
+    const behind = st.recoveryQueueNonce !== undefined && st.recoveryTxNonce !== undefined ? st.recoveryQueueNonce - st.recoveryTxNonce - read : 0;
+    return [
+      ...Object.values(st.items).sort((a, b) => a.nonce - b.nonce).map((it) =>
+        waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(st.settings!.cooldown), BigInt(st.settings!.expiration), now))),
+      ...(rec ? Object.values(st.recoveryItems ?? {}).sort((a, b) => a.nonce - b.nonce).map((it) =>
+        waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(rec.cooldown), BigInt(rec.expiration), now))) : []),
+      ...(behind > 0 ? [`${behind} more step${behind === 1 ? '' : 's'} in the line of the recovery. One stop removes all of them.`] : []),
+    ];
   }
 
   redact(msg: string): string { return this.probe.redact(msg); }
@@ -290,7 +303,8 @@ export class AllWatcher {
       throw e;
     }
     const ws = w.state;
-    known.active = Object.keys(ws.items).length > 0 || ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
+    known.active = Object.keys(ws.items).length > 0 || Object.keys(ws.recoveryItems ?? {}).length > 0 ||
+      ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
     known.heartbeatAt = ws.lastHeartbeat;
     return ok;
   }
@@ -320,11 +334,15 @@ export class AllWatcher {
     const to = this.cfg.maxScanBlocks > 0 ? Math.min(head, from + this.cfg.maxScanBlocks - 1) : head;
     if (from <= to) {
       const byDelay = new Map(Object.entries(s.vaults).map(([vault, k]) => [k.delay, vault]));
-      // The requests of the Chronoboxes it knows. Only their Delays can emit these logs.
-      const delays = [...byDelay.keys()];
-      for (let i = 0; i < delays.length; i += ADDRESSES_PER_QUERY) {
-        for (const l of await this.probe.getLogs(from, to, [TOPIC_TRANSACTION_ADDED], delays.slice(i, i + ADDRESSES_PER_QUERY))) {
-          const vault = byDelay.get(String(l.address).toLowerCase());
+      // The requests of the Chronoboxes it knows, and a wallet that comes or goes without a request: wallet and
+      // guardian together, or a recovery. Only their Delays can emit these logs. The recovery Delay of a vault may
+      // not be made: then it has no logs.
+      const watched = new Map(byDelay);
+      for (const vault of Object.keys(s.vaults)) watched.set(predictRecoveryDelay(vault), vault);
+      const all = [...watched.keys()];
+      for (let i = 0; i < all.length; i += ADDRESSES_PER_QUERY) {
+        for (const l of await this.probe.getLogs(from, to, [[TOPIC_TRANSACTION_ADDED, TOPIC_ENABLED_MODULE, TOPIC_DISABLED_MODULE]], all.slice(i, i + ADDRESSES_PER_QUERY))) {
+          const vault = watched.get(String(l.address).toLowerCase());
           if (vault) touched.add(vault);
         }
       }
@@ -336,7 +354,7 @@ export class AllWatcher {
       for (const l of created) {
         if (String(l.address).toLowerCase() !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
         const delay = toAddr(strip(l.topics[1]));
-        if (byDelay.has(delay) || waiting.has(delay)) continue;
+        if (watched.has(delay) || waiting.has(delay)) continue;
         // A flood of Delays is dropped. A Chronobox in it is still found when somebody presses Start for it.
         if (queue.length >= MAX_QUEUE) { dropped++; continue; }
         queue.push(delay);

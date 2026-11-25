@@ -5,6 +5,7 @@ export * from './config.ts';
 export * from './describe.ts';
 export * from './email.ts';
 export * from './format.ts';
+export * from './guardian.ts';
 export * from './notices.ts';
 export * from './redis.ts';
 export * from './service.ts';
