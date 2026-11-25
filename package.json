@@ -13,6 +13,7 @@
     "fork": "anvil --fork-url https://mainnet.gateway.tenderly.co --chain-id 1 --port 8545 --silent",
     "test:fork": "node test/fork.ts",
     "test:fork:guardian": "node test/guardian-fork.ts",
+    "test:fork:recovery": "node test/recovery-fork.ts",
     "test:fork:deposit": "node test/deposit-fork.ts",
     "test:fork:alerts": "node --import ./watcher/jsx.mjs test/alerts-fork.ts",
     "scenarios": "node test/scenarios.ts",

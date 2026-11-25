@@ -32,6 +32,12 @@ export const CONTRACTS = {
    * It never sends a transaction through it.
    */
   multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11",
+  /**
+   * SafeModuleSetup 0.3.0, from Safe's own list of deployments. One function: enableModules.
+   * The shared Safe of a Chronobox with a recovery calls it once, in its setup, so that the
+   * recovery Delay is its module from the first moment. It is used for nothing else.
+   */
+  safeModuleSetup: "0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47",
 } as const satisfies Record<string, Address>;
 
 export const SENTINEL: Address = "0x0000000000000000000000000000000000000001";

@@ -225,7 +225,7 @@ export function HowItWorks() {
             text: "Optional. Your own second device, or the wallet of a person you trust. You add it later, from your Chronobox.",
             side: (
               <>
-                <Ticks lines={["Can stop a withdrawal at once.", "Helps you move to a new wallet without the wait.", "Can never withdraw."]} />
+                <Ticks lines={["Can stop a withdrawal at once.", "Helps you move to a new wallet without the wait.", "Can optionally start a slow recovery if you lose your wallet.", "Can never withdraw."]} />
               </>
             ),
           }}
