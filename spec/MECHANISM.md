@@ -15,7 +15,7 @@ This is a game-theoretic problem: the setup is public onchain, so an attacker ca
 
 All setups keep the funds in a **Vault Safe** whose only owner is `0x…dEaD` (no key), so the vault acts only through its modules.
 
-**One setting: the delay.** Every queue waits the same delay, 48 h by default and configurable. Everything below is relative to it.
+**One setting: the delay.** Every queue waits the same delay. The app offers 24 h, 48 h (preselected), 7 days, 30 days or a custom length. The model is checked at 48 h and 72 h. Everything below is relative to it.
 
 | | Simple | With guardian | With guardian + recovery |
 |---|---|---|---|

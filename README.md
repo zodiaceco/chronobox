@@ -2,7 +2,7 @@
 
 A vault that nobody can empty quickly.
 
-You connect a wallet, pick a delay (12 hours, 1 day, 1 week or your own), and Chronobox creates a Safe that has no owner. The only way out is a time lock that your wallet controls. Every withdrawal waits the full delay on chain. Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
+You connect a wallet, pick a delay (24 hours, 48 hours, 7 days, 30 days or your own; 48 hours unless you choose another), and Chronobox creates a Safe that has no owner. The only way out is a time lock that your wallet controls. Every withdrawal waits the full delay on chain. Nobody can make it faster: not you, not Zodiac, not a person who has your wallet.
 
 **Status: experimental.** The contracts it uses are audited. This app is not. Read "Limits" before you use it.
 

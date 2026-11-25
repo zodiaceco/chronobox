@@ -170,7 +170,7 @@ export function HowItWorks() {
             side: (
               <>
                 <ul class="hiw-chips">
-                  {["12 hours", "1 day", "1 week"].map((time) => (
+                  {["24 hours", "48 hours", "7 days", "30 days"].map((time) => (
                     <li key={time}>{time}</li>
                   ))}
                   <li class="hiw-chip-quiet">or your own, from 1 hour to 90 days</li>
