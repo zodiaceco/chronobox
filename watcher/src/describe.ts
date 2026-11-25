@@ -209,20 +209,20 @@ export function describeTx(
         return {
           kind: 'guardian_add', summary: `Add the guardian ${shortAddr(added.module)}${recoveryOn ? ' with a recovery' : ''}`, priority: 5,
           detail: `After this, ${added.module} can stop every withdrawal. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once.` +
-            (recoveryOn ? ` The guardian can also start a recovery to a new wallet that the guardian chooses.${waits}` : '') + ` ${LOOKS}`,
+            (recoveryOn ? ` The guardian can also start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet.${waits}` : '') + ` ${LOOKS}`,
         };
       }
       const removed = assigns.find((a) => !ctx.controllers.includes(a.module) && a.grants.some((g) => !g.on && g.key === CANCEL_ROLE));
       if (removed) {
         return {
           kind: 'guardian_remove', summary: 'Remove the guardian', priority: 5,
-          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.${recoveryOff ? ' The recovery goes too.' : ''} ${LOOKS}`,
+          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.${recoveryOff ? ' The recovery turns off too.' : ''} ${LOOKS}`,
         };
       }
       if (recoveryOn) {
         return {
           kind: 'recovery_on', summary: 'Turn on the recovery', priority: 5,
-          detail: `After this, the guardian ${toAddr(strip(recoveryOn.data).slice(8))} can start a recovery to a new wallet that the guardian chooses.${waits} ${LOOKS}`,
+          detail: `After this, the guardian ${toAddr(strip(recoveryOn.data).slice(8))} can start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet.${waits} ${LOOKS}`,
         };
       }
     }

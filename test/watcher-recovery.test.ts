@@ -103,7 +103,7 @@ test("the steps of the app that change the recovery are named in the alert", () 
 
   const gone = describe(removeGuardianTx(guarded)!);
   assert.equal(gone.kind, "guardian_remove");
-  assert.match(gone.detail, /The recovery goes too/);
+  assert.match(gone.detail, /The recovery turns off too/);
 });
 
 test("recoveryWallet rejects spoofed batches with modified middle calls or wrong council", () => {

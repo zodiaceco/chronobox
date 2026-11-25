@@ -701,11 +701,11 @@ export class Watcher {
         const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
         const [event, title, message] =
           r.how === 'executed' ? ['recovery_done', `Recovery done: ${it.summary}`,
-            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now holds this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
+            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now controls this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
               : `${what} was carried out on ${fmtWhen(r.ts)}. Open your Chronobox to see what changed.`]
           : r.how === 'cancelled' ? ['recovery_stopped', `Recovery stopped: ${it.summary}`, `${what} was stopped on ${fmtWhen(r.ts)}. The wallet of this Chronobox did not change.`]
           : r.how === 'expired' ? ['recovery_expired', `Recovery void: ${it.summary}`, `${what} was not carried out in time. It is void, and the wallet of this Chronobox did not change.`]
-          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who holds it.`];
+          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who controls it.`];
         if (r.how === 'executed' && it.wallet) recoveredTo = it.wallet;
         this.push({ event, nonce: it.nonce, priority: r.how === 'executed_or_cancelled' ? 5 : 3, at: Number(now), title, message });
         delete s.recoveryItems![it.nonce];
@@ -737,8 +737,8 @@ export class Watcher {
             event: 'recovery_started', nonce: it.nonce, priority: it.priority, at: Number(now),
             title: it.wallet ? `Recovery started: ${it.summary}` : 'Recovery line: a step that the app does not make',
             message: (it.wallet
-              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. It hands this Chronobox to the wallet ${it.wallet}. After that, ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
-              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who holds this Chronobox. No money can move through it.`) +
+              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. When it is carried out, the wallet ${it.wallet} controls this Chronobox, and ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
+              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who controls this Chronobox. No money can move through it.`) +
               `\n\n${wait}\n\nIf you did not ask for this, open your Chronobox and stop it.`,
           });
         }
@@ -848,7 +848,7 @@ export class Watcher {
           event: 'recovery_soon', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `Recovery wait ends soon: ${it.summary}`,
           message: `The wait of ${lowerFirst(what)} ends on ${fmtWhen(st.readyAt)}. That is in ${fmtDuration(st.readyAt - now)}. ` +
-            `Then anybody can carry it out at once${it.wallet ? ', and that wallet holds this Chronobox' : ''}.` +
+            `Then anybody can carry it out at once${it.wallet ? ', and that wallet controls this Chronobox' : ''}.` +
             '\n\nIf you did not ask for this, open your Chronobox and stop it before then.',
         });
       }
@@ -952,7 +952,7 @@ export class Watcher {
       const wait = (x: Settings) => BigInt(x.recovery?.cooldown ?? '0');
       const pOn = recoveryOn(prev), nOn = recoveryOn(next);
       if (!pOn && nOn) {
-        changes.push(`The recovery is on. The guardian can start a recovery to a new wallet that the guardian chooses. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
+        changes.push(`The recovery is on. The guardian can start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
       } else if (pOn && !nOn) {
         changes.push(`The recovery is off. The guardian cannot start a recovery any more.${opts.recoveryWaited ? ' A recovery that waited can never be carried out now.' : ''}`);
       } else if (pOn && nOn && wait(prev) !== wait(next)) {

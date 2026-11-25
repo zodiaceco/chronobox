@@ -64,7 +64,7 @@ function CopyLine(props: { text: string }) {
 
 const CAN = [
   "Your guardian can stop any withdrawal while it waits. If somebody has your wallet and you cannot cancel, your guardian can.",
-  "Together you can move this Chronobox to a new wallet at once. That is for the day when the key of your wallet has leaked.",
+  "Together you can change the wallet of this Chronobox at once. That is for the day when the key of your wallet has leaked.",
 ];
 
 /** The row "Guardian" opens this. What it shows depends on who looks, and on whether there is a guardian. */
@@ -101,7 +101,7 @@ export function GuardianSheet(props: {
         </p>
         {recovery ? (
           <p>
-            The guardian can also start a recovery, for when the owner has lost the wallet. A recovery moves this Chronobox to a new wallet that the guardian chooses. It waits{" "}
+            The guardian can also start a recovery, for when the owner has lost their wallet. A recovery changes the wallet of this Chronobox, and the guardian chooses the new wallet. It waits{" "}
             {formatDuration(recovery.wait)}, and the owner can stop it in that time.
           </p>
         ) : null}
@@ -120,7 +120,7 @@ export function GuardianSheet(props: {
         <p>
           Guardian: <AddressText address={props.waiting} full />
         </p>
-        {props.waitingRecovery !== null ? <p>Your guardian can also bring this Chronobox back when you lose your wallet. A recovery waits {formatDuration(props.waitingRecovery)}.</p> : null}
+        {props.waitingRecovery !== null ? <p>With recovery: if you lose your wallet, your guardian can change the wallet of this Chronobox. A recovery waits {formatDuration(props.waitingRecovery)}.</p> : null}
         <p class="hint">Send your guardian this link now. It opens your Chronobox for them.</p>
         <CopyLine text={link} />
         <div class="modal-actions">
@@ -146,11 +146,11 @@ function OwnSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
       <ul class="plain-list">
         <li>When a withdrawal waits here, call the owner.</li>
         <li>If you cannot reach them, or they did not ask for it, stop it. A wrong stop costs little: the owner can ask again.</li>
-        {recovery ? <li>If the owner has lost the wallet, you can start a recovery. After {formatDuration(recovery.wait)} it moves this Chronobox to the owner's new wallet.</li> : null}
+        {recovery ? <li>If the owner has lost their wallet, you can start a recovery. It waits {formatDuration(recovery.wait)}. Then the owner's new wallet controls this Chronobox.</li> : null}
         <li>You cannot withdraw.</li>
       </ul>
-      <p class="hint">Keep the link of this page. To stop something, your wallet needs a little {chain.native.symbol} for the fee.</p>
-      {recovery && props.recoveryStarted ? <p class="hint">A recovery waits now. Its state is at the top of this page.</p> : null}
+      <p class="hint">Keep the link to this page. To stop something, your wallet needs a little {chain.native.symbol} for the fee.</p>
+      {recovery && props.recoveryStarted ? <p class="hint">A recovery waits now. See the card at the top of this page.</p> : null}
       <div class="modal-actions">
         <Button kind="primary" onClick={props.onClose}>
           Done
@@ -217,7 +217,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
       : !guardian
         ? "This is not a wallet address."
         : sameAddress(guardian, vault.controller)
-          ? "This is your own wallet. A guardian is another wallet."
+          ? "This is your own wallet. Your guardian must be another wallet."
           : sameAddress(guardian, vault.safe)
             ? "This is the address of the Chronobox itself. Enter the address of your guardian's wallet."
             : !possible
@@ -238,7 +238,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   if (stage === "unknown") return <UnknownSheet onClose={props.onClose} />;
   if (stage === "done") {
     return (
-      <Modal title="The wait has started." lead={`In ${wait} you can switch your guardian on. Send them this link now. It opens your Chronobox for them.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${wait} you can apply it under "Waiting". Send your guardian this link now. It opens your Chronobox for them.`} onClose={props.onClose}>
         <CopyLine text={props.link} />
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>
@@ -250,7 +250,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   }
   if (stage === "intro") {
     return (
-      <Modal title="Add a guardian" lead="One more person who can say stop." onClose={props.onClose}>
+      <Modal title="Add a guardian" lead="A second wallet that can say stop." onClose={props.onClose}>
         <ul class="plain-list">
           {CAN.map((line) => (
             <li key={line}>{line}</li>
@@ -293,13 +293,13 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   if (stage === "lost") {
     const waitProblem = recovers ? pickedWait(picked, customDays, props.inspection.cooldown).problem : null;
     return (
-      <Modal title="If you lose your wallet" lead="Can your guardian bring this Chronobox back? You can change this later." onClose={props.onClose}>
+      <Modal title="If you lose your wallet" lead="Choose what your guardian can do then. You can change this later." onClose={props.onClose}>
         <div class="wiz-list" role="radiogroup" aria-label="If you lose your wallet">
           <Choice
             role="radio"
             on={recovers === false}
             title="Without recovery"
-            text="Your guardian can only say stop. If you lose your wallet, the money in this Chronobox is lost."
+            text="Your guardian cannot help. The money in this Chronobox is lost."
             onClick={() => choose(false)}
           />
           {/* The wait belongs to the recovery, so it opens inside the same frame. */}
@@ -308,7 +308,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
               role="radio"
               on={recovers === true}
               title="With recovery"
-              text="Your guardian can move this Chronobox to a new wallet that your guardian chooses. It waits as long as you choose, and you can stop it at once."
+              text="Your guardian can change the wallet of this Chronobox. They choose the new wallet, so a recovery waits a long time. You can stop it while it waits."
               onClick={() => choose(true)}
             />
             {recovers ? (
@@ -333,9 +333,9 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   }
   const promise = recovers
     ? recoveryPromise(recoveryWait)
-    : { title: "My guardian can stop every withdrawal.", text: "I can remove my guardian only when my guardian lets it happen. My guardian is not a backup. If I lose my wallet, the money in this Chronobox is lost." };
+    : { title: "My guardian can stop every withdrawal.", text: "I can remove my guardian only if they let it happen. My guardian is not a backup: if I lose my wallet, the money in this Chronobox is lost." };
   return (
-    <Modal title="Check it" lead={`Check the address of your guardian letter by letter, with your guardian. Until it starts, you can cancel it under "Waiting".`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+    <Modal title="Check it" lead={`Check your guardian's address with them, letter by letter. Until this change starts, you can cancel it under "Waiting".`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
       <dl class="wiz-summary">
         <div>
           <dt>Guardian</dt>
@@ -343,7 +343,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
         </div>
         <div>
           <dt>Recovery</dt>
-          <dd>{recovers && recoveryWait !== null ? `On. A recovery waits ${formatDuration(recoveryWait)}` : "Off. If you lose your wallet, nobody can bring it back"}</dd>
+          <dd>{recovers && recoveryWait !== null ? `On. A recovery waits ${formatDuration(recoveryWait)}` : "Off. If you lose your wallet, the money is lost"}</dd>
         </div>
         <div>
           <dt>Starts</dt>
@@ -353,7 +353,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
       <div class="wiz-list">
         <Choice role="checkbox" on={promised} title={promise.title} text={promise.text} disabled={!!action.busy} onClick={() => setPromised(!promised)} />
       </div>
-      {recovers && parts && !delayMade ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
+      {recovers && parts && !delayMade ? <p class="hint">Your wallet asks you to confirm twice. The first confirmation sets up the recovery.</p> : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
@@ -414,7 +414,7 @@ function ManageSheet(props: {
   }
   if (stage === "done") {
     return (
-      <Modal title="The wait has started." lead={`In ${wait} you can apply it. Until then your guardian can still stop everything, and this too.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${wait} you can apply it under "Waiting". Until then, your guardian can still stop everything, and this change too.`} onClose={props.onClose}>
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>
             Done
@@ -427,8 +427,8 @@ function ManageSheet(props: {
     return (
       <Modal title="Remove your guardian?" lead={`This waits ${wait}, and your guardian can stop it in that time.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <p>
-          After it, only your wallet can cancel a withdrawal, and nobody can help you move to a new wallet at once.
-          {vault.recoveryOn ? " The recovery goes off with it: after that, nobody can bring this Chronobox back when you lose your wallet." : ""}
+          After that, only your wallet can cancel a withdrawal, and a wallet change always waits {wait}.
+          {vault.recoveryOn ? " The recovery turns off too: if you lose your wallet, the money in this Chronobox is lost." : ""}
         </p>
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -457,13 +457,13 @@ function ManageSheet(props: {
       </p>
       <ul class="plain-list">
         <li>Can stop any withdrawal while it waits.</li>
-        <li>Can move this Chronobox to a new wallet, together with you.</li>
+        <li>Can change the wallet of this Chronobox at once, together with you.</li>
         <li>
           {recovery
-            ? `Can bring this Chronobox back when you lose your wallet: a recovery to a new wallet, which waits ${formatDuration(recovery.wait)} and which you can stop.`
-            : "Cannot bring this Chronobox back when you lose your wallet."}
+            ? `Can change it alone, through a recovery. A recovery waits ${formatDuration(recovery.wait)}, and you can stop it.`
+            : "Cannot help if you lose your wallet: the recovery is off."}
         </li>
-        <li>Cannot withdraw.</li>
+        <li>{recovery ? "Cannot withdraw. Only the wallet that controls this Chronobox can." : "Cannot withdraw."}</li>
       </ul>
       <p class="hint">The link for your guardian. It opens this Chronobox for them.</p>
       <CopyLine text={props.link} />
@@ -472,7 +472,7 @@ function ManageSheet(props: {
           Done
         </Button>
         <Button kind="quiet" onClick={() => setStage("recovery")}>
-          {recovery ? "Recovery" : props.recoveryWaiting ? "Recovery" : "Let my guardian recover"}
+          {recovery || props.recoveryWaiting ? "Recovery" : "Turn on the recovery"}
         </Button>
         <Button kind="quiet" onClick={() => setStage("remove")}>
           Remove my guardian
@@ -631,14 +631,14 @@ function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }
   if (line.state === "loading") {
     return (
       <Modal title="Checking the line" onClose={props.onClose}>
-        <p class="muted">The new wallet holds this Chronobox. One moment: we check that nothing the old wallet asked for still waits.</p>
+        <p class="muted">The new wallet controls this Chronobox. One moment: we check that nothing the old wallet asked for still waits.</p>
       </Modal>
     );
   }
   if (line.state === "error" || line.waiting > 0n) {
     const count = line.state === "read" ? (line.waiting === 1n ? "One item is" : `${line.waiting} items are`) : null;
     return (
-      <Modal title="Not finished: cancel what waits." lead="The new wallet holds this Chronobox. But the old wallet can still get money out through what it queued before." onClose={props.onClose}>
+      <Modal title="Not finished: cancel what waits." lead="The new wallet controls this Chronobox. But the old wallet can still get money out through what it queued before." onClose={props.onClose}>
         {line.state === "error" ? (
           <Notice kind="bad">
             We could not read the line: {line.message}{" "}
@@ -665,7 +665,7 @@ function SwapDoneSheet(props: { rpc: Rpc; vault: VaultRef; onClose: () => void }
   }
   return (
     <Modal
-      title="The new wallet holds this Chronobox."
+      title="The new wallet controls this Chronobox."
       lead="Nothing waits in the line, so nothing the old wallet asked for can run. This wallet can do nothing here any more. Keep the address of the Chronobox: the new wallet needs it to open it."
       onClose={props.onClose}
     >
@@ -713,7 +713,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
         <QrCode text={link} label="QR code of the link for your guardian" />
       </div>
       {swap.state === "bad" ? (
-        <Notice kind="bad">This wallet cannot hold the Chronobox. Drop this request and start again with another address.</Notice>
+        <Notice kind="bad">This wallet cannot control the Chronobox. Drop this request and start again with another address.</Notice>
       ) : swap.state === "not-made" ? (
         <Notice kind="risk">The shared Safe with your guardian is not on chain yet. Drop this request and start it again.</Notice>
       ) : swap.state === "error" ? (
@@ -796,7 +796,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
     return (
       <Modal title="It is done." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <p>
-          The wallet <AddressText address={to} /> holds this Chronobox now. You are still its guardian.
+          The wallet <AddressText address={to} /> controls this Chronobox now. You are still its guardian.
         </p>
         {after.state === "loading" ? (
           <p class="muted" role="status">
@@ -864,7 +864,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
   if (swap.state === "bad") {
     return (
       <Modal title="This link does not fit" onClose={props.onClose}>
-        <p>It does not name a wallet that can hold this Chronobox. Ask the owner for a new link.</p>
+        <p>It does not name a wallet that can control this Chronobox. Ask the owner for a new link.</p>
         {closeOnly}
       </Modal>
     );
@@ -894,7 +894,7 @@ export function AgreeSheet(props: { session: Session; chain: Chain; vault: Vault
     );
   }
   return (
-    <Modal title="Agree to a new wallet?" lead="The owner of this Chronobox asks to move it to this wallet. It happens at once, without the wait." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+    <Modal title="Agree to a new wallet?" lead="The owner asks to make this the new wallet of this Chronobox. It happens at once, without the wait." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
       <p class="swap-to">
         <span class="swap-to-label">New wallet</span>
         <code>{to}</code>
