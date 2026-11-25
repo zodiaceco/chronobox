@@ -13,7 +13,7 @@ import { type Chain, CHAINS, CONTRIBUTION_RECEIVER, CONTRIBUTION_STEPS } from ".
 import { type Pick, type Pull, type Reserves, type Split, type Way, coinMax, feeReserves, chosenGive, formatUsd, freshPulls, giveChoices, holdingOrder, keptCoin, laterCoin, readPrices, signPull, splitContribution, suggestedGive, tokenPayment, usdValue, waysIn } from "../lib/deposit.ts";
 import { formatAmount, formatDuration, parseUnits } from "../lib/format.ts";
 import { type Address, sameAddress, toQuantity } from "../lib/hex.ts";
-import { blockHints, rememberVault } from "../lib/store.ts";
+import { blockHints, clearSetupAmounts, rememberVault, setupAmountsFor } from "../lib/store.ts";
 import {
   EXPIRATION_SECONDS,
   type TxRequest,
@@ -113,7 +113,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   // What goes in, as typed: one text for each asset, by its place in the list of assets.
   const [amounts, setAmounts] = useState<Record<number, string>>({});
   // Another network or wallet has other assets. A choice made for the old one does not carry over.
-  useEffect(() => setAmounts({}), [chain?.id, session.account]);
+  // What was picked on the start page for this wallet and network, before the setup, is where this step starts.
+  useEffect(() => setAmounts((chain ? setupAmountsFor(chain.id, session.account) : null) ?? {}), [chain?.id, session.account]);
   const [prices, setPrices] = useState<(bigint | null)[]>([]);
   // Coin that the wallet keeps: for the fees of the setup, and for the fees of a withdrawal or a cancel later.
   const [reserve, setReserve] = useState<Reserves | null>(null);
@@ -391,6 +392,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     let gave: string | null = null;
     const finish = (safe: Address, state: "locked" | "unverified", inside: Line[] | null = null, stayed: Line[] = [], uncertain = false) => {
       rememberVault({ chainId: chain.id, safe, wallet: session.account });
+      clearSetupAmounts();
       setDone({ chain, safe, unverified: state === "unverified", inside, stayed, gave: inside ? gave : null, uncertain });
     };
     let target = plan.safe;

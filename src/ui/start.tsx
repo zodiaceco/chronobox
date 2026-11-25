@@ -12,6 +12,7 @@ import { discover, inspect } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
+import { WalletPreview } from "./preview.tsx";
 
 // The film and its poster get a tag in their address. A new film has a new address, so no browser shows an old copy.
 // In the dev build the tag is new on every page load.
@@ -111,7 +112,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     if (!wantsSetup.current || !session || rows === null) return;
     wantsSetup.current = false;
     // Only when the chain was read: an unanswered question must not look like "you have none".
-    if (rows.length === 0 && !readFailed) location.hash = "#/new";
+    // With none, the page shows what the wallet holds. The setup starts from there.
+    if (rows.length === 0 && !readFailed) document.querySelector(".preview")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [session, rows, readFailed]);
 
   const readNotice = readFailed ? (
@@ -240,13 +242,15 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             </Button>
           ) : rows === null ? (
             <p class="muted">Looking for your Chronobox…</p>
-          ) : (
+          ) : chain && rows.length === 0 && !readFailed ? null : (
             <a class="button button-primary" href="#/new">
               Create my Chronobox
             </a>
           )}
         </div>
         {readNotice}
+        {/* No Chronobox yet: what the wallet holds, and a slider for each asset. The setup starts from there. */}
+        {session && chain && rows !== null && rows.length === 0 && !readFailed ? <WalletPreview session={session} chain={chain} /> : null}
         {lookElsewhere}
       </section>
 
