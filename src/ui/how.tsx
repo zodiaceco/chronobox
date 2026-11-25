@@ -218,15 +218,20 @@ export function HowItWorks() {
           {...step(5)}
           optional
           title="Add a guardian"
-          text="You or a friend can veto, and help you switch wallets."
+          text="Can say stop, and bring you back in."
           art={<GuardianArt class="hiw-art" />}
           more={{
-            lead: "A second pair of eyes.",
-            text: "Optional. Your own second device, or the wallet of a person you trust. You add it later, from your Chronobox.",
+            lead: "A second pair of eyes. And a way back in.",
+            text: "Optional, and added later. Your second device, or a person you trust. For the way back in, your guardian chooses the new wallet, so it waits months. You can stop it at once.",
             side: (
-              <>
-                <Ticks lines={["Can stop a withdrawal at once.", "Helps you move to a new wallet without the wait.", "Can optionally start a slow recovery if you lose your wallet.", "Can never withdraw."]} />
-              </>
+              <dl class="hiw-lanes">
+                <dt>At once</dt>
+                <dd>Stop a withdrawal. Change the wallet with you.</dd>
+                <dt class="hiw-lane-slow">After months</dt>
+                <dd>Bring your Chronobox to a new wallet, if you lose yours.</dd>
+                <dt>Never</dt>
+                <dd>Withdraw.</dd>
+              </dl>
             ),
           }}
         />

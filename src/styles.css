@@ -679,7 +679,7 @@ a:focus-visible {
   align-items: start;
   gap: 12px 32px;
   /* Every card is the same height, so the page does not move from step to step. */
-  min-height: 148px;
+  min-height: 193px;
 }
 
 .hiw-card-main,
@@ -779,6 +779,38 @@ a:focus-visible {
 .hiw-times dd {
   margin: 0;
   color: var(--muted);
+}
+
+/* What the guardian can do, by how long it takes. The slow lane is the recovery. */
+.hiw-lanes {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 16px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.hiw-lanes dt,
+.hiw-lanes dd {
+  margin: 0;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
+
+.hiw-lanes dt:first-of-type,
+.hiw-lanes dt:first-of-type + dd {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.hiw-lanes dt {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hiw-lanes dt.hiw-lane-slow {
+  color: var(--blue);
 }
 
 .chain-logo {
@@ -995,6 +1027,35 @@ a:focus-visible {
 
 .is-open .art-star-extra {
   animation-delay: -0.8s;
+}
+
+/* The guardian's picture tells the recovery: the sun sets, and a dashed one comes up in its place.
+ * Both turn around the centre of the path. 40 degrees on, the sun is behind the horizon. */
+.art-old-sun,
+.art-new-sun {
+  transform-origin: 32px 41px;
+}
+
+.art-new-sun {
+  transform: rotate(-40deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .art-old-sun {
+    transition: transform 0.55s cubic-bezier(0.45, 0, 0.55, 1) 0.35s;
+  }
+  .art-new-sun {
+    transition: transform 0.4s cubic-bezier(0.45, 0, 0.55, 1);
+  }
+  .is-open .art-old-sun {
+    transform: rotate(-40deg);
+    transition-delay: 0s;
+  }
+  .is-open .art-new-sun {
+    transform: none;
+    transition-duration: 0.9s;
+    transition-delay: 0.75s;
+  }
 }
 
 @keyframes art-hop {
