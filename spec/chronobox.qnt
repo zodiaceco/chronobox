@@ -55,7 +55,12 @@ module chronobox {
   pure val COOLDOWN_A = DELAY  // vault Delay
   pure val EXPIRATION = 168    // a ready item can be executed for 7 days, then it expires (Delay default, not a setting)
   pure val RESPONSE = DELAY - DAY  // the defender cancels a foreign item before its delay runs out
-  pure val COERCION = DAY      // a coercer holds the hot wallet for less than the delay, then leaves without it
+  /**
+   * A coercer holds the hot wallet, then leaves without it. Modelled at the longest such coercion
+   * that still leaves the owner a day to cancel: it ends one day before the coercer's first item
+   * could run. Coercion that lasts until that item can run counts as "hot key taken".
+   */
+  pure val COERCION = DELAY - DAY
   pure val MAX_QUEUE = 2       // bound on queue length, to keep the model finite
   /**
    * The recovery wait (guardianRecovery). 6 months in the product; here a

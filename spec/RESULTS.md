@@ -5,7 +5,7 @@
 | Scenario | Simple | With guardian | With guardian + recovery |
 |---|---|---|---|
 | No incident | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw |
-| Coercion (forced to sign with H, for less than the delay) | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw |
+| Coercion (forced to sign with H, released with a day left to cancel) | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw |
 | Hot key leaked | ✅ safe<br>❌ recovers<br>❌ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw |
 | Hot key taken (only the attacker has it: long coercion, stolen without a backup, or the owner can never sign again) | ❌ safe<br>❌ recovers<br>❌ can withdraw | ✅ safe<br>❌ recovers<br>❌ can withdraw | ✅ safe<br>❌ recovers<br>❌ can withdraw |
 | Hot key lost | ✅ safe<br>❌ recovers<br>❌ can withdraw | ✅ safe<br>❌ recovers<br>❌ can withdraw | ✅ safe<br>✅ recovers<br>✅ can withdraw |

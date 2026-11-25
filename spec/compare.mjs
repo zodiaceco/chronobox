@@ -11,7 +11,7 @@ if (!(DELAY >= 48 && DELAY % 24 === 0)) throw new Error("DELAY must be a multipl
 const SETUPS = { simple: "Simple", guardianVeto: "With guardian", guardianRecovery: "With guardian + recovery" };
 const SCENARIOS = [
   ["none", "No incident"],
-  ["coercion", "Coercion (forced to sign with H, for less than the delay)"],
+  ["coercion", "Coercion (forced to sign with H, released with a day left to cancel)"],
   ["hotKeyLeak", "Hot key leaked"],
   ["hotKeyTaken", "Hot key taken (only the attacker has it: long coercion, stolen without a backup, or the owner can never sign again)"],
   ["hotKeyLost", "Hot key lost"],
