@@ -6,7 +6,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CONTRACTS } from "../lib/chains.ts";
-import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
+import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { calendarFile, download } from "../lib/ics.ts";
 import { addCustomToken, blockHints, pendingSwap, rememberVault, setPendingSwap, txCache } from "../lib/store.ts";
@@ -52,7 +52,7 @@ import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { Ring } from "./ring.tsx";
-import { LookupSheet, OwnerHoldings } from "./holdings.tsx";
+import { LookupSheet, useFoundTokens } from "./holdings.tsx";
 import { GroupCard, WithdrawManySheet, collectCalls, groupsOf } from "./batch.tsx";
 import { lookupAllowed } from "../lib/store.ts";
 import { DepositPanel } from "./deposit.tsx";
@@ -286,8 +286,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
   // Counts the times third-party services were switched: the list then reads again.
   const [lookupRound, setLookupRound] = useState(0);
-  // Tokens in the Chronobox that only the index knows. They can be withdrawn like the others.
-  const [found, setFound] = useState<{ assets: Asset[]; box: (bigint | null)[] }>({ assets: [], box: [] });
+  // Tokens in the Chronobox that only the index knows, with third-party services on. They are shown, and withdrawn, like the others.
+  const found = useFoundTokens(session, chain, safe, lookupRound + (data?.fetchedAt ?? 0));
   // The wallet can send several calls as one. Then several assets can be withdrawn together, and collected together.
   const [batch, setBatch] = useState(false);
   useEffect(() => {
@@ -472,7 +472,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   };
 
   // What is inside: every asset with a balance. The first one is shown large.
-  const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
+  const held = [...assets, ...found.assets].map((asset, i) => ({ asset, amount: [...balances, ...found.box][i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
   // Until the balances are read once, a missing one is "not read yet", not "could not be read".
   const unread = data.balancesRead ? assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol) : [];
@@ -537,22 +537,22 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               You are the guardian
             </p>
           ) : null}
-          {isController ? (
-            // The owner sees one list: what the wallet holds (unlocked) next to what the Chronobox holds (locked).
-            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound + data.fetchedAt} onLookup={() => setSheet("lookup")} onFound={setFound} />
-          ) : (
-            <>
-              <p class="eyebrow">{`A Chronobox on ${chain.name}`}</p>
-              <ul class="balances">
-                {shown.map((h) => (
-                  <li key={h.asset.token ?? "native"}>
-                    <span class="balance-amount">{h.amount === null ? "…" : formatAmount(h.amount, h.asset.decimals)}</span>
-                    <span class="balance-symbol">{h.asset.symbol}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
+          <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
+          <ul class="balances">
+            {shown.map((h) => (
+              <li key={h.asset.token ?? "native"}>
+                <span class="balance-amount" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
+                  {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
+                </span>
+                <span class="balance-symbol">{h.asset.symbol}</span>
+              </li>
+            ))}
+          </ul>
+          {isController && chain.indexer && !lookupAllowed() ? (
+            <button type="button" class="link-button" onClick={() => setSheet("lookup")}>
+              A token is missing? Find all tokens in this Chronobox
+            </button>
+          ) : null}
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
           {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {locked ? (
