@@ -126,6 +126,8 @@ function useVault(session: Session, chain: Chain, safe: Address) {
       try {
         const rpc = session.rpc;
         const assets = assetsOf(chain);
+        // The balances do not depend on the checks. Their read starts now, next to the checks, and not after them.
+        const early = readBalances(rpc, safe, assets).catch(() => null);
         let [inspection, now] = await Promise.all([inspect(rpc, safe, blockHints(chain.id)), chainTime(rpc)]);
         // A check that passed a moment ago and cannot run now is asked once more before the page says so.
         if (last.current?.key === key && last.current.inspection.state === "locked" && inspection.state !== "locked") {
@@ -169,10 +171,7 @@ function useVault(session: Session, chain: Chain, safe: Address) {
 
         const balances = missing
           ? Promise.resolve()
-          : readBalances(rpc, safe, assets).then(
-              ({ balances, complete }) => publish({ balances, allRead: complete, balancesRead: true }),
-              () => publish({ balancesRead: true, allRead: false }),
-            );
+          : early.then((read) => (read ? publish({ balances: read.balances, allRead: read.complete, balancesRead: true }) : publish({ balancesRead: true, allRead: false })));
         const queue = readsQueue
           ? readQueue(rpc, inspection, txCache(chain.id, inspection.delay!), {
               known: kept,

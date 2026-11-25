@@ -181,7 +181,7 @@ test("many balances come from one read, and a failed read is not a balance of ze
   const TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const assets = [{ token: null, main: true }, { token: TOKEN, main: true }, { token: SAFE }] as const;
   const good = await readBalances(async () => (requests++, answer), WALLET, assets);
-  assert.deepEqual(good, { balances: [5n, null, null], complete: true });
+  assert.deepEqual(good, { balances: [5n, null, null], complete: true, reduced: false });
   assert.equal(requests, 1);
 
   // The network has no Multicall3: the main assets are read one by one, the others stay unknown.
@@ -194,7 +194,31 @@ test("many balances come from one read, and a failed read is not a balance of ze
     WALLET,
     assets,
   );
-  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false, reduced: false });
+});
+
+test("a network that refuses a large read gets the same balances in smaller pieces", async () => {
+  const w = (n: number | bigint) => BigInt(n).toString(16).padStart(64, "0");
+  // Multicall3's answer for n calls that each return 1.
+  const answerFor = (n: number) => {
+    const entry = w(1) + w(64) + w(32) + w(1);
+    const offsets = Array.from({ length: n }, (_, k) => 32 * n + k * 128);
+    return "0x" + w(32) + w(n) + offsets.map(w).join("") + entry.repeat(n);
+  };
+  const assets = Array.from({ length: 30 }, (_, k) => ({ token: `0x${(k + 1).toString(16).padStart(40, "0")}` as `0x${string}` }));
+  const sizes: number[] = [];
+  const rpc = async (_method: string, params: any[] = []) => {
+    // The calldata of aggregate3 holds the number of calls in its second word.
+    const n = Number(BigInt("0x" + String(params[0].data).slice(10 + 64, 10 + 128)));
+    sizes.push(n);
+    if (n > 8) throw new Error("request too large");
+    return answerFor(n);
+  };
+  const read = await readBalances(rpc, WALLET, assets);
+  assert.equal(read.complete, true);
+  assert.equal(read.reduced, true);
+  assert.ok(read.balances.every((b) => b === 1n));
+  assert.ok(sizes.includes(8));
 });
 
 test("guardian changes are recognised, and nothing close to them is", () => {

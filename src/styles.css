@@ -3330,3 +3330,22 @@ button.row-strong:hover .row-hint {
   display: grid;
   gap: 10px;
 }
+
+/* The sky behind the foot of the page: no planet, a soft blue light on the page's own colour. */
+.horizon {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 300px;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: radial-gradient(120% 100% at 50% 118%, rgb(70 156 237 / 0.55) 0%, rgb(70 156 237 / 0.36) 30%, rgb(70 156 237 / 0.17) 55%, rgb(70 156 237 / 0.06) 78%, rgb(70 156 237 / 0) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .horizon {
+    box-shadow: none;
+    background: radial-gradient(120% 100% at 50% 118%, rgb(70 156 237 / 0.9) 0%, rgb(70 156 237 / 0.66) 30%, rgb(70 156 237 / 0.36) 55%, rgb(70 156 237 / 0.12) 78%, rgb(70 156 237 / 0) 100%);
+  }
+}
