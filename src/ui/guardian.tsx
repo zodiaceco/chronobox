@@ -245,8 +245,8 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; onCl
         <Choice
           role="checkbox"
           on={noBackup}
-          title="My guardian is not a backup."
-          text="If I lose my wallet, the money in this Chronobox is lost."
+          title="My guardian alone is not a backup."
+          text="If I lose my wallet, the money in this Chronobox is lost, unless I also set a recovery."
           disabled={!!action.busy}
           onClick={() => setNoBackup(!noBackup)}
         />
@@ -269,7 +269,19 @@ function ManageSheet(props: { session: Session; chain: Chain; vault: VaultRef; o
   const { session, chain, vault, wait } = props;
   const [stage, setStage] = useState<"show" | "remove" | "done" | "unknown">("show");
   const action = useAction();
-  const tx = vault.roles && vault.council && vault.members ? removeGuardianTx({ roles: vault.roles, guardian: props.guardian, council: vault.council, members: vault.members }) : null;
+  const tx =
+    vault.roles && vault.council && vault.members
+      ? removeGuardianTx({
+          roles: vault.roles,
+          guardian: props.guardian,
+          council: vault.council,
+          members: vault.members,
+          safe: vault.safe,
+          modules: vault.modules,
+          recoveryDelay: vault.recoveryDelay,
+          recoveryOn: vault.recoveryOn,
+        })
+      : null;
   const submit = () =>
     action.run("queue", async (waiting) => {
       const receipt = await queueItem(session, chain, vault, tx!, waiting);
@@ -290,7 +302,10 @@ function ManageSheet(props: { session: Session; chain: Chain; vault: VaultRef; o
   if (stage === "remove") {
     return (
       <Modal title="Remove your guardian?" lead={`This waits ${wait}, and your guardian can stop it in that time.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
-        <p>After it, only your wallet can cancel a withdrawal, and nobody can help you move to a new wallet at once.</p>
+        <p>
+          After it, only your wallet can cancel a withdrawal, and nobody can help you move to a new wallet at once.
+          {vault.recoveryOn ? " Your recovery goes off with it: a recovery needs a guardian to start it." : ""}
+        </p>
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
@@ -312,6 +327,7 @@ function ManageSheet(props: { session: Session; chain: Chain; vault: VaultRef; o
       <ul class="plain-list">
         <li>Can stop any withdrawal while it waits.</li>
         <li>Can move this Chronobox to a new wallet, together with you.</li>
+        <li>{vault.recoveryOn ? "Can start a recovery when you have lost your wallet." : "Cannot bring this Chronobox back when you lose your wallet. For that, set a recovery."}</li>
         <li>Cannot withdraw, and cannot take your money.</li>
       </ul>
       <p class="hint">The link for your guardian. It opens this Chronobox for them.</p>

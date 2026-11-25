@@ -72,6 +72,17 @@ const ENABLE_MODULE = selector("enableModule(address)");
 const DISABLE_MODULE = selector("disableModule(address,address)");
 const ASSIGN_ROLES = selector("assignRoles(address,bytes32[],bool[])");
 
+/**
+ * The third role, for a Chronobox with a recovery: bytes32("recover"). Its one member is the
+ * guardian. It allows one exact call: put the recovery into the line of the recovery Delay.
+ * The recovery itself is fixed when the owner sets it: the Chronobox goes to the recovery
+ * wallet that the owner chose. The guardian decides only when it starts.
+ */
+export const RECOVER_ROLE: Hex = ("0x" + strip(utf8("recover")).padEnd(64, "0")) as Hex;
+const EXEC_FROM_MODULE = selector("execTransactionFromModule(address,uint256,bytes,uint8)");
+/** The abi.ts encoder has no tuples, so the arguments of this one function are put together by hand. See scopeArgs. */
+const SCOPE_FUNCTION = selector("scopeFunction(bytes32,address,bytes4,(uint8,uint8,uint8,bytes)[],uint8)");
+
 // Events of the Roles modifier, from the verified ABI of the master copy.
 const ROLES_TOPIC = {
   setup: topic("RolesModSetup(address,address,address,address)"),
@@ -84,6 +95,7 @@ const ROLES_TOPIC = {
   assignRoles: topic("AssignRoles(address,bytes32[],bool[])"),
   scopeTarget: topic("ScopeTarget(bytes32,address)"),
   allowFunction: topic("AllowFunction(bytes32,address,bytes4,uint8)"),
+  scopeFunction: topic("ScopeFunction(bytes32,address,bytes4,(uint8,uint8,uint8,bytes)[],uint8)"),
   execSuccess: topic("ExecutionFromModuleSuccess(address)"),
   execFailure: topic("ExecutionFromModuleFailure(address)"),
 };
@@ -101,6 +113,14 @@ const TOPIC_PROXY_CREATION = topic("ProxyCreation(address,address)");
 export const EXPIRATION_SECONDS = 7n * 24n * 3600n;
 export const MIN_COOLDOWN = 3600n;
 export const MAX_COOLDOWN = 90n * 24n * 3600n;
+
+/** A recovery that is ready stays executable this long. Longer than a withdrawal: the people involved may be slow. */
+export const RECOVERY_EXPIRATION = 30n * 24n * 3600n;
+/** The wait that the recovery Delay is made with. The setup changes it to the wait that the owner chose. */
+const RECOVERY_FIRST_WAIT = 90n * 24n * 3600n;
+export const MAX_RECOVERY_WAIT = 365n * 24n * 3600n;
+/** The recovery Delay has its own salt, so it can never be at the address of the Delay for withdrawals. */
+const SALT_RECOVERY = SALT_BASE + 1n;
 
 // ---------------------------------------------------------------------------
 // Address prediction
@@ -143,10 +163,23 @@ export function predictDelay(safe: Address, cooldown: bigint, expiration: bigint
   return minimalProxyAddress(CONTRACTS.delayMastercopy, delayInitializer(safe, cooldown, expiration));
 }
 
-function minimalProxyAddress(mastercopy: Address, initializer: Hex): Address {
-  const salt = keccak(concat(keccak(initializer), uintWord(SALT_BASE)));
+function minimalProxyAddress(mastercopy: Address, initializer: Hex, saltNonce: bigint = SALT_BASE): Address {
+  const salt = keccak(concat(keccak(initializer), uintWord(saltNonce)));
   const initCode = concat(MINIMAL_PROXY_DEPLOY, MINIMAL_PROXY_PREFIX, mastercopy, MINIMAL_PROXY_SUFFIX);
   return create2(CONTRACTS.moduleProxyFactory, salt, keccak(initCode));
+}
+
+function recoveryInitializer(safe: Address): Hex {
+  return delayInitializer(safe, RECOVERY_FIRST_WAIT, RECOVERY_EXPIRATION);
+}
+
+/**
+ * The second Delay of a Chronobox with a recovery: the line that a recovery waits in. Its
+ * address depends only on the Chronobox, so there is one for each Chronobox, for ever. The
+ * wait is a setting of that contract, and the owner can change it through the line.
+ */
+export function predictRecoveryDelay(safe: Address): Address {
+  return minimalProxyAddress(CONTRACTS.delayMastercopy, recoveryInitializer(safe), SALT_RECOVERY);
 }
 
 /** The Roles modifier is owned by the Safe. So its one permission can change only through the Delay queue. */
@@ -539,8 +572,45 @@ export type Inspection = {
   councilMade: boolean;
   /** The members of the Roles modifier in the order of the contract's list, newest first. */
   members: Address[];
+  /** The modules of the Safe in the order of the contract's list, newest first. */
+  modules: Address[];
+  /** The recovery Delay of this Chronobox, as it is on chain now. It may not be made yet. */
+  recoveryDelay: RecoveryParts | null;
+  /** The recovery, when it is on: the guardian can start it, and it moves the Chronobox to `wallet`. */
+  recovery: Recovery | null;
   cooldown: bigint;
   expiration: bigint;
+  txNonce: bigint;
+  queueNonce: bigint;
+};
+
+/** The recovery Delay as it is on chain. Every builder that touches the recovery needs it. */
+export type RecoveryParts = {
+  delay: Address;
+  /** The contract exists at its address. */
+  deployed: boolean;
+  /** It is a module of the Safe, so what it executes happens. */
+  enabled: boolean;
+  /** The Safe is its module, so the Safe (and nobody else) can put things into its line. */
+  wired: boolean;
+  /** Owner, avatar and target are the Safe, nothing guards it, and nobody but the Safe is its module. */
+  sound: boolean;
+  cooldown: bigint;
+  expiration: bigint;
+  txNonce: bigint;
+  queueNonce: bigint;
+};
+
+export type Recovery = {
+  delay: Address;
+  /** The recovery wallet: the wallet that gets the Chronobox. */
+  wallet: Address;
+  wait: bigint;
+  expiration: bigint;
+  /** The one action that the guardian can start. */
+  batch: DelayTx;
+  /** False when it was set for another wallet or guardian than now. Then it would do nothing, and must be set again. */
+  fits: boolean;
   txNonce: bigint;
   queueNonce: bigint;
 };
@@ -635,8 +705,21 @@ export type Guard = { guardian: Address; council: Address };
  *     disableModule on this contract (the cancel right moves with it).
  *     Member: the 2 of 2 Safe of wallet and guardian, and nobody else.
  *
+ *   - "recover", only after a recovery was set: one exact call on the recovery
+ *     Delay of this Chronobox, which puts a wallet change into its line.
+ *     Member: the guardian, and nobody else. "cancel" covers that line too.
+ *
  * Returns null when the RPC cannot provide the history.
  */
+export type History = {
+  ok: boolean;
+  detail: string;
+  /** Who can start a recovery now. Empty, or the guardian. */
+  recoverers?: string[];
+  /** The one action that they can start: the last rule that was written. */
+  recoverBatch?: DelayTx | null;
+};
+
 export async function verifyCancelPermission(
   rpc: Rpc,
   roles: Address,
@@ -644,7 +727,8 @@ export async function verifyCancelPermission(
   controller: Address,
   hints?: BlockHints,
   guard: Guard | null = null,
-): Promise<{ ok: boolean; detail: string } | null> {
+  recovery: Address | null = null,
+): Promise<History | null> {
   const read = (from: bigint | null) => logsOf(rpc, roles, from);
   let logs: Log[];
   try {
@@ -655,9 +739,11 @@ export async function verifyCancelPermission(
   } catch {
     return null;
   }
-  const bad = (detail: string) => ({ ok: false, detail });
+  const bad = (detail: string): History => ({ ok: false, detail });
   const cancellers = new Set<string>();
   const council = new Set<string>();
+  const recoverers = new Set<string>();
+  let recoverBatch: DelayTx | null = null;
   // What each role may call, as "target:function". Nothing else may ever have been granted.
   const allowedFor: Record<string, string[]> = {
     [CANCEL_ROLE]: [`${delay}:${SET_TX_NONCE}`],
@@ -673,20 +759,32 @@ export async function verifyCancelPermission(
       hints?.set(roles, toBigInt(log.blockNumber));
     } else if (kind === ROLES_TOPIC.assignRoles) {
       const [member, keys, flags] = decode(["address", "bytes32[]", "bool[]"], log.data) as [Address, Hex[], boolean[]];
-      if (keys.length !== 1 || flags.length !== 1 || (keys[0] !== CANCEL_ROLE && keys[0] !== COUNCIL_ROLE)) return bad(`A role that a Chronobox does not have was assigned to ${member}`);
-      const set = keys[0] === CANCEL_ROLE ? cancellers : council;
+      if (keys.length !== 1 || flags.length !== 1 || (keys[0] !== CANCEL_ROLE && keys[0] !== COUNCIL_ROLE && keys[0] !== RECOVER_ROLE)) {
+        return bad(`A role that a Chronobox does not have was assigned to ${member}`);
+      }
+      const set = keys[0] === CANCEL_ROLE ? cancellers : keys[0] === COUNCIL_ROLE ? council : recoverers;
       if (flags[0]) set.add(member.toLowerCase());
       else set.delete(member.toLowerCase());
     } else if (kind === ROLES_TOPIC.scopeTarget) {
       const [key, target] = decode(["bytes32", "address"], log.data) as [Hex, Address];
-      const ok = (key === CANCEL_ROLE && sameAddress(target, delay)) || (key === COUNCIL_ROLE && (sameAddress(target, delay) || sameAddress(target, roles)));
+      const ok =
+        (key === CANCEL_ROLE && (sameAddress(target, delay) || sameAddress(target, recovery))) ||
+        (key === COUNCIL_ROLE && (sameAddress(target, delay) || sameAddress(target, roles))) ||
+        (key === RECOVER_ROLE && sameAddress(target, recovery));
       if (!ok) return bad(`A permission on another contract exists: ${target}`);
     } else if (kind === ROLES_TOPIC.allowFunction) {
       const [key, target, fn, options] = decode(["bytes32", "address", "bytes4", "uint8"], log.data) as [Hex, Address, Hex, bigint];
       const wanted = (allowedFor[key] ?? []).find((entry) => entry.toLowerCase() === `${target}:${fn}`.toLowerCase());
+      // Cancel also covers the line of the recovery Delay. That is extra, never required.
+      const extra = key === CANCEL_ROLE && recovery !== null && sameAddress(target, recovery) && fn.toLowerCase() === SET_TX_NONCE;
       // Execution option 0 only: a plain call with no value, never a delegatecall.
-      if (!wanted || options !== 0n) return bad(`A permission that a Chronobox does not have exists: ${fn} on ${target}`);
-      granted.add(`${key}:${wanted}`.toLowerCase());
+      if ((!wanted && !extra) || options !== 0n) return bad(`A permission that a Chronobox does not have exists: ${fn} on ${target}`);
+      if (wanted) granted.add(`${key}:${wanted}`.toLowerCase());
+    } else if (kind === ROLES_TOPIC.scopeFunction) {
+      // The one rule with conditions: what a recovery is. It must be exactly the rule that this app writes.
+      const batch = recovery ? scopedBatch(log.data, recovery) : null;
+      if (!batch || recoveryWallet(batch, delay, roles) === null) return bad("A permission with conditions exists that is not a recovery");
+      recoverBatch = batch;
     } else if (
       kind !== ROLES_TOPIC.initialized &&
       kind !== ROLES_TOPIC.avatarSet &&
@@ -711,7 +809,10 @@ export async function verifyCancelPermission(
   if (guard ? !has(COUNCIL_ROLE) || council.size !== 1 || !council.has(guard.council.toLowerCase()) : council.size !== 0) {
     return bad(`Addresses that can change the wallet without the wait: ${[...council].join(", ") || "none"}`);
   }
-  return { ok: true, detail: `Read from the full event history of ${roles}` };
+  if (recoverers.size > 0 && (!guard || recoverers.size !== 1 || !recoverers.has(guard.guardian.toLowerCase()) || !recoverBatch)) {
+    return bad(`Addresses that can start a recovery: ${[...recoverers].join(", ")}`);
+  }
+  return { ok: true, detail: `Read from the full event history of ${roles}`, recoverers: [...recoverers], recoverBatch };
 }
 
 async function modulesOf(rpc: Rpc, address: Address): Promise<Address[] | null> {
@@ -779,7 +880,7 @@ export async function councilCompatible(rpc: Rpc, safe: Address, wallet: Address
 }
 
 /** History checks that passed, keyed by network + vault state. See where it is used. */
-const passed = new WeakMap<Rpc, Map<string, { ok: boolean; detail: string }>>();
+const passed = new WeakMap<Rpc, Map<string, History>>();
 
 export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Promise<Inspection> {
   const result: Inspection = {
@@ -794,6 +895,9 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     council: null,
     councilMade: false,
     members: [],
+    modules: [],
+    recoveryDelay: null,
+    recovery: null,
     cooldown: 0n,
     expiration: 0n,
     txNonce: 0n,
@@ -858,13 +962,18 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     `Owner: ${owners.join(", ") || "none"}`,
   );
 
-  // The modules: one Delay, and at most one Roles modifier. Nothing else.
+  // The modules: one Delay, and at most one Roles modifier. With a recovery, one more Delay, at
+  // the one address where the recovery Delay of this Chronobox can be. Nothing else.
+  const recoveryAddress = predictRecoveryDelay(safe);
   const codes = await Promise.all((modules ?? []).map((m) => getCode(rpc, m)));
-  const delays = (modules ?? []).filter((_, i) => strip(codes[i]) === strip(DELAY_PROXY_CODE));
+  const isDelay = (i: number) => strip(codes[i]) === strip(DELAY_PROXY_CODE);
+  const delays = (modules ?? []).filter((m, i) => isDelay(i) && !sameAddress(m, recoveryAddress));
+  const recoveryEnabled = (modules ?? []).some((m, i) => isDelay(i) && sameAddress(m, recoveryAddress));
   const rolesList = (modules ?? []).filter((_, i) => strip(codes[i]) === strip(ROLES_PROXY_CODE));
+  result.modules = modules ?? [];
   const moduleOk = add(
     "module",
-    modules !== null && delays.length === 1 && rolesList.length <= 1 && delays.length + rolesList.length === modules.length,
+    modules !== null && delays.length === 1 && rolesList.length <= 1 && delays.length + rolesList.length + (recoveryEnabled ? 1 : 0) === modules.length,
     "The time lock is the only way out",
     modules === null ? "More than ten modules" : `Modules of the Safe: ${modules.join(", ") || "none"}`,
   );
@@ -904,6 +1013,18 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   );
   if (controllerOk && controllers) result.controller = controllers[0];
   const cooldownOk = add("cooldown", cooldown > 0n, "Every withdrawal has to wait", `${cooldown} seconds`);
+
+  // The recovery Delay. While it is not a module of the Safe, nothing it does can happen.
+  const parts = await recoveryParts(rpc, safe, recoveryAddress, recoveryEnabled);
+  result.recoveryDelay = parts;
+  const recoveryOk = recoveryEnabled
+    ? add(
+        "recovery-wiring",
+        parts.sound && parts.wired && parts.cooldown > 0n,
+        "Only the Chronobox itself can start or change a recovery",
+        `The recovery Delay ${parts.delay}: its owner, avatar, target and only module are the Safe`,
+      )
+    : true;
 
   let cancelOk = true;
   let cancelUnknown = false;
@@ -981,10 +1102,10 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
       const chainKey = hints?.chainId;
       const key =
         chainKey !== undefined && isolated
-          ? `${chainKey}:${safe}:${safeNonce}:${roles}:${delay}:${controller}:${txNonce}:${councilNonce}:${result.members.join(",")}`.toLowerCase()
+          ? `${chainKey}:${safe}:${safeNonce}:${roles}:${delay}:${controller}:${txNonce}:${councilNonce}:${result.members.join(",")}:${parts.txNonce}`.toLowerCase()
           : null;
       const kept = key ? passed.get(rpc)?.get(key) : undefined;
-      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard));
+      const history = kept ?? (await verifyCancelPermission(rpc, roles, delay, controller, hints, guard, recoveryAddress));
       if (history?.ok && key && !kept) {
         if (!passed.has(rpc)) passed.set(rpc, new Map());
         passed.get(rpc)!.set(key, history);
@@ -1001,14 +1122,61 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
         });
       } else {
         cancelOk = add("cancel-only", history.ok, label, history.detail);
+        // The recovery is on when its Delay can act, and the guardian can start the one action that was set.
+        const wallet = history.ok && history.recoverBatch ? recoveryWallet(history.recoverBatch, delay, roles) : null;
+        if (history.ok && guard && recoveryEnabled && recoveryOk && wallet && history.recoverBatch && history.recoverers?.length === 1) {
+          const now = recoveryTx({ safe, delay, roles, controller, guardian: guard.guardian, council: guard.council, members: result.members }, wallet);
+          const fits = now !== null && sameTx(now, history.recoverBatch);
+          result.recovery = {
+            delay: parts.delay,
+            wallet,
+            wait: parts.cooldown,
+            expiration: parts.expiration,
+            batch: history.recoverBatch,
+            fits,
+            txNonce: parts.txNonce,
+            queueNonce: parts.queueNonce,
+          };
+          add(
+            "recovery",
+            true,
+            "A recovery can only move it to the recovery wallet, and it waits",
+            fits
+              ? `Recovery wallet ${wallet}. Only the guardian can start it.`
+              : `It was set for another wallet or guardian than now, so it would do nothing. Recovery wallet ${wallet}.`,
+          );
+        }
       }
     }
   }
 
-  if (cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk && cancelOk) {
+  if (cleanOk && ownerOk && wiringOk && guardOk && controllerOk && cooldownOk && cancelOk && recoveryOk) {
     result.state = cancelUnknown ? "unverified" : "locked";
   }
   return result;
+}
+
+/** Reads the recovery Delay of a Chronobox. It is at one address, and it may not be made yet. */
+async function recoveryParts(rpc: Rpc, safe: Address, address: Address, enabled: boolean): Promise<RecoveryParts> {
+  const none: RecoveryParts = { delay: address, deployed: false, enabled, wired: false, sound: false, cooldown: 0n, expiration: 0n, txNonce: 0n, queueNonce: 0n };
+  const code = await getCode(rpc, address);
+  if (strip(code) !== strip(DELAY_PROXY_CODE)) return none;
+  const one = (signature: string, type: string) => read(rpc, address, signature, [], [type]).then((r) => r[0]);
+  const [owner, avatar, target, modules, cooldown, expiration, txNonce, queueNonce, guard] = await Promise.all([
+    one("owner()", "address") as Promise<Address>,
+    one("avatar()", "address") as Promise<Address>,
+    one("target()", "address") as Promise<Address>,
+    modulesOf(rpc, address),
+    one("txCooldown()", "uint256") as Promise<bigint>,
+    one("txExpiration()", "uint256") as Promise<bigint>,
+    one("txNonce()", "uint256") as Promise<bigint>,
+    one("queueNonce()", "uint256") as Promise<bigint>,
+    one("getGuard()", "address") as Promise<Address>,
+  ]);
+  const wired = modules !== null && modules.some((m) => sameAddress(m, safe));
+  const sound =
+    sameAddress(owner, safe) && sameAddress(avatar, safe) && sameAddress(target, safe) && sameAddress(guard, ZERO) && modules !== null && modules.every((m) => sameAddress(m, safe));
+  return { delay: address, deployed: true, enabled, wired, sound, cooldown, expiration, txNonce, queueNonce };
 }
 
 /** True when the setup of this Safe stopped after its first step: the wallet is still its only owner. */
@@ -1199,6 +1367,8 @@ export function itemStatus(item: { createdAt: bigint }, cooldown: bigint, expira
 // ---------------------------------------------------------------------------
 
 export type Action =
+  | { kind: "set-recovery"; wallet: Address; wait: bigint }
+  | { kind: "remove-recovery" }
   | { kind: "withdraw"; token: Address | null; amount: bigint }
   | { kind: "change-delay"; cooldown: bigint }
   | { kind: "change-wallet"; to: Address }
@@ -1245,6 +1415,13 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
     if (guard) {
       const remove = removeGuardianTx(vault as Guarded);
       if (remove && sameTx(remove, tx)) return { kind: "remove-guardian", guardian: guard.guardian };
+      if (vault.recoveryDelay) {
+        const off = removeRecoveryTx(vault as Guarded);
+        if (off && sameTx(off, tx)) return { kind: "remove-recovery" };
+        const asked = recoveryRequest(tx, vault as Guarded);
+        const set = asked ? setRecoveryTx(vault as Guarded, asked.wallet, asked.wait) : null;
+        if (asked && set && sameTx(set, tx)) return { kind: "set-recovery", ...asked };
+      }
     } else {
       const guardian = newGuardian(tx, vault.roles);
       const adding = guardian ? addGuardianTx({ safe: vault.safe, delay: vault.delay, roles: vault.roles, controller: vault.controller }, guardian) : null;
@@ -1328,8 +1505,24 @@ export type VaultParts = {
   guardian?: Address | null;
   council?: Address | null;
   members?: Address[];
+  /** The modules of the Safe, newest first, and the recovery Delay as it is now. Needed for everything about a recovery. */
+  modules?: Address[];
+  recoveryDelay?: RecoveryParts | null;
+  /** True while a recovery is on. Then taking the guardian out takes the recovery out too. */
+  recoveryOn?: boolean;
 };
-type Guarded = { safe: Address; delay: Address; controller: Address; roles: Address; guardian: Address; council: Address; members: Address[] };
+type Guarded = {
+  safe: Address;
+  delay: Address;
+  controller: Address;
+  roles: Address;
+  guardian: Address;
+  council: Address;
+  members: Address[];
+  modules?: Address[];
+  recoveryDelay?: RecoveryParts | null;
+  recoveryOn?: boolean;
+};
 type GuardList = Guard & { members: Address[] };
 
 function guardOf(vault: VaultParts): GuardList | null {
@@ -1380,6 +1573,11 @@ export function changeWalletTx(
   safe: Address | null = null,
   guard: GuardList | null = null,
 ): DelayTx | null {
+  const items = walletChangeItems(delay, from, to, roles, safe, guard);
+  return items ? batchTx(items) : null;
+}
+
+function walletChangeItems(delay: Address, from: Address, to: Address | null, roles: Address | null, safe: Address | null, guard: GuardList | null): string[] | null {
   // An address that nobody can sign with would lock the Chronobox for ever: its own parts, and the burn address.
   const dead = [ZERO, SENTINEL, delay, roles, safe, CONTRACTS.burn, CONTRACTS.multiSend, guard?.guardian, guard?.council];
   if (!to || sameAddress(to, from) || dead.some((address) => sameAddress(to, address))) return null;
@@ -1404,7 +1602,7 @@ export function changeWalletTx(
       items.push(batchItem(roles, call("disableModule(address,address)", [members.remove(guard.council), guard.council])));
     }
   }
-  return batchTx(items);
+  return items;
 }
 
 /**
@@ -1467,16 +1665,227 @@ function batchCalls(tx: DelayTx): { to: Address; data: Hex }[] | null {
  * Takes the guardian out again: the right to cancel, and the role of the shared Safe. It waits
  * the delay, and the guardian can cancel it. That is what a guardian is for.
  */
-export function removeGuardianTx(vault: { roles: Address; guardian: Address; council: Address; members: Address[] }): DelayTx | null {
+export function removeGuardianTx(vault: {
+  roles: Address;
+  guardian: Address;
+  council: Address;
+  members: Address[];
+  safe?: Address;
+  modules?: Address[];
+  recoveryDelay?: RecoveryParts | null;
+  recoveryOn?: boolean;
+}): DelayTx | null {
   const { roles, guardian, council } = vault;
   const members = new Members(vault.members);
   if (![guardian, council].every((a) => members.list.some((m) => sameAddress(m, a)))) return null;
+  // A recovery needs a guardian to start it. Without the guardian it goes too, in the same step.
+  const recovery = vault.recoveryOn ? recoveryOffItems(vault) : [];
+  if (recovery === null) return null;
   return batchTx([
+    ...recovery,
     batchItem(roles, assign(guardian, CANCEL_ROLE, false)),
     batchItem(roles, assign(council, COUNCIL_ROLE, false)),
     batchItem(roles, call("disableModule(address,address)", [members.remove(guardian), guardian])),
     batchItem(roles, call("disableModule(address,address)", [members.remove(council), council])),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// Recovery: the guardian can bring the Chronobox to the recovery wallet, after a long wait
+// ---------------------------------------------------------------------------
+
+type Condition = { parent: number; type: number; operator: number; value: string };
+const padded = (hex: string) => hex.padEnd(Math.ceil(hex.length / 64) * 64, "0");
+
+/**
+ * The rule of the recover role, in the form of the Roles modifier: the call must be
+ * execTransactionFromModule(to, value, data, operation) with exactly these four values.
+ *   type 5 = call data, operator 5 = every part matches its rule
+ *   type 1 = a fixed-size value, type 2 = bytes, operator 16 = equal to
+ * For bytes, "equal to" compares the length and the content.
+ *
+ * The contract wants the bytes value as abi.encode(bytes), which starts with an offset word. It
+ * drops that word before it stores the rule. The event it emits carries the rule as it was sent.
+ */
+function recoverConditions(batch: DelayTx): Condition[] {
+  const data = strip(batch.data);
+  return [
+    { parent: 0, type: 5, operator: 5, value: "" },
+    { parent: 0, type: 1, operator: 16, value: word(batch.to) },
+    { parent: 0, type: 1, operator: 16, value: uintWord(batch.value) },
+    { parent: 0, type: 2, operator: 16, value: uintWord(32) + uintWord(data.length / 2) + padded(data) },
+    { parent: 0, type: 1, operator: 16, value: uintWord(batch.operation) },
+  ];
+}
+
+/**
+ * The ABI encoding of (bytes32 role, address target, bytes4 function, Condition[] conditions, uint8 options),
+ * without "0x". These are the arguments of scopeFunction, and also the data of the event it emits.
+ * Options 0: a plain call with no value.
+ */
+function scopeArgs(role: Hex, target: Address, fn: Hex, conditions: Condition[]): string {
+  const tuples = conditions.map((c) => uintWord(c.parent) + uintWord(c.type) + uintWord(c.operator) + uintWord(128) + uintWord(c.value.length / 2) + padded(c.value));
+  let at = conditions.length * 32;
+  const offsets = tuples.map((tuple) => {
+    const offset = uintWord(at);
+    at += tuple.length / 2;
+    return offset;
+  });
+  return (strip(role) + word(target) + strip(fn).padEnd(64, "0") + uintWord(160) + uintWord(0) + uintWord(conditions.length) + offsets.join("") + tuples.join("")).toLowerCase();
+}
+
+/**
+ * Reads the action out of a recover rule, from the arguments of scopeFunction or from the data of
+ * its event. Null unless the whole rule is exactly the one that this app writes for that action.
+ */
+function scopedBatch(args: string, recovery: Address): DelayTx | null {
+  try {
+    const hex = strip(args).toLowerCase();
+    const numberAt = (byte: number) => {
+      const w = hex.slice(byte * 2, byte * 2 + 64);
+      if (w.length !== 64 || toBigInt("0x" + w) > BigInt(hex.length)) throw new Error("out of range");
+      return Number(toBigInt("0x" + w));
+    };
+    const arrayAt = numberAt(96) + 32;
+    if (numberAt(arrayAt - 32) !== 5) return null;
+    const tupleAt = arrayAt + numberAt(arrayAt + 3 * 32);
+    // The value of the third condition: [offset word] [length] [the bytes].
+    const valueAt = tupleAt + numberAt(tupleAt + 96) + 64;
+    const length = numberAt(valueAt);
+    const batch: DelayTx = { to: CONTRACTS.multiSend, value: 0n, data: ("0x" + hex.slice((valueAt + 32) * 2, (valueAt + 32 + length) * 2)) as Hex, operation: 1 };
+    return scopeArgs(RECOVER_ROLE, recovery, EXEC_FROM_MODULE, recoverConditions(batch)) === hex ? batch : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The wallet that a recovery would bring the Chronobox to. Null unless the action is a wallet
+ * change and nothing else: it may only enable and disable modules of the Delay, and move roles.
+ * So whatever was set, a recovery can never move money.
+ */
+function recoveryWallet(batch: DelayTx, delay: Address, roles: Address): Address | null {
+  const calls = batchCalls(batch);
+  if (!calls || calls.length < 2) return null;
+  for (const one of calls) {
+    const fn = one.data.slice(0, 10).toLowerCase();
+    const onDelay = sameAddress(one.to, delay) && (fn === ENABLE_MODULE || fn === DISABLE_MODULE);
+    const onRoles = sameAddress(one.to, roles) && (fn === ASSIGN_ROLES || fn === DISABLE_MODULE);
+    if (!onDelay && !onRoles) return null;
+  }
+  return firstNewWallet(batch);
+}
+
+/**
+ * What a recovery does: the same step as a wallet change with a guardian, from the wallet of now
+ * to the recovery wallet. After it the guardian can no longer start a recovery: the new wallet sets
+ * a new one. The step is fixed when the recovery is set. If the wallet or the guardian changes
+ * later, the step no longer fits, does nothing, and the recovery must be set again.
+ */
+export function recoveryTx(vault: Guarded, to: Address | null): DelayTx | null {
+  const { safe, delay, roles, controller, guardian, council, members } = vault;
+  if (sameAddress(to, predictRecoveryDelay(safe))) return null;
+  const items = walletChangeItems(delay, controller, to, roles, safe, { guardian, council, members });
+  return items ? batchTx([...items, batchItem(roles, assign(guardian, RECOVER_ROLE, false))]) : null;
+}
+
+/**
+ * Sets the recovery, or changes it: the recovery wallet, and how long a recovery waits. One step
+ * in the line, so it waits the delay and the guardian can cancel it. It makes the recovery Delay
+ * if it is not there yet, lets only the Safe put things into its line, and gives the guardian the
+ * one right to start this recovery. The right to cancel covers the new line too.
+ */
+export function setRecoveryTx(vault: Guarded, to: Address | null, wait: bigint): DelayTx | null {
+  const { safe, roles, guardian } = vault;
+  const parts = vault.recoveryDelay;
+  if (!parts || wait < MIN_COOLDOWN || wait > MAX_RECOVERY_WAIT) return null;
+  // A Delay at that address that is not as this app makes it must not get any rights.
+  if (parts.deployed && !parts.sound) return null;
+  const recovery = recoveryTx(vault, to);
+  if (!recovery) return null;
+  const delayR = parts.delay;
+  const items: string[] = [];
+  if (!parts.deployed) {
+    items.push(batchItem(CONTRACTS.moduleProxyFactory, call("deployModule(address,bytes,uint256)", [CONTRACTS.delayMastercopy, recoveryInitializer(safe), SALT_RECOVERY])));
+  }
+  if (!parts.enabled) items.push(batchItem(safe, call("enableModule(address)", [delayR])));
+  if (!parts.wired) items.push(batchItem(delayR, call("enableModule(address)", [safe])));
+  if ((parts.deployed ? parts.cooldown : RECOVERY_FIRST_WAIT) !== wait) items.push(batchItem(delayR, call("setTxCooldown(uint256)", [wait])));
+  items.push(
+    batchItem(roles, call("scopeTarget(bytes32,address)", [RECOVER_ROLE, delayR])),
+    batchItem(roles, (SCOPE_FUNCTION + scopeArgs(RECOVER_ROLE, delayR, EXEC_FROM_MODULE, recoverConditions(recovery))) as Hex),
+    batchItem(roles, call("scopeTarget(bytes32,address)", [CANCEL_ROLE, delayR])),
+    batchItem(roles, call("allowFunction(bytes32,address,bytes4,uint8)", [CANCEL_ROLE, delayR, SET_TX_NONCE, 0])),
+    batchItem(roles, assign(guardian, RECOVER_ROLE, true)),
+  );
+  return batchTx(items);
+}
+
+/** The recovery wallet and the wait that a set-recovery step names. Null for anything else. */
+function recoveryRequest(tx: DelayTx, vault: Guarded): { wallet: Address; wait: bigint } | null {
+  const parts = vault.recoveryDelay;
+  const calls = batchCalls(tx);
+  if (!parts || !calls) return null;
+  const rule = calls.find((c) => sameAddress(c.to, vault.roles) && c.data.slice(0, 10).toLowerCase() === SCOPE_FUNCTION);
+  const batch = rule ? scopedBatch(rule.data.slice(10), parts.delay) : null;
+  const wallet = batch ? recoveryWallet(batch, vault.delay, vault.roles) : null;
+  if (!wallet) return null;
+  const cooldown = calls.find((c) => sameAddress(c.to, parts.delay) && c.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN && size(c.data) === 36);
+  return { wallet, wait: cooldown ? toBigInt("0x" + cooldown.data.slice(10)) : parts.deployed ? parts.cooldown : RECOVERY_FIRST_WAIT };
+}
+
+/** The calls that turn a recovery off: the guardian loses the right to start one, and the recovery Delay can no longer act. */
+function recoveryOffItems(vault: { roles: Address; guardian: Address; safe?: Address; modules?: Address[]; recoveryDelay?: RecoveryParts | null }): string[] | null {
+  const { roles, guardian, safe, recoveryDelay: parts } = vault;
+  if (!safe || !parts || !vault.modules) return null;
+  const items = [batchItem(roles, assign(guardian, RECOVER_ROLE, false))];
+  if (parts.enabled) {
+    const at = vault.modules.findIndex((m) => sameAddress(m, parts.delay));
+    if (at < 0) return null;
+    items.push(batchItem(safe, call("disableModule(address,address)", [at === 0 ? SENTINEL : vault.modules[at - 1], parts.delay])));
+  }
+  return items;
+}
+
+/** Turns the recovery off. It waits the delay, and the guardian can cancel it. */
+export function removeRecoveryTx(vault: Guarded): DelayTx | null {
+  const items = recoveryOffItems(vault);
+  return items ? batchTx(items) : null;
+}
+
+/**
+ * Starts the recovery. Only the guardian can send this: the Roles modifier makes the Safe put the
+ * recovery into the line of the recovery Delay. Nothing changes until the wait is over.
+ */
+export function startRecoveryTx(roles: Address, recovery: Pick<Recovery, "delay" | "batch">): TxRequest {
+  const { to, value, data, operation } = recovery.batch;
+  return {
+    to: roles,
+    data: call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [
+      recovery.delay,
+      0n,
+      call("execTransactionFromModule(address,uint256,bytes,uint8)", [to, value, data, operation]),
+      0,
+      RECOVER_ROLE,
+      true,
+    ]),
+  };
+}
+
+export type RecoveryItem = { nonce: bigint; createdAt: bigint; hash: Hex; /** False for something in that line that is not the recovery of now. */ isRecovery: boolean };
+
+/** What waits in the line of the recovery Delay, oldest first. Usually nothing, or one recovery. */
+export async function readRecoveryLine(rpc: Rpc, recovery: Pick<Recovery, "delay" | "batch" | "txNonce" | "queueNonce">): Promise<RecoveryItem[]> {
+  const wanted = delayTxHash(recovery.batch);
+  const items: RecoveryItem[] = [];
+  for (let nonce = recovery.txNonce; nonce < recovery.queueNonce && items.length < 5; nonce++) {
+    const [createdAt, hash] = await Promise.all([
+      read(rpc, recovery.delay, "getTxCreatedAt(uint256)", [nonce], ["uint256"]).then((r) => r[0] as bigint),
+      read(rpc, recovery.delay, "getTxHash(uint256)", [nonce], ["bytes32"]).then((r) => r[0] as Hex),
+    ]);
+    items.push({ nonce, createdAt, hash, isRecovery: hash.toLowerCase() === wanted.toLowerCase() });
+  }
+  return items;
 }
 
 // ---------------------------------------------------------------------------

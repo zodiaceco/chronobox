@@ -6,7 +6,7 @@
  */
 import type { ComponentChildren } from "preact";
 
-export type RowIconName = "address" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | "tokens";
+export type RowIconName = "address" | "delay" | "wallet" | "guardian" | "recovery" | "checks" | "alerts" | "tokens";
 
 const SHAPES: Record<RowIconName, ComponentChildren> = {
   // A pin: where this Chronobox is.
@@ -33,6 +33,14 @@ const SHAPES: Record<RowIconName, ComponentChildren> = {
   ),
   // A moon: the guardian, as in the film and in "How it works". It watches.
   guardian: <path d="M16.3 12.2A6.9 6.9 0 1 1 7.8 3.7a5.5 5.5 0 0 0 8.5 8.5z" />,
+  // A lifebuoy: the way back in when the wallet is lost.
+  recovery: (
+    <>
+      <circle cx="10" cy="10" r="7.2" />
+      <circle cx="10" cy="10" r="2.9" />
+      <path d="M4.9 4.9l3 3M12.1 12.1l3 3M15.1 4.9l-3 3M7.9 12.1l-3 3" />
+    </>
+  ),
   // A shield with a tick: the checks passed.
   checks: (
     <>

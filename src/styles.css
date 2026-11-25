@@ -3214,3 +3214,22 @@ button.row-strong:hover .row-hint {
   background: var(--line, rgba(127, 127, 127, 0.12));
   overflow-x: auto;
 }
+
+/* The recovery. */
+.field-label {
+  margin: 6px 0 -4px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.custom-unit {
+  align-self: center;
+  color: var(--muted);
+}
+
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
