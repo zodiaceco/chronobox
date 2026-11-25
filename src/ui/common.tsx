@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, useRef } from "preact/hooks";
 import type { Chain, Token } from "../lib/chains.ts";
 import { formatAmount, shortAddress } from "../lib/format.ts";
 import type { Address } from "../lib/hex.ts";
+import { tokenIcon } from "../lib/token-icons.ts";
 import { type Rpc, askSlowAfterMs, readBalances } from "../lib/chronobox.ts";
 import { customTokens } from "../lib/store.ts";
 import { moreTokens } from "../lib/token-list.ts";
@@ -17,7 +18,17 @@ export type Session = {
 };
 
 /** `main` marks the network's coin, its main tokens and tokens added by hand. The others come from the long list. */
-export type Asset = { token: Address | null; symbol: string; decimals: number; main?: boolean; usd?: Token["usd"] };
+export type Asset = {
+  token: Address | null;
+  symbol: string;
+  decimals: number;
+  main?: boolean;
+  usd?: Token["usd"];
+  /** Found by the token index (third-party services). The app's own lists do not know it. */
+  found?: boolean;
+  /** The icon file of a token of the app's own lists. */
+  icon?: string | null;
+};
 
 /**
  * Every asset the app knows on a network: the coin, the main tokens, tokens
@@ -26,19 +37,33 @@ export type Asset = { token: Address | null; symbol: string; decimals: number; m
  */
 export function assetsOf(chain: Chain): Asset[] {
   const seen = new Set<string>();
-  const assets: Asset[] = [{ token: null, symbol: chain.native.symbol, decimals: 18, main: true }];
+  const assets: Asset[] = [{ token: null, symbol: chain.native.symbol, decimals: 18, main: true, icon: tokenIcon(chain.id, null) }];
   const add = (tokens: Token[], main: boolean) => {
     for (const t of tokens) {
       const key = t.address.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main, usd: t.usd });
+      assets.push({ token: t.address, symbol: t.symbol, decimals: t.decimals, main, usd: t.usd, icon: tokenIcon(chain.id, t.address) });
     }
   };
   add(chain.tokens, true);
   add(customTokens(chain.id), true);
   add(moreTokens(chain.id), false);
   return assets;
+}
+
+/**
+ * The mark of an asset: its icon where the app has one, else the first letter of its symbol.
+ * The icon is a file of this page. Nothing is loaded from another site.
+ */
+export function TokenBadge(props: { asset: { symbol: string; icon?: string | null } }) {
+  const { asset } = props;
+  if (asset.icon) return <img class="token-badge token-icon" src={asset.icon} alt="" width="28" height="28" loading="lazy" decoding="async" />;
+  return (
+    <span class="token-badge" aria-hidden="true">
+      {asset.symbol.slice(0, 1)}
+    </span>
+  );
 }
 
 export function Button(props: {
@@ -325,9 +350,7 @@ export function TokenSelect(props: {
   return (
     <div class="token-select">
       <button type="button" class="token-button" aria-haspopup="listbox" aria-expanded={open} disabled={props.disabled} onClick={() => setOpen(!open)}>
-        <span class="token-badge" aria-hidden="true">
-          {current.symbol.slice(0, 1)}
-        </span>
+        <TokenBadge asset={current} />
         {current.symbol}
         <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
           <path d="M2.5 4.5L6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
@@ -348,9 +371,7 @@ export function TokenSelect(props: {
                     setOpen(false);
                   }}
                 >
-                  <span class="token-badge" aria-hidden="true">
-                    {asset.symbol.slice(0, 1)}
-                  </span>
+                  <TokenBadge asset={asset} />
                   <span class="token-name">
                     {asset.symbol}
                     <small>{asset.token ? shortAddress(asset.token) : "Native coin"}</small>

@@ -3585,3 +3585,10 @@ button.row-strong:hover .row-hint {
 .preview-actions .button {
   width: 100%;
 }
+
+/* A token's own icon in place of its first letter */
+img.token-badge.token-icon {
+  border-radius: 50%;
+  background: transparent;
+  object-fit: contain;
+}

@@ -40,6 +40,27 @@ export function formatAmount(value: bigint, decimals: number, places = 6): strin
   return value > 0n && whole === "0" ? `< 0.${"0".repeat(places - 1)}1` : grouped;
 }
 
+const SUPERSCRIPT = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+
+/**
+ * For display where room is short. Below a million it is `formatAmount`. From a million on it is
+ * three digits and a word for the size: 1.23M, 45.6B, 789T. Beyond that it is three digits and a
+ * power of ten: 1.15 × 10⁷⁷. Rounded down, like every amount on the page: it never shows more
+ * than there is. The exact amount belongs in a tooltip next to it.
+ */
+export function shortAmount(value: bigint, decimals: number, places = 6): string {
+  const whole = (value / 10n ** BigInt(decimals)).toString();
+  if (whole.length <= 6) return formatAmount(value, decimals, places);
+  // The first three digits, with the point where the size word or the power of ten puts it.
+  const lead = (before: number) => `${whole.slice(0, before)}${before < 3 ? `.${whole.slice(before, 3)}` : ""}`;
+  if (whole.length <= 15) {
+    const group = Math.floor((whole.length - 1) / 3);
+    return `${lead(whole.length - group * 3)}${["", "K", "M", "B", "T"][group]}`;
+  }
+  const power = [...String(whole.length - 1)].map((digit) => SUPERSCRIPT[Number(digit)]).join("");
+  return `${lead(1)} × 10${power}`;
+}
+
 const UNITS: [string, number][] = [
   ["day", 86400],
   ["hour", 3600],
