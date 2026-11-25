@@ -18,6 +18,9 @@ export const TOPIC_SAFE_MODULE_TRANSACTION = '0xb648d3644f584ed1c2232d53c46d87e6
 export const TOPIC_MODULE_SUCCESS = '0x6895c13664aa4f67288b25d7a21d7aaa34916e355fb9b6fae0a139a9085becb8';
 export const TOPIC_MODULE_FAILURE = '0xacd2c8702804128fdb0db2bb49f6d127dd0181c13fd45dbfe16de0930e2bd375';
 export const SET_TX_NONCE = '0x46ba2307';
+// EnabledModule(address) and DisabledModule(address) of a Zodiac modifier: a wallet that comes or goes on the Delay.
+export const TOPIC_ENABLED_MODULE = '0xecdf3a3effea5783a3c4c2140e677577666428d44ed9d474a0b3a4c9943f8440';
+export const TOPIC_DISABLED_MODULE = '0xaab4fa2b463f581b2b32cb3b7e3b704b9ce37cc209b5fb4d77e593ace4054276';
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
 // ModuleProxyCreation(address indexed proxy, address indexed masterCopy), from the Zodiac ModuleProxyFactory.
 export const TOPIC_MODULE_PROXY_CREATION = '0x2150ada912bf189ed721c44211199e270903fc88008c2a1e1e889ef30fe67c5f';
@@ -43,6 +46,7 @@ export const SEL = {
   target: '0xd4b83992',
   getModulesPaginated: '0xcc2f8452',
   getOwners: '0xa0e67e2b',
+  getThreshold: '0xe75235b8',
   transfer: '0xa9059cbb',
   symbol: '0x95d89b41',
   decimals: '0x313ce567',

@@ -295,8 +295,8 @@ try {
   plain(told);
   assert.deepEqual([...new Set(chats(told))], [ANNA_PHONE, ANNA_FRIEND]);
   const changed = told.find((m) => /This Chronobox changed/.test(m.text))!;
-  assert.match(changed.text, /0x\w{40} and 0x\w{40} can now cancel a request\.\nWith a guardian, these are the guardian and the Safe that the guardian shares with the wallet\./);
-  assert.ok(changed.text.includes(GUARD.toLowerCase()));
+  assert.ok(changed.text.includes(`${GUARD.toLowerCase()} is now the guardian of this Chronobox.`));
+  assert.doesNotMatch(changed.text, /can now cancel a request/);
   assert.doesNotMatch(changed.text, /Warning/);
   ok("after it is carried out, the chats are told that the Chronobox changed");
   show(changed.text);

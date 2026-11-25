@@ -203,7 +203,7 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       chain.queue.forEach((q, n) => {
         if (!addrs.includes(DELAY)) return;
         if (q.block < from || q.block > to) return;
-        if (f.topics[0] !== TOPIC_TRANSACTION_ADDED) return;
+        if (![f.topics[0]].flat().includes(TOPIC_TRANSACTION_ADDED)) return;
         const t1 = '0x' + u(n);
         if (f.topics[1] && f.topics[1] !== t1) return;
         out.push({ address: DELAY, blockNumber: '0x' + q.block.toString(16), topics: [TOPIC_TRANSACTION_ADDED, t1, '0x' + 'ab'.repeat(32)], data: encAdded(q) });

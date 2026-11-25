@@ -23,12 +23,12 @@ export type CloseReason =
   /** The alert service could not see what happened. It never says that no money moved then. */
   | { how: 'executed_or_cancelled' };
 
-/** A log of the Safe of a vault, in the order of the chain (block, then log index). */
+/** A log of the Safe of a vault, in the order of the chain (block, then log index). `safe`: the Safe that logged it. */
 export type VaultEvent =
   /** SafeModuleTransaction (SafeL2): a module asks the Safe to do something. Its result follows. */
-  | { kind: 'call'; block: number; index: number; module: string; to: string; value: bigint; data: string; operation: number }
+  | { kind: 'call'; block: number; index: number; module: string; to: string; value: bigint; data: string; operation: number; safe?: string }
   /** ExecutionFromModuleSuccess or ExecutionFromModuleFailure: how the last call of that module went. */
-  | { kind: 'result'; block: number; index: number; module: string; success: boolean };
+  | { kind: 'result'; block: number; index: number; module: string; success: boolean; safe?: string };
 
 /** What the watcher knows about a request that left the queue. */
 export type QueueTx = { createdAt: bigint; to?: string; value?: string; data?: string; operation?: number };

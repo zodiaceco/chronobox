@@ -12,9 +12,34 @@ export type Settings = {
   roles?: string;
   rolesOwner?: string;
   cancellers?: string[];
+  /**
+   * Only set when the vault has a cancel contract. Missing in a state from before the watcher knew of guardians: then
+   * the first poll only learns them, and tells nothing.
+   */
+  guardian?: string; // '' without a guardian
+  council?: string;
+  councilOwners?: string[]; // [] while the Safe is not made
+  councilThreshold?: string;
+  councilModules?: string[];
+  recovery?: RecoverySettings;
 };
 
-export type Kind = 'withdrawal' | 'transfer_other' | 'delay' | 'handover' | 'guardian_add' | 'guardian_remove' | 'call' | 'unknown';
+/** The recovery Delay of a vault, as read. */
+export type RecoverySettings = {
+  delay: string;
+  made: boolean;
+  owner: string;
+  avatar: string;
+  target: string;
+  /** Who can put something into its line. With the recovery on: the guardian, and nobody else. */
+  modules: string[];
+  cooldown: string;
+  expiration: string;
+};
+
+export type Kind =
+  | 'withdrawal' | 'transfer_other' | 'delay' | 'handover' | 'guardian_add' | 'guardian_remove'
+  | 'recovery_on' | 'recovery_off' | 'recovery_wait' | 'recovery' | 'call' | 'unknown';
 
 export type Item = {
   nonce: number;
@@ -28,6 +53,8 @@ export type Item = {
   summary: string;
   detail: string;
   priority: number;
+  /** A step in the line of the recovery: the wallet that it brings the Chronobox to, '' when it is not a recovery as the app makes it. */
+  wallet?: string;
   sentReady?: boolean;
   sentExpiring?: boolean;
   sentExpired?: boolean;
@@ -54,6 +81,10 @@ export type State = {
   queueNonce?: number;
   settings?: Settings;
   items: Record<string, Item>;
+  /** The line of the recovery Delay, while it can act. Missing in a state from before the watcher knew of it. */
+  recoveryTxNonce?: number;
+  recoveryQueueNonce?: number;
+  recoveryItems?: Record<string, Item>;
   outbox: Alert[];
   failCount: number;
   problemOpen: boolean;
