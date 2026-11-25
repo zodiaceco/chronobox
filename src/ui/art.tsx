@@ -253,12 +253,17 @@ export function NightArt(props: ArtProps) {
 /**
  * The guardian: a moon in the sky, off the path. The sun keeps its place on the
  * path, as in the mark. The moon does not walk the path: it only watches.
+ *
+ * In motion it tells the recovery: the sun goes down behind the horizon (a lost
+ * wallet), the moon sends its signal, and a dashed sun comes up in its place (a
+ * recovery, which waits). The stylesheet moves both suns (.art-old-sun, .art-new-sun).
  */
 export function GuardianArt(props: ArtProps) {
   const maskId = `cb-guardian-moon-${useId()}`;
   const x = 47.5;
   const y = 14.5;
   const r = 5.2;
+  const [sunX, sunY] = at(MARK_DEG);
   return (
     <Tile
       size={props.size}
@@ -266,7 +271,8 @@ export function GuardianArt(props: ArtProps) {
       behind={
         <>
           <Path solidTo={MARK_DEG} />
-          <Sun deg={MARK_DEG} />
+          <circle class="art-old-sun" cx={sunX} cy={sunY} r="6" fill={WHITE} />
+          <circle class="art-new-sun" cx={sunX} cy={sunY} r="5.4" fill="none" stroke={WHITE} stroke-width="1.3" stroke-dasharray="2.3 1.8" />
         </>
       }
     >
