@@ -1,7 +1,7 @@
 /**
  * "How it is built": the four parts of a Chronobox, who audited them, what the
- * app checks, what it cannot do for you, and the one optional part: a
- * guardian. Static. Every fact here must
+ * app checks, what it cannot do for you, and the two optional parts: a
+ * guardian, and with it a recovery. Static. Every fact here must
  * match README.md and src/lib/chronobox.ts.
  */
 import "../technical.css";
@@ -166,12 +166,74 @@ export function TechnicalPage() {
           </li>
         </ul>
         <p class="tech-note">
-          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. A guardian is
-          not a backup. If you lose your wallet, the money is lost. Adding and removing a guardian wait in the time lock, like every change.
+          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. A guardian
+          alone is not a backup: a move by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding and removing a
+          guardian wait in the time lock, like every change.
         </p>
         <p class="tech-note">
           Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), and a Safe 1.4.1 that needs your wallet and your
           guardian together. The app checks both every time you open the Chronobox.
+        </p>
+      </div>
+
+      {/* Optional, and only with a guardian: the same frame as the guardian. */}
+      <div class="tech-block tech-optional">
+        <div class="tech-optional-head">
+          <SunArt class="tech-optional-glyph" />
+          <div>
+            <span class="tech-tag tech-tag-optional">Optional, with a guardian</span>
+            <h2>A recovery</h2>
+          </div>
+        </div>
+        <p class="tech-optional-lead">
+          A way back in when your wallet is lost. Your guardian starts it and enters the new wallet. Then it waits a long time, and you can stop it at
+          once. You turn it on with the guardian, or later, on the page of your Chronobox.
+        </p>
+        <ul class="tech-rows">
+          <li>
+            <span>Your guardian starts a recovery to a new wallet</span>
+            <span class="tech-tag">Waits</span>
+          </li>
+          <li>
+            <span>Your wallet or your guardian stops it</span>
+            <span class="tech-tag tech-tag-now">At once</span>
+          </li>
+          <li>
+            <span>Anybody carries it out</span>
+            <span class="tech-tag">After the wait</span>
+          </li>
+          <li>
+            <span>A recovery moves money</span>
+            <span class="tech-tag">Never</span>
+          </li>
+        </ul>
+        <ul class="tech-rows">
+          <li>
+            <span>The wait</span>
+            <span class="tech-value">90, 180 or 365 days, or your own</span>
+          </li>
+          <li>
+            <span>Your own wait</span>
+            <span class="tech-value">30 to 730 days, never shorter than your delay</span>
+          </li>
+          <li>
+            <span>Open after the wait</span>
+            <span class="tech-value">30 days, then it is void</span>
+          </li>
+          <li>
+            <span>When it is carried out</span>
+            <span class="tech-value">The new wallet holds the Chronobox</span>
+          </li>
+        </ul>
+        <p class="tech-note">
+          The price: your guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, your guardian
+          can take the Chronobox. The long wait and the alerts protect you: an alert tells you when a recovery starts. After a recovery, every
+          withdrawal still waits your delay. A recovery is for a lost wallet. A person who has your wallet can stop it too.
+        </p>
+        <p class="tech-note">
+          Built from the same contracts: a second <Ext href={DELAY_DOCS}>Zodiac Delay</Ext> that the Chronobox owns, with your guardian as the
+          only one who can put a recovery into it. It acts on the Safe of your wallet and your guardian. The app checks it every time you open the
+          Chronobox.
         </p>
       </div>
 
@@ -194,6 +256,19 @@ export function TechnicalPage() {
             </li>
           ))}
         </ul>
+        <p class="tech-note">With a guardian and a recovery, also:</p>
+        <ul class="tech-checks">
+          {[
+            "A wallet change without the wait needs your wallet and your guardian together.",
+            "Only your guardian can start a recovery, and it waits.",
+            "Your wallet and your guardian can stop a recovery at once.",
+          ].map((text) => (
+            <li key={text}>
+              <Tick on />
+              {text}
+            </li>
+          ))}
+        </ul>
         <p class="tech-note">The app reads all of this from the chain. Anybody can open any Chronobox by its address and see the same checks.</p>
       </div>
 
@@ -208,8 +283,12 @@ export function TechnicalPage() {
             </p>
           </li>
           <li>
-            <strong>It cannot bring a lost wallet back.</strong>
-            <p>If you can no longer sign with your wallet, the money in the Chronobox is lost. Chronobox has no recovery of its own, and a guardian cannot help. Only the recovery of your wallet itself can.</p>
+            <strong>It cannot bring a lost wallet back by itself.</strong>
+            <p>
+              If you can no longer sign with your wallet and the recovery is off, the money in the Chronobox is lost. A guardian alone cannot help.
+              With the recovery on, your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself still
+              works too.
+            </p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>
@@ -234,6 +313,10 @@ export function TechnicalPage() {
             This page loads only its own files. All chain data comes through your wallet.
           </li>
         </ul>
+        <p class="tech-note">
+          Alerts are the exception, and you choose them. Our alert service must know who follows a Chronobox to send an alert, and we can see that.
+          You can also run the alert service yourself.
+        </p>
       </div>
 
       <div class="tech-block">
@@ -274,6 +357,15 @@ export function TechnicalPage() {
             Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
             A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
+          <p>
+            The recovery is a second Delay, at an address that depends only on the Chronobox. The Safe owns it, and it is never a module of the
+            Safe. Turned on, it points at the 2 of 2 Safe (<code>setAvatar</code>, <code>setTarget</code>), and the guardian is its one module.
+            That 2 of 2 Safe is then made in a second form: its setup calls <code>enableModules</code> of SafeModuleSetup 0.3.0, so the
+            recovery Delay is its one module from its first moment. A recovery is the same batch as a hand-over by both. The guardian queues it
+            on the recovery Delay, and after the wait anybody calls <code>executeNextTx</code>. The role "cancel" also covers{" "}
+            <code>setTxNonce</code> on the recovery Delay: that is how the wallet and the guardian stop it. Turning it off takes the guardian off
+            the recovery Delay and points it back at the Safe, where it can do nothing.
+          </p>
           <ul class="tech-addresses">
             {(
               [
@@ -283,6 +375,7 @@ export function TechnicalPage() {
                 ["Zodiac module factory", CONTRACTS.moduleProxyFactory],
                 ["Zodiac Delay", CONTRACTS.delayMastercopy],
                 ["Zodiac Roles 2.1.1", CONTRACTS.rolesMastercopy],
+                ["SafeModuleSetup 0.3.0 (recovery only)", CONTRACTS.safeModuleSetup],
               ] as const
             ).map(([name, address]) => (
               <li key={address}>
