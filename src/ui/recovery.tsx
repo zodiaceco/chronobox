@@ -48,9 +48,9 @@ import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 
 const DAY = 86_400n;
 const WAIT_CHOICES: { label: string; text: string; seconds: bigint }[] = [
-  { label: "90 days", text: "Short. Look at your Chronobox often", seconds: 90n * DAY },
-  { label: "180 days", text: "A good start", seconds: 180n * DAY },
-  { label: "365 days", text: "The most time to notice", seconds: 365n * DAY },
+  { label: "90 days", text: "Short. Look at your Chronobox often.", seconds: 90n * DAY },
+  { label: "180 days", text: "A good start.", seconds: 180n * DAY },
+  { label: "365 days", text: "The most time to notice.", seconds: 365n * DAY },
 ];
 
 /** A recovery change that is in the line and has not started yet. */
@@ -141,14 +141,21 @@ export function WaitPicker(props: {
 }) {
   const { picked, disabled } = props;
   const { problem } = pickedWait(picked, props.customDays, props.cooldown);
+  const choices = WAIT_CHOICES.filter((c) => c.seconds >= shortestWait(props.cooldown));
+  const note = picked === "custom" ? `In days, from ${shortestWait(props.cooldown) / DAY} to ${MAX_RECOVERY_WAIT / DAY}.` : choices.find((c) => c.seconds === picked)?.text;
+  // One row of pills, not a list of cards: the wait is a setting, not a promise.
+  const pill = (on: boolean, label: string, pick: WaitPick) => (
+    <button type="button" role="radio" aria-checked={on} key={label} class={on ? "fund-stop fund-stop-on" : "fund-stop"} disabled={disabled} onClick={() => props.onPick(pick)}>
+      {label}
+    </button>
+  );
   return (
     <>
-      <div class="wiz-list" role="radiogroup" aria-label="How long a recovery waits">
-        {WAIT_CHOICES.filter((c) => c.seconds >= shortestWait(props.cooldown)).map((c) => (
-          <Choice key={c.label} role="radio" on={picked === c.seconds} title={c.label} text={c.text} disabled={disabled} onClick={() => props.onPick(c.seconds)} />
-        ))}
-        <Choice role="radio" on={picked === "custom"} title="Another length" text={`In days, from ${shortestWait(props.cooldown) / DAY} to ${MAX_RECOVERY_WAIT / DAY}`} disabled={disabled} onClick={() => props.onPick("custom")} />
+      <div class="wait-pills" role="radiogroup" aria-label="How long a recovery waits">
+        {choices.map((c) => pill(picked === c.seconds, c.label, c.seconds))}
+        {pill(picked === "custom", "Other", "custom")}
       </div>
+      {note ? <p class="hint">{note}</p> : null}
       {picked === "custom" ? (
         <div class="custom-delay">
           <input class="input" inputMode="numeric" aria-label="Days" disabled={disabled} value={props.customDays} onInput={(event) => props.onCustomDays((event.target as HTMLInputElement).value.trim())} />
@@ -160,17 +167,17 @@ export function WaitPicker(props: {
   );
 }
 
-/** What the owner accepts with a recovery. The same words when the guardian is added, and when it is turned on later. */
-export const TAKE_OVER = {
-  title: "My guardian can take over this Chronobox.",
-  text: "If I do not stop a recovery in that time, the wallet that my guardian chose is its key.",
-};
-
-/** What the owner accepts to make sure a recovery is noticed in time. */
-export const WATCH_RECOVERY = {
-  title: "I will notice a recovery.",
-  text: "I turn the alerts on, or I look at my Chronobox more often than a recovery waits.",
-};
+/**
+ * What the owner accepts with a recovery, as one promise: the guardian can take over, and so the owner
+ * watches. The same words when the guardian is added, and when the recovery is turned on later.
+ */
+export function recoveryPromise(wait: bigint | null): { title: string; text: string } {
+  const time = wait === null ? "the wait" : formatDuration(wait);
+  return {
+    title: "My guardian can take over this Chronobox.",
+    text: `If I do not stop a recovery within ${time}, the wallet that my guardian chose holds it. So I turn the alerts on, or I look at my Chronobox more often than that.`,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // The owner
@@ -217,11 +224,10 @@ export function RecoverySheet(props: {
 /** The owner turns the recovery on, or changes how long it waits. */
 function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspection: Inspection; current: Recovery | null; delay: string; onBack: () => void; onClose: () => void }) {
   const { session, chain, vault, inspection, current } = props;
-  const [stage, setStage] = useState<"intro" | "form" | "done" | "unknown">(current ? "form" : "intro");
+  const [stage, setStage] = useState<"intro" | "form" | "review" | "done" | "unknown">(current ? "form" : "intro");
   const [picked, setPicked] = useState<WaitPick>(null);
   const [customDays, setCustomDays] = useState(() => defaultCustomDays(inspection.cooldown));
-  const [takesOver, setTakesOver] = useState(false);
-  const [watches, setWatches] = useState(false);
+  const [promised, setPromised] = useState(false);
   const [delayMade, setDelayMade] = useState(Boolean(vault.recoveryDelay?.deployed));
   const [incompatible, setIncompatible] = useState(false);
   const action = useAction();
@@ -285,40 +291,68 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
       </Modal>
     );
   }
+  if (stage === "review") {
+    const promise = recoveryPromise(wait);
+    return (
+      <Modal title="Check it" lead={`Check the address of your guardian letter by letter. Until it starts, you and your guardian can stop it.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+        <dl class="wiz-summary">
+          <div>
+            <dt>Guardian</dt>
+            <dd class="mono">
+              <AddressText address={vault.guardian} full />
+            </dd>
+          </div>
+          <div>
+            <dt>{current ? "A recovery will wait" : "If you lose your wallet"}</dt>
+            <dd>{current ? formatDuration(wait!) : `Your guardian can bring it back after ${formatDuration(wait!)}`}</dd>
+          </div>
+          <div>
+            <dt>Starts</dt>
+            <dd>In {props.delay}</dd>
+          </div>
+        </dl>
+        <div class="wiz-list">
+          <Choice role="checkbox" on={promised} title={promise.title} text={promise.text} disabled={!!action.busy} onClick={() => setPromised(!promised)} />
+        </div>
+        {makesDelay ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
+        <SlowNote action={action} />
+        {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+        <div class="modal-actions">
+          <Button kind="primary" disabled={!tx || incompatible || !promised} busy={action.busy === "queue"} onClick={submit}>
+            {action.busy ? "Confirm in your wallet" : "Start the wait"}
+          </Button>
+          <Button
+            kind="quiet"
+            onClick={() => {
+              action.clearError();
+              setStage("form");
+            }}
+            disabled={!!action.busy}
+          >
+            Back
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal
       title="How long a recovery waits"
       lead={`Long enough that you notice it, also when you are away or ill. The change starts after ${props.delay}, like every change here.`}
-      busy={action.busy !== null && !action.slow}
       onClose={props.onClose}
     >
-      <WaitPicker picked={picked} onPick={setPicked} customDays={customDays} onCustomDays={setCustomDays} cooldown={inspection.cooldown} disabled={!!action.busy} />
+      <WaitPicker picked={picked} onPick={setPicked} customDays={customDays} onCustomDays={setCustomDays} cooldown={inspection.cooldown} disabled={false} />
       {same ? <p class="field-error">That is the wait now.</p> : null}
       {incompatible ? (
         <Notice kind="bad">
           The shared Safe for a recovery with this wallet and guardian was used before with different owners. Hand over to a new wallet first, or use another guardian.
         </Notice>
       ) : null}
-      <div class="wiz-list">
-        <Choice role="checkbox" on={takesOver} title={TAKE_OVER.title} text={TAKE_OVER.text} disabled={!!action.busy} onClick={() => setTakesOver(!takesOver)} />
-        <Choice role="checkbox" on={watches} title={WATCH_RECOVERY.title} text={WATCH_RECOVERY.text} disabled={!!action.busy} onClick={() => setWatches(!watches)} />
-      </div>
-      {makesDelay ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
-      <SlowNote action={action} />
-      {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!tx || incompatible || !takesOver || !watches} busy={action.busy === "queue"} onClick={submit}>
-          {action.busy ? "Confirm in your wallet" : "Start the wait"}
+        <Button kind="primary" disabled={!tx || incompatible} onClick={() => setStage("review")}>
+          Continue
         </Button>
-        <Button
-          kind="quiet"
-          onClick={() => {
-            action.clearError();
-            if (current) props.onBack();
-            else setStage("intro");
-          }}
-          disabled={!!action.busy}
-        >
+        <Button kind="quiet" onClick={() => (current ? props.onBack() : setStage("intro"))}>
           Back
         </Button>
       </div>
