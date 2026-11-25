@@ -1040,13 +1040,16 @@ function ForeignAlarm(props: {
   onCancel: (nonce: bigint) => void;
 }) {
   const { vault, inspection, now } = props;
+  // An item whose content this page cannot read could be anything. It is named here too: the alarm must not
+  // go quiet just when the page cannot tell what waits. Its card stays amber, as it may well be one's own.
   const foreign = props.queue.filter(
-    (item) => item.tx && isForeign(classify(item.tx, vault)) && itemStatus(item, inspection.cooldown, inspection.expiration, now).phase !== "expired",
+    (item) => (!item.tx || isForeign(classify(item.tx, vault))) && itemStatus(item, inspection.cooldown, inspection.expiration, now).phase !== "expired",
   );
   if (foreign.length === 0) return null;
   const first = foreign[0];
   const status = itemStatus(first, inspection.cooldown, inspection.expiration, now);
-  const title = describe(classify(first.tx!, vault), props.assets, {}, Boolean(vault.recoveryOn)).title;
+  const title = describe(first.tx ? classify(first.tx, vault) : null, props.assets, {}, Boolean(vault.recoveryOn)).title;
+  const unread = foreign.every((item) => !item.tx);
   const verb = props.stops ? "Stop" : "Cancel";
   return (
     <div class="foreign-alarm" role="alert">
@@ -1057,7 +1060,15 @@ function ForeignAlarm(props: {
               </svg>
       </span>
       <div class="foreign-alarm-body">
-        <strong>{foreign.length === 1 ? "Something is waiting that this app did not create." : `${foreign.length} things are waiting that this app did not create.`}</strong>
+        <strong>
+          {unread
+            ? foreign.length === 1
+              ? "Something is waiting that this page cannot read."
+              : `${foreign.length} things are waiting that this page cannot read.`
+            : foreign.length === 1
+              ? "Something is waiting that this app did not create."
+              : `${foreign.length} things are waiting that this app did not create.`}
+        </strong>
         <p class="foreign-alarm-what">{title}</p>
         <p>
           {status.phase === "ready" ? (
