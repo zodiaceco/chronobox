@@ -1409,7 +1409,16 @@ export type Action =
   | { kind: "remove-recovery" }
   | { kind: "transfer-elsewhere"; token: Address | null; to: Address; amount: bigint }
   | { kind: "settings"; label: string }
-  | { kind: "unknown" };
+  | { kind: "unknown"; label?: string };
+
+/**
+ * Something that this app does not make: a change of the rules, a payment to another address, or a call
+ * it cannot read. Only the wallet of the Chronobox can put an item into the line, so an item like this
+ * means that wallet signed it, here or somewhere else.
+ */
+export function isForeign(action: Action | null): boolean {
+  return action !== null && (action.kind === "settings" || action.kind === "unknown" || action.kind === "transfer-elsewhere");
+}
 
 const TRANSFER = selector("transfer(address,uint256)");
 
@@ -1430,6 +1439,8 @@ const SETTINGS: Record<string, string> = Object.fromEntries(
       ["changeThreshold(uint256)", "Changes the Safe threshold"],
       ["setGuard(address)", "Adds a guard to the Safe"],
       ["setFallbackHandler(address)", "Adds a fallback handler to the Safe"],
+      ["changeMasterCopy(address)", "Replaces the code of the Safe"],
+      ["setModuleGuard(address)", "Adds a module guard to the Safe"],
     ] as const
   ).map(([signature, label]) => [selector(signature), label]),
 );
@@ -1468,7 +1479,9 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       }
     }
   }
-  if (tx.operation !== 0) return { kind: "unknown" };
+  // A delegate call runs the code of another contract as the Safe itself: with it, anything can change,
+  // the code of the Safe included.
+  if (tx.operation !== 0) return { kind: "unknown", label: `Runs the code of ${tx.to} as your Chronobox` };
   if (sameAddress(tx.to, vault.delay) && tx.value === 0n && size(tx.data) === 36 && tx.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN) {
     const cooldown = toBigInt(tx.data.slice(10));
     if (cooldown > 0n) return { kind: "change-delay", cooldown };
@@ -1492,8 +1505,15 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       return { kind: "unknown" };
     }
   }
+  if (head === APPROVE || head === INCREASE_ALLOWANCE || head === SET_APPROVAL_FOR_ALL) {
+    return { kind: "settings", label: "Lets another address take tokens out of your Chronobox" };
+  }
   return { kind: "unknown" };
 }
+
+const APPROVE = selector("approve(address,uint256)");
+const INCREASE_ALLOWANCE = selector("increaseAllowance(address,uint256)");
+const SET_APPROVAL_FOR_ALL = selector("setApprovalForAll(address,bool)");
 
 // ---------------------------------------------------------------------------
 // Withdraw, execute, skip, deposit

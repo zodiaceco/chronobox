@@ -26,6 +26,7 @@ import {
   councilCompatible,
   executeTx,
   inspect,
+  isForeign,
   itemStatus,
   queuedInReceipt,
   queueLength,
@@ -50,6 +51,7 @@ import { errorText } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
+import { Ring } from "./ring.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
 import { RecoverySection, type RecoveryWaiting, guarded } from "./recovery.tsx";
@@ -279,6 +281,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [sheet, setSheet] = useState<Sheet>(null);
   const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  // What was cancelled a moment ago, and how much of its wait was still ahead: for the sheet that shows the cancel.
+  const [cancelled, setCancelled] = useState<{ title: string; left: number; count: number } | null>(null);
   const [cancellingAll, setCancellingAll] = useState(false);
   const [copied, setCopied] = useState(false);
   // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
@@ -389,8 +393,12 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const cancel = (item: QueueItem) =>
     cancelAction.run("cancel", async (waiting) => {
       try {
+        const index = queue.findIndex((q) => q.nonce === item.nonce);
+        const title = describe(item.tx && vault ? classify(item.tx, vault) : null, assets, {}, Boolean(vault?.recoveryOn)).title;
+        const left = 1 - Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(inspection.cooldown || 1n)));
         await sendAndWait(session.rpc, session.account, cancelTx(inspection.roles!, inspection.delay!, item.nonce), { ...sending, ...waiting });
         setCancelling(null);
+        setCancelled({ title, left, count: index + 1 });
       } finally {
         refresh();
       }
@@ -454,6 +462,21 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   return (
     <section class="page vault">
       <Status inspection={inspection} session={session} chain={chain} />
+      {vault ? (
+        <ForeignAlarm
+          queue={queue}
+          vault={vault}
+          inspection={inspection}
+          assets={assets}
+          now={now}
+          canCancel={canCancel}
+          stops={isGuardian}
+          onCancel={(nonce) => {
+            const item = queue.find((q) => q.nonce === nonce);
+            if (item) askCancel(item);
+          }}
+        />
+      ) : null}
       {props.swap && vault && !isGuardian && inspection.guardian && !sameAddress(props.swap.to, inspection.controller) ? (
         <Notice kind="info" title="This link is for the guardian.">
           It asks the guardian <AddressText address={inspection.guardian} /> to agree to moving this Chronobox to{" "}
@@ -686,23 +709,75 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </Modal>
       ) : null}
       {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
+      {cancelled ? (
+        <Modal title={isGuardian ? "Stopped." : "Cancelled."} onClose={() => setCancelled(null)}>
+          <div class="cancel-ring">
+            <Ring size={96} left={cancelled.left} play="cancel" />
+          </div>
+          <p class="big-line">{cancelled.count > 1 ? `${cancelled.title}, and ${cancelled.count - 1} before it` : cancelled.title}</p>
+          <p>Nothing moved. The money stays in the Chronobox.</p>
+          <div class="modal-actions">
+            <Button kind="primary" onClick={() => setCancelled(null)}>
+              Done
+            </Button>
+          </div>
+        </Modal>
+      ) : null}
       {cancelling && vault ? (
-        <Modal title={isGuardian ? "Stop this?" : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
+        <Modal
+          title={cancelIndex > 0 ? `${isGuardian ? "Stop" : "Cancel"} ${cancelIndex + 1} items?` : isGuardian ? "Stop this?" : "Cancel this?"}
+          busy={cancelAction.busy !== null && !cancelAction.slow}
+          onClose={() => setCancelling(null)}
+        >
           {cancelItem ? (
             <>
-              <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
-              <p>
-                {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
-                {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
-              </p>
+              {cancelIndex > 0 ? (
+                <>
+                  {/* A cancel takes an item and everything in front of it. So the whole line is shown, with what goes and what stays. */}
+                  <p>
+                    The time delay keeps one line. A {isGuardian ? "stop" : "cancel"} takes an item <b>and everything in front of it</b>.
+                  </p>
+                  <ol class="cancel-line">
+                    {queue.map((item, index) => {
+                      const goes = index <= cancelIndex;
+                      const ready = itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready";
+                      return (
+                        <li key={String(item.nonce)} class={goes ? "cancel-row cancel-row-out" : "cancel-row"}>
+                          <span class="cancel-mark" aria-hidden="true">
+                            {goes ? "\u00d7" : ""}
+                          </span>
+                          <span class="cancel-what">
+                            <strong>{describe(item.tx ? classify(item.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</strong>
+                            <small>{index === cancelIndex ? "The one you chose" : goes ? (ready ? "In front of it, and ready" : "In front of it") : "Behind it: stays in line"}</small>
+                          </span>
+                          <span class={goes ? "cancel-tag cancel-tag-out" : "cancel-tag"}>{goes ? (isGuardian ? "Stopped" : "Cancelled") : "Stays"}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
+                    <Notice kind="risk" title="Something in front of it is ready.">
+                      Finish it first if you want it. Otherwise it is cancelled too.
+                    </Notice>
+                  ) : null}
+                  <p class="hint">
+                    {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
+                  <p>{isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}</p>
+                </>
+              )}
               <SlowNote action={cancelAction} />
               {cancelAction.error ? <Notice kind="bad">{cancelAction.error}</Notice> : null}
               <div class="modal-actions">
                 <Button kind="primary" busy={cancelAction.busy === "cancel"} onClick={() => cancel(cancelItem)}>
-                  {isGuardian ? "Stop it" : "Cancel it"}
+                  {cancelIndex > 0 ? `${isGuardian ? "Stop" : "Cancel"} these ${cancelIndex + 1}` : isGuardian ? "Stop it" : "Cancel it"}
                 </Button>
                 <Button kind="quiet" onClick={() => setCancelling(null)} disabled={!!cancelAction.busy}>
-                  {isGuardian ? "Let it wait" : "Keep it"}
+                  {isGuardian ? (cancelIndex > 0 ? "Let them wait" : "Let it wait") : cancelIndex > 0 ? "Keep them" : "Keep it"}
                 </Button>
               </div>
             </>
@@ -932,10 +1007,94 @@ function describe(
         flagged: true,
       };
     case "settings":
-      return { title: action.label, warning: "This changes the Chronobox, and this app did not create it. If you did not ask for it, cancel it.", finish: "Apply now", flagged: true };
+      return {
+        title: action.label,
+        warning: "This app did not create it. It changes the rules of your Chronobox. If you did not ask for it, cancel it.",
+        finish: "Apply now",
+        flagged: true,
+      };
     default:
-      return { title: "Something this app cannot read", warning: "This app did not create it and cannot tell what it does. If you did not ask for it, cancel it.", finish: "Finish", flagged: true };
+      return {
+        title: action.label ?? "Something this app cannot read",
+        warning: "This app did not create it and cannot tell what it does. It can take your money. If you did not ask for it, cancel it.",
+        finish: "Finish",
+        flagged: true,
+      };
   }
+}
+
+/**
+ * At the top of the page: something waits in the line that this app did not make. It can change the
+ * rules of the Chronobox or move its money, and when its wait is over anybody can carry it out.
+ */
+function ForeignAlarm(props: {
+  queue: QueueItem[];
+  vault: VaultRef;
+  inspection: Inspection;
+  assets: Asset[];
+  now: bigint;
+  /** This wallet can cancel. Otherwise the alarm says who can. */
+  canCancel: boolean;
+  /** The wallet on the page is the guardian: it stops. */
+  stops?: boolean;
+  onCancel: (nonce: bigint) => void;
+}) {
+  const { vault, inspection, now } = props;
+  const foreign = props.queue.filter(
+    (item) => item.tx && isForeign(classify(item.tx, vault)) && itemStatus(item, inspection.cooldown, inspection.expiration, now).phase !== "expired",
+  );
+  if (foreign.length === 0) return null;
+  const first = foreign[0];
+  const status = itemStatus(first, inspection.cooldown, inspection.expiration, now);
+  const title = describe(classify(first.tx!, vault), props.assets, {}, Boolean(vault.recoveryOn)).title;
+  const verb = props.stops ? "Stop" : "Cancel";
+  return (
+    <div class="foreign-alarm" role="alert">
+      <span class="foreign-alarm-icon">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M12 3.5 2.5 20h19L12 3.5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" />
+                <path d="M12 10v4.5M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              </svg>
+      </span>
+      <div class="foreign-alarm-body">
+        <strong>{foreign.length === 1 ? "Something is waiting that this app did not create." : `${foreign.length} things are waiting that this app did not create.`}</strong>
+        <p class="foreign-alarm-what">{title}</p>
+        <p>
+          {status.phase === "ready" ? (
+            <>
+              Its wait is over: <b>anybody can carry it out now.</b>{" "}
+            </>
+          ) : (
+            <>
+              In <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}, anybody can carry it out.{" "}
+            </>
+          )}
+          {props.stops
+            ? "If the owner did not ask for it, stop it."
+            : "Only your wallet can put something into the line. If you did not ask for it, somebody else can sign with your wallet."}
+        </p>
+        <div class="foreign-alarm-actions">
+          {props.canCancel ? (
+            <Button kind="danger" onClick={() => props.onCancel(foreign[foreign.length - 1].nonce)}>
+              {foreign.length === 1 ? `${verb} it` : `${verb} all ${foreign.length}`}
+            </Button>
+          ) : (
+            <p class="hint">Only the wallet {shortAddress(vault.controller)} can cancel it.</p>
+          )}
+          <a
+            class="link-button"
+            href={`#item-${first.nonce}`}
+            onClick={(event) => {
+              event.preventDefault();
+              document.getElementById(`item-${first.nonce}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            Show it in the line
+          </a>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function QueueCard(props: {
@@ -978,19 +1137,30 @@ function QueueCard(props: {
 
   const { title, warning, finish, flagged } = describe(action, props.assets, tokens, props.recoveryOn);
   const progress = Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(props.cooldown || 1n)));
+  // Not made by this app: red, and its cancel is the first thing on the card.
+  const alarm = isForeign(action) && status.phase !== "expired";
 
   return (
-    <li class={`queue-item queue-${status.phase}${warning ? " queue-warning" : ""}`}>
+    <li id={`item-${item.nonce}`} class={`queue-item queue-${status.phase}${alarm ? " queue-alarm" : warning ? " queue-warning" : ""}`}>
       <div class="queue-main">
-        <strong class="queue-title">{title}</strong>
+        <span class="queue-head">
+          {alarm ? (
+            <span class="queue-alarm-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M12 3.5 2.5 20h19L12 3.5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" />
+                <path d="M12 10v4.5M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              </svg>
+            </span>
+          ) : (
+            <Ring size={30} left={status.phase === "waiting" ? 1 - progress : 0} label={status.phase === "waiting" ? `${Math.round(progress * 100)} percent of the wait has passed` : undefined} />
+          )}
+          <strong class="queue-title">{title}</strong>
+        </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
         {status.phase === "waiting" ? (
-          <>
-            <span class="queue-when">
-              Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
-            </span>
-            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
-          </>
+          <span class="queue-when">
+            Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
+          </span>
         ) : status.phase === "ready" ? (
           <span class="queue-when">
             <b>Ready.</b>
@@ -1012,15 +1182,21 @@ function QueueCard(props: {
             Clear
           </Button>
         ) : null}
-        {status.phase === "waiting" ? (
+        {status.phase === "waiting" && !alarm ? (
           <button type="button" class="link-button" onClick={() => saveReminders(item.nonce, status, now)}>
             Add to calendar
           </button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
-          <button type="button" class="link-button" onClick={props.onCancel}>
-            {props.cancelLabel}
-          </button>
+          alarm ? (
+            <Button small kind="danger" onClick={props.onCancel}>
+              {props.cancelLabel}
+            </Button>
+          ) : (
+            <button type="button" class="link-button" onClick={props.onCancel}>
+              {props.cancelLabel}
+            </button>
+          )
         ) : null}
       </div>
     </li>

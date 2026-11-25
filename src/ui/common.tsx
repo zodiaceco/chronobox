@@ -44,7 +44,7 @@ export function assetsOf(chain: Chain): Asset[] {
 export function Button(props: {
   children: ComponentChildren;
   onClick?: () => void;
-  kind?: "primary" | "plain" | "quiet";
+  kind?: "primary" | "plain" | "quiet" | "danger";
   disabled?: boolean;
   busy?: boolean;
   type?: "button" | "submit";

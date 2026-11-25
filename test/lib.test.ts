@@ -6,7 +6,7 @@ import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
 import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, readQueue, queueLength, cancelAllTx, QUEUE_PAGE, type Inspection, type QueueItem, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
+import { isForeign, addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, readQueue, queueLength, cancelAllTx, QUEUE_PAGE, type Inspection, type QueueItem, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -97,7 +97,24 @@ test("only a transfer to the controller is a withdrawal", () => {
     label: "Changes the delay",
   });
   assert.equal(classify({ to: SAFE, value: 0n, data: "0xdeadbeef", operation: 0 }, vault).kind, "settings");
-  assert.equal(classify({ to: token, value: 0n, data: call("approve(address,uint256)", [other, 1n]), operation: 0 }, vault).kind, "unknown");
+  // An allowance lets another address take the tokens later, without a wait. It is named, and it is a warning.
+  assert.deepEqual(classify({ to: token, value: 0n, data: call("approve(address,uint256)", [other, 1n]), operation: 0 }, vault), {
+    kind: "settings",
+    label: "Lets another address take tokens out of your Chronobox",
+  });
+  // A delegatecall can replace the code of the Safe. It names the contract whose code would run.
+  assert.match((classify({ to: other, value: 0n, data: "0x", operation: 1 }, vault) as { label?: string }).label ?? "", /Runs the code of 0x70997970/);
+});
+
+test("everything this app does not make raises the alarm, and nothing it makes does", () => {
+  const vault = { safe: SAFE, delay: "0x4Bc1F5bDd8ac14ffEc0e91441913E428579708f7", controller: WALLET } as const;
+  const other = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+  assert.equal(isForeign(classify(withdrawalTx(WALLET, null, 5n), vault)), false);
+  assert.equal(isForeign(classify(withdrawalTx(other, null, 5n), vault)), true);
+  assert.equal(isForeign(classify({ to: SAFE, value: 0n, data: call("changeMasterCopy(address)", [other]), operation: 0 }, vault)), true);
+  assert.equal(isForeign(classify({ to: other, value: 0n, data: "0x", operation: 1 }, vault)), true);
+  assert.equal(isForeign(classify({ to: vault.delay, value: 0n, data: call("setTxCooldown(uint256)", [86400n]), operation: 0 }, vault)), false);
+  assert.equal(isForeign(null), false);
 });
 
 test("the two settings changes are recognised, and only in their exact form", () => {
