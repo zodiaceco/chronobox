@@ -11,7 +11,7 @@ import { sameAddress } from "../lib/hex.ts";
 import { assertWallet, sendBatch } from "../lib/wallet.ts";
 import { type Asset, AddressText, AssetAmount, Button, Modal, Notice, type Session, SlowNote, TokenBadge, useAction } from "./common.tsx";
 import type { VaultRef } from "./queue.tsx";
-import { Ring } from "./ring.tsx";
+import { SunPassArt } from "./art.tsx";
 
 type Line = { asset: number; text: string };
 
@@ -82,8 +82,8 @@ export function WithdrawManySheet(props: {
     const status = itemStatus({ createdAt: doneAt }, inspection.cooldown, inspection.expiration, doneAt);
     return (
       <Modal title="The wait has started." onClose={props.onClose}>
-        <div class="cancel-ring">
-          <Ring size={96} left={1} />
+        <div class="sun-pass">
+          <SunPassArt size={96} />
         </div>
         <p class="big-line">{listText}</p>
         <p>
@@ -203,7 +203,6 @@ export function GroupCard(props: {
     <li class={`queue-item queue-${status.phase}`}>
       <div class="queue-main">
         <span class="queue-head">
-          <Ring size={30} left={status.phase === "waiting" ? 1 - progress : 0} />
           <strong class="queue-title">Withdraw {items.length} assets</strong>
         </span>
         <ul class="queue-lines">
@@ -220,9 +219,12 @@ export function GroupCard(props: {
           })}
         </ul>
         {status.phase === "waiting" ? (
-          <span class="queue-when">
-            Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
-          </span>
+          <>
+            <span class="queue-when">
+              Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
+            </span>
+            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
+          </>
         ) : status.phase === "ready" ? (
           <span class="queue-when">
             <b>Ready.</b>

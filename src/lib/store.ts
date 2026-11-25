@@ -179,26 +179,6 @@ export function setPendingSwap(chainId: number, safe: Address, request: SwapRequ
   }
 }
 
-/**
- * The amounts picked on the start page before the setup, for the setup's step "Put money in now?".
- * Only in memory: they are a starting point for this visit, not something to keep.
- */
-let setupAmounts: { chainId: number; wallet: string; amounts: Record<number, string> } | null = null;
-
-export function setSetupAmounts(chainId: number, wallet: Address, amounts: Record<number, string>): void {
-  setupAmounts = { chainId, wallet: wallet.toLowerCase(), amounts: { ...amounts } };
-}
-
-/** The amounts for this wallet on this network. They stay until the setup is done, or new ones are picked. */
-export function setupAmountsFor(chainId: number, wallet: Address): Record<number, string> | null {
-  const kept = setupAmounts;
-  return kept && kept.chainId === chainId && kept.wallet === wallet.toLowerCase() ? { ...kept.amounts } : null;
-}
-
-export function clearSetupAmounts(): void {
-  setupAmounts = null;
-}
-
 /** Did the person switch on third-party services (see lookup.ts)? Off unless they said yes in this browser. */
 export function lookupAllowed(): boolean {
   return load<unknown>("chronobox:lookup", false) === true;

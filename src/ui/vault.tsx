@@ -537,7 +537,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {isController ? (
             // The owner sees one list: what the wallet holds (unlocked) next to what the Chronobox holds (locked).
-            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound} onLookup={() => setSheet("lookup")} />
+            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound + data.fetchedAt} onLookup={() => setSheet("lookup")} />
           ) : (
             <>
               <p class="eyebrow">{`A Chronobox on ${chain.name}`}</p>
@@ -1221,16 +1221,17 @@ function QueueCard(props: {
                 <path d="M12 10v4.5M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
               </svg>
             </span>
-          ) : (
-            <Ring size={30} left={status.phase === "waiting" ? 1 - progress : 0} label={status.phase === "waiting" ? `${Math.round(progress * 100)} percent of the wait has passed` : undefined} />
-          )}
+          ) : null}
           <strong class="queue-title">{title}</strong>
         </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
         {status.phase === "waiting" ? (
-          <span class="queue-when">
-            Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
-          </span>
+          <>
+            <span class="queue-when">
+              Ready in <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}
+            </span>
+            <progress class="progress" max={1} value={progress} aria-label="Part of the wait that has passed" />
+          </>
         ) : status.phase === "ready" ? (
           <span class="queue-when">
             <b>Ready.</b>
