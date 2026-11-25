@@ -92,7 +92,7 @@ Before you rely on it:
 
 - Try it first with `--dry-run`. It prints the messages and sends nothing.
 - Ask your Chronobox for a small withdrawal and cancel it. You must get two messages.
-- The watcher says "All quiet" once a day (in Telegram and to the webhook). If that message stops, the watcher has stopped.
+- The watcher says "All quiet" once a day. In Telegram this is one pinned message that the bot edits, so it makes no sound and no unread mark. If its date gets old, the watcher has stopped. The webhook gets a `heartbeat` event.
 
 ## What it reports
 
@@ -110,7 +110,7 @@ The messages use the words of the Chronobox app. No message in Telegram has a li
 - **Recovery wait ends soon**: 7 days and 1 day before the wait of a recovery ends. When it ends, anybody can carry the recovery out at once, so this is the last safe moment to stop it.
 - **Recovery wait over**, **Recovery ends soon**, **Recovery void**: as for a request, for the recovery.
 - **Recovery stopped**, **Recovery done** or **Recovery closed**: the recovery left its line. Done means that the new wallet holds the Chronobox now.
-- **All quiet**: once a day, without a sound, so that silence is different from a broken watcher.
+- **All quiet**: once a day, so that silence is different from a broken watcher. In Telegram it is one pinned message that is edited, not a new message every day: a chat full of messages that say nothing is a chat that people mute, and then they miss the real alerts too.
 - **Alerts can be late**: the watcher could not read the chain for 3 polls in a row. **Alerts work again** follows when it can.
 
 Each message is sent once, also across restarts. A message that could not be delivered is tried again on the next poll.
@@ -260,7 +260,7 @@ How a person subscribes (on Vercel too):
 
 - The app builds the link `https://t.me/<bot>?start=<chain id>-<address>`. Telegram shows the bot and a Start button. The bot gets `/start <chain id>-<address>` together with the number of the chat. Nobody fills in a form, and the app sends nothing.
 - The bot checks on the chain that the address is a Chronobox. Then it keeps the pair (chat, Chronobox) and answers with what waits there right now.
-- From then on every alert of that Chronobox goes to that chat. "All quiet" arrives without a sound. Money to another address is marked with a warning sign, and a change of the Chronobox with an alarm sign, because Telegram cannot ring louder.
+- From then on every alert of that Chronobox goes to that chat. "All quiet" is one pinned message that the bot edits each day. A new one comes only if the person deleted it. /stop unpins it. Money to another address is marked with a warning sign, and a change of the Chronobox with an alarm sign, because Telegram cannot ring louder.
 - `/stop` ends all alerts of a chat and deletes it. `/stop <address>` ends one. `/list` shows what the chat follows. `/privacy` says what the bot keeps. A chat can follow 20 Chronoboxes at most.
 - When a chat stops, every other chat and every email address that follows the same Chronobox is told. Alerts must not go off in silence. But anybody can follow a public Chronobox, so only a follow of a day or more tells the others, and they are told once an hour at most: more stops in that hour come together in the next message ("3 chats … have stopped them"), which the poll sends. A stop is never dropped, so a stranger cannot hide a real one for more than an hour.
 - A chat that blocks the bot is removed. A message that fails is tried again on the next poll, and a chat that already got it does not get it twice.

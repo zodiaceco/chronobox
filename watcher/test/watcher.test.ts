@@ -33,6 +33,10 @@ let said: Said[] = [];
 let inbox: { update_id: number; message: unknown }[] = [];
 let nextUpdate = 1;
 let tgCalls: string[] = [];
+/** The "All quiet" messages that the bot edited and pinned, by message id. */
+let edited: { chat: number; id: number; text: string }[] = [];
+let pinned: { chat: number; id: number; silent: boolean }[] = [];
+let unpinned: { chat: number; id: number }[] = [];
 /** The time of the bot (ms). */
 let tgNow = Date.now();
 /** What sendMessage answers for a chat: a Telegram error, one time ("once") or every time. */
@@ -75,6 +79,16 @@ before(async () => {
       said.push({ chat: args.chat_id, text: args.text, silent: Boolean(args.disable_notification) });
       return answer(200, { ok: true, result: { message_id: said.length } });
     }
+    if (m[2] === 'editMessageText') {
+      const old = said[args.message_id - 1];
+      if (!old || old.chat !== args.chat_id) return answer(400, { ok: false, error_code: 400, description: 'Bad Request: message to edit not found' });
+      if (old.text === args.text) return answer(400, { ok: false, error_code: 400, description: 'Bad Request: message is not modified' });
+      old.text = args.text;
+      edited.push({ chat: args.chat_id, id: args.message_id, text: args.text });
+      return answer(200, { ok: true, result: true });
+    }
+    if (m[2] === 'pinChatMessage') { pinned.push({ chat: args.chat_id, id: args.message_id, silent: Boolean(args.disable_notification) }); return answer(200, { ok: true, result: true }); }
+    if (m[2] === 'unpinChatMessage') { unpinned.push({ chat: args.chat_id, id: args.message_id }); return answer(200, { ok: true, result: true }); }
     return answer(404, { ok: false, error_code: 404, description: 'Not Found' });
   });
 });
@@ -87,6 +101,9 @@ beforeEach(() => {
   said = [];
   inbox = [];
   tgCalls = [];
+  edited = [];
+  pinned = [];
+  unpinned = [];
   tgNow = Date.now();
   tgRefuse = {};
   logs.length = 0;
@@ -1372,7 +1389,7 @@ test('Telegram: an alert that waits does not show in the state of the vault whic
   assert.ok(old.done.every((m) => !shows(m)), JSON.stringify(old.done));
 });
 
-test('Telegram only: a quiet Chronobox is read for "All quiet" only when a chat follows it, and that message is silent', async () => {
+test('Telegram only: a quiet Chronobox is read for "All quiet" only when a chat follows it, and that message is pinned and edited, not sent again', async () => {
   const { w, bot } = withBot({ HEARTBEAT_HOURS: '24' }, false);
   await w.poll();
   chain.create();
@@ -1388,6 +1405,34 @@ test('Telegram only: a quiet Chronobox is read for "All quiet" only when a chat 
   await w.poll();
   assert.match(said.at(-1)!.text, /^All quiet/);
   assert.equal(said.at(-1)!.silent, true);
+  const id = said.length;
+  assert.deepEqual(pinned, [{ chat: ANNA, id, silent: true }]);
+
+  // The next days edit that message: no new message, no sound, no unread mark.
+  const first = said[id - 1].text;
+  chain.mine(2n * DAY);
+  await w.poll();
+  chain.mine(2n * DAY);
+  await w.poll();
+  assert.equal(said.length, id, 'no new message');
+  assert.equal(edited.length, 2);
+  assert.ok(edited.every((e) => e.chat === ANNA && e.id === id));
+  assert.notEqual(said[id - 1].text, first, 'it says when the service looked last');
+  assert.equal(pinned.length, 1);
+
+  // The person deleted it: the bot sends a new one and pins that.
+  said[id - 1] = { chat: 0, text: '', silent: true };
+  chain.mine(2n * DAY);
+  await w.poll();
+  assert.equal(said.length, id + 1);
+  assert.match(said.at(-1)!.text, /^All quiet/);
+  assert.deepEqual(pinned.at(-1), { chat: ANNA, id: id + 1, silent: true });
+
+  // Stop unpins it, so that an old date does not stay at the top.
+  person(ANNA, '/stop');
+  await bot.pump();
+  assert.deepEqual(unpinned, [{ chat: ANNA, id: id + 1 }]);
+  assert.deepEqual(bot.state.status, {});
 });
 
 test('Telegram: the list of chats on disk opens only with the key', async () => {
@@ -1421,7 +1466,7 @@ test('Telegram: the list of chats on disk opens only with the key', async () => 
   // A list from before the encryption is sealed at the first start.
   fs.writeFileSync(file, JSON.stringify({ version: 1, offset: 7, chats: { [CARL]: [`1-${SAFE}`] } }));
   const moved = await Telegram.open(cfg, { log: (m) => logs.push(m) });
-  assert.deepEqual(moved.state, { offset: 7, chats: { [CARL]: [`1-${SAFE}`] }, since: {}, notices: {} });
+  assert.deepEqual(moved.state, { offset: 7, chats: { [CARL]: [`1-${SAFE}`] }, since: {}, notices: {}, status: {} });
   assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /chats/);
   assert.deepEqual((await Telegram.open(cfg)).state, moved.state);
   assert.doesNotMatch(logs.join('\n'), new RegExp(TG_KEY));
