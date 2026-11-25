@@ -19,6 +19,12 @@ import { ConfigError, type FetchFn, type Log, defaultLog, errText } from './util
 
 const FIRST_START_LOOKUP_LIMIT = 50;
 /**
+ * The steps of the recovery line that the watcher reads, from its head. The guardian alone can add steps, as many as
+ * they like, so the work of one poll must not grow with the line: a poll that runs out of time saves nothing, and the
+ * next one would start over. The steps behind these are only counted (see `recovery_backlog`). One stop removes all.
+ */
+export const RECOVERY_WINDOW = 5;
+/**
  * Gas for each call that reads a token's symbol or decimals. A real token needs a few thousand, a proxy a few ten
  * thousand. A contract that wants more is not a token worth waiting for.
  */
@@ -542,7 +548,8 @@ export class Watcher {
     }
 
     // The line of the recovery, while it can act. A line the watcher did not follow before (a first start, a recovery
-    // that was turned on, a state from before the watcher knew of it) is read from its head.
+    // that was turned on, a state from before the watcher knew of it) is read from its head. Only the first
+    // RECOVERY_WINDOW steps are read, so a poll does the same work however long the guardian makes the line.
     const live = Boolean(rec && roles && recoveryLive(settings, vault));
     const followed = !first && live && s.recoveryQueueNonce !== undefined && s.recoveryItems !== undefined && recoveryLive(s.settings!, vault);
     let rTx = 0, rQueue = 0;
@@ -550,16 +557,16 @@ export class Watcher {
     if (live) {
       const rd = rec!.delay;
       [rTx, rQueue] = (await Promise.all([this.callUint(rd, SEL.txNonce, tag), this.callUint(rd, SEL.queueNonce, tag)])).map(Number);
-      const start = followed ? s.recoveryQueueNonce! : rTx;
+      const known = followed ? s.recoveryItems! : {};
+      const want: number[] = [];
+      for (let n = rTx; n < Math.min(rQueue, rTx + RECOVERY_WINDOW); n++) if (!known[n]) want.push(n);
+      // The logs of exactly these steps since the last poll: a long line cannot make this answer large.
       const byNonce = new Map<number, any>();
-      if (followed && rQueue > start && head > s.lastBlock!) {
-        for (const l of await this.getLogs(s.lastBlock! + 1, head, [TOPIC_TRANSACTION_ADDED], rd)) byNonce.set(Number(BigInt(l.topics[1])), l);
+      if (followed && want.length && head > s.lastBlock!) {
+        const logs = await this.getLogs(s.lastBlock! + 1, head, [TOPIC_TRANSACTION_ADDED, want.map((n) => '0x' + encUint(n))], rd);
+        for (const l of logs) byNonce.set(Number(BigInt(l.topics[1])), l);
       }
-      for (let n = start; n < rQueue; n++) {
-        if (n >= start + FIRST_START_LOOKUP_LIMIT) {
-          rNew.push(this.buildRecoveryItem(n, await this.callUint(rd, SEL.getTxCreatedAt + encUint(n), tag), undefined, delay, roles, settings.council));
-          continue;
-        }
+      for (const n of want) {
         let log = byNonce.get(n);
         let createdAt: bigint;
         if (log) createdAt = await this.callUint(rd, SEL.getTxCreatedAt + encUint(n), tag);
@@ -567,6 +574,8 @@ export class Watcher {
         rNew.push(this.buildRecoveryItem(n, createdAt, log, delay, roles, settings.council));
       }
     }
+    /** Steps in the recovery line behind the ones that the watcher reads. */
+    const rBacklog = live ? Math.max(0, rQueue - rTx - RECOVERY_WINDOW) : 0;
     const rClosing = followed ? [...Object.values(s.recoveryItems!), ...rNew].filter((it) => it.nonce < rTx) : [];
 
     // Items that left the queue since the last poll: carried out, cancelled, or removed because their time ran out.
@@ -657,6 +666,7 @@ export class Watcher {
         rLines.push(waitLine(it.summary, st));
       }
       s.recoveryItems = live ? Object.fromEntries(rNew.map((it) => [it.nonce, it])) : undefined;
+      s.recoveryBacklogTold = rBacklog;
       const worst = Math.max(3, ...newItems.map((i) => i.priority), ...rNew.map((i) => i.priority));
       const helpers = (settings.cancellers ?? []).filter((a) => !controllers.includes(a));
       const g = settings.guardian;
@@ -679,6 +689,7 @@ export class Watcher {
           (others.length ? ` Warning: ${others.join(' and ')} can move the money without the wait.` : '') +
           (newItems.length === 0 ? ' Nothing waits.' : ` ${newItems.length === 1 ? 'One request waits' : `${newItems.length} requests wait`}:\n${lines.join('\n')}`) +
           (rNew.length === 0 ? '' : `\n${rNew.length === 1 ? 'In the line of the recovery, one step waits' : `In the line of the recovery, ${rNew.length} steps wait`}:\n${rLines.join('\n')}`) +
+          (rBacklog === 0 ? '' : `\nBehind them, ${rBacklog} more step${rBacklog === 1 ? '' : 's'} wait${rBacklog === 1 ? 's' : ''}. One stop removes all of them.`) +
           guardWarnings(settings, vault).map((w) => ` ${w}`).join(''),
       });
       s.lastHeartbeat = Number(now);
@@ -809,8 +820,24 @@ export class Watcher {
       }
     }
 
-    // The recovery: its wait ends soon, wait over, ends soon, void.
+    // The recovery: a long line, its wait ends soon, wait over, ends soon, void.
     if (!live) s.recoveryItems = undefined;
+    // Steps behind the ones that are read. Told when they appear, and again each time they at least double, so that
+    // a guardian who adds them one by one cannot ring the phones of the followers for each.
+    if (!first) {
+      const told = s.recoveryBacklogTold ?? 0;
+      if (rBacklog === 0) s.recoveryBacklogTold = 0;
+      else if (told === 0 || rBacklog >= 2 * told) {
+        s.recoveryBacklogTold = rBacklog;
+        this.push({
+          event: 'recovery_backlog', priority: 5, at: Number(now),
+          title: `Recovery line: ${rBacklog + RECOVERY_WINDOW} steps wait`,
+          message: `${rBacklog + RECOVERY_WINDOW} steps wait in the line of the recovery. Only the guardian can put them there. ` +
+            `The alerts name the first ${RECOVERY_WINDOW}, and the ${rBacklog} behind them are only counted. One stop removes all of them.` +
+            '\n\nIf you did not ask for this, open your Chronobox and stop them.',
+        });
+      }
+    }
     for (const it of Object.values(s.recoveryItems ?? {}).sort((a, b) => a.nonce - b.nonce)) {
       const st = rTimes(it);
       const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
@@ -854,7 +881,7 @@ export class Watcher {
 
     // Heartbeat.
     const pending = Object.keys(s.items).length;
-    const recoveries = Object.keys(s.recoveryItems ?? {}).length;
+    const recoveries = live ? rQueue - rTx : 0;
     if (!first && this.cfg.heartbeatHours > 0 && Number(now) - (s.lastHeartbeat ?? 0) >= this.cfg.heartbeatHours * 3600) {
       s.lastHeartbeat = Number(now);
       this.push({

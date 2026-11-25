@@ -263,11 +263,14 @@ export class AllWatcher {
     if (!st?.settings) return null;
     const now = BigInt(Math.floor(Date.now() / 1000));
     const rec = st.settings.recovery;
+    const read = Object.keys(st.recoveryItems ?? {}).length;
+    const behind = st.recoveryQueueNonce !== undefined && st.recoveryTxNonce !== undefined ? st.recoveryQueueNonce - st.recoveryTxNonce - read : 0;
     return [
       ...Object.values(st.items).sort((a, b) => a.nonce - b.nonce).map((it) =>
         waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(st.settings!.cooldown), BigInt(st.settings!.expiration), now))),
       ...(rec ? Object.values(st.recoveryItems ?? {}).sort((a, b) => a.nonce - b.nonce).map((it) =>
         waitLine(it.summary, itemStatus(BigInt(it.createdAt), BigInt(rec.cooldown), BigInt(rec.expiration), now))) : []),
+      ...(behind > 0 ? [`${behind} more step${behind === 1 ? '' : 's'} in the line of the recovery. One stop removes all of them.`] : []),
     ];
   }
 

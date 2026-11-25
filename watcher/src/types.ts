@@ -89,6 +89,8 @@ export type State = {
   recoveryTxNonce?: number;
   recoveryQueueNonce?: number;
   recoveryItems?: Record<string, Item>;
+  /** How many steps behind the ones it reads the last alert of a long recovery line named. 0: none. */
+  recoveryBacklogTold?: number;
   outbox: Alert[];
   failCount: number;
   problemOpen: boolean;

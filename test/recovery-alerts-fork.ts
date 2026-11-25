@@ -20,6 +20,7 @@ import {
   type Inspection,
   type Rpc,
   addGuardianTx,
+  cancelAllTx,
   cancelTx,
   councilApproveTx,
   councilCreateTx,
@@ -40,7 +41,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
-import { AllWatcher, parseConfig } from "../watcher/src/index.ts";
+import { AllWatcher, RECOVERY_WINDOW, parseConfig } from "../watcher/src/index.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 6 to 9, and 4 as the stranger who carries things out.
@@ -114,7 +115,20 @@ const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [WALLET, GUARDIAN, NEW, OTHER, STRANGER]) await rpc("anvil_setCode", [account, "0x"]);
   const config = parseConfig(["--all"], { RPC_URL: URL, STATE_DIR: dir, HEARTBEAT_HOURS: "0", WEBHOOK_URL: hookUrl });
-  const watcher = new AllWatcher(config, { log: () => {} });
+  // Counts how often the service reads when a step of the recovery line was queued: the work that a long line costs.
+  let recoveryLine = "";
+  let lineReads = 0;
+  const counting: typeof fetch = (input, init) => {
+    try {
+      const body = JSON.parse(String(init?.body ?? ""));
+      for (const one of [body].flat()) {
+        const call = one?.method === "eth_call" ? one.params?.[0] : null;
+        if (call && String(call.to).toLowerCase() === recoveryLine && String(call.data).startsWith("0x3aa76906")) lineReads++;
+      }
+    } catch { /* not JSON-RPC */ }
+    return fetch(input, init);
+  };
+  const watcher = new AllWatcher(config, { log: () => {}, fetch: counting });
   const poll = async () => assert.equal(await watcher.poll(), true);
   await poll();
 
@@ -270,7 +284,46 @@ try {
   fs.rmSync(dir2, { recursive: true, force: true });
   ok("the first message names the guardian, the recovery, and the recovery that waits");
 
-  step("8. The new wallet turns the recovery off, while a recovery waits");
+  step("8. The guardian floods the line of the recovery: every poll reads the same few steps");
+  recoveryLine = delayR.toLowerCase();
+  state = await inspect(rpc, safe);
+  owners = await councilOwners(rpc, state.council!);
+  const flood = recoveryTx(partsOf(state), owners, NEW, state.queueNonce)!;
+  const queueMany = async (n: number) => {
+    for (let i = 0; i < n; i++) await sendAndWait(rpc, GUARDIAN, queueTx(delayR, flood));
+  };
+  await queueMany(12);
+  lineReads = 0;
+  await poll();
+  got = heard();
+  assert.deepEqual(events(got), [...Array(RECOVERY_WINDOW - 1).fill("recovery_started"), "recovery_backlog"]);
+  assert.match(got.at(-1)!.title, /^Recovery line: 13 steps wait$/);
+  assert.match(got.at(-1)!.message, /The alerts name the first 5, and the 8 behind them are only counted\. One stop removes all of them\./);
+  assert.ok(lineReads <= RECOVERY_WINDOW, `${lineReads} reads`);
+  ok(`13 steps: the first ${RECOVERY_WINDOW} are named, the rest counted (${lineReads} reads of the line)`);
+  await queueMany(10);
+  lineReads = 0;
+  await poll();
+  got = heard();
+  assert.deepEqual(events(got), ["recovery_backlog"]);
+  assert.match(got[0].title, /^Recovery line: 23 steps wait$/);
+  assert.equal(lineReads, 0);
+  await queueMany(1);
+  await poll();
+  assert.deepEqual(events(heard()), []);
+  ok("told again when the line doubled, not for each step, and no more reads");
+  assert.ok((await watcher.pending(safe.toLowerCase()))!.some((line) => /^19 more steps in the line of the recovery\./.test(line)));
+  state = await inspect(rpc, safe);
+  await sendAndWait(rpc, state.controller!, cancelAllTx(roles, delayR, state.recovery!)!);
+  await poll();
+  got = heard();
+  assert.deepEqual(events(got), Array(RECOVERY_WINDOW).fill("recovery_stopped"));
+  await queueMany(1);
+  await poll();
+  assert.deepEqual(events(heard()), ["recovery_started"]);
+  ok("one stop removed all 24, and a new step is named again");
+
+  step("9. The new wallet turns the recovery off, while a recovery waits");
   state = await inspect(rpc, safe);
   r = await through(delay, OTHER, removeRecoveryTx(partsOf(state))!);
   assert.match(r.asked[0].title, /^New request: Turn off the recovery$/);
