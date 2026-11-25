@@ -2,14 +2,14 @@
 // The CLI runs it for one vault. --all and the service run one for each vault that something waits in.
 import * as path from 'node:path';
 import {
-  BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
+  BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, SAFE_GUARD_SLOT, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
   TOPIC_MODULE_FAILURE, TOPIC_MODULE_SUCCESS, ZERO_ADDRESS, addressWord, cleanSymbol, decodeAbiString, decodeAddressArray, decodeAddresses, decodeModuleTransaction, strip,
   decodeAddress, decodeTransactionAdded, decodeUint, encAddr, encUint, hex, proxyCode, toAddr, toBig, word,
 } from './chain.ts';
 import type { Config } from './config.ts';
 import { type DescribeCtx, type TokenMeta, describeTx } from './describe.ts';
 import { fmtDuration, fmtWhen, lowerFirst, networkName, shortAddr } from './format.ts';
-import { predictRecoveryDelay, readGuard, recoveryWallet } from './guardian.ts';
+import { DEFAULT_RECOVERY_WAIT, predictRecoveryDelay, readGuard, recoveryWallet } from './guardian.ts';
 import { type CloseReason, type VaultEvent, expiryLead, itemStatus, replayQueue, waitLine } from './status.ts';
 import { DryRunStore, FileStore, type Store } from './store.ts';
 import type { Email } from './email.ts';
@@ -35,18 +35,43 @@ function recoveryLive(x: Settings, vault: string): boolean {
 }
 
 /**
- * What can hand a vault with a guardian to a new wallet besides the wallet and the guardian: a second address on the
- * recovery Delay, a module of the shared Safe that is not the recovery Delay, or a shared Safe that does not need both.
+ * What can hand a vault with a guardian to a new wallet besides the wallet and the guardian, or tamper with
+ * its recovery: a hijacked recovery owner, a guard on the recovery Delay or shared Safe, a second address on
+ * the recovery Delay, zero recovery wait, a module of the shared Safe that is not the recovery Delay, or a
+ * shared Safe whose owners/threshold do not require both the wallet and the guardian.
  */
 export function guardWarnings(x: Settings, vault: string): string[] {
   const out: string[] = [];
-  if (x.recovery && recoveryLive(x, vault)) {
-    for (const m of x.recovery.modules) if (m !== x.guardian) out.push(`Warning: ${m} can start a recovery.`);
+  if (x.recovery?.made) {
+    if (x.recovery.owner && x.recovery.owner !== vault && x.recovery.owner !== BURN_ADDRESS) {
+      out.push(`Warning: ${x.recovery.owner} controls the recovery settings of this Chronobox.`);
+    }
+    if (x.recovery.guard && x.recovery.guard !== ZERO_ADDRESS) {
+      out.push(`Warning: ${x.recovery.guard} is attached to the recovery and can block it.`);
+    }
+    if (recoveryLive(x, vault)) {
+      for (const m of x.recovery.modules) if (m !== x.guardian) out.push(`Warning: ${m} can start a recovery.`);
+      if (x.council && x.recovery.target === x.council && x.recovery.avatar && x.recovery.avatar !== x.council) {
+        out.push(`Warning: the recovery does not point cleanly at the shared Safe ${x.council}.`);
+      }
+    }
+    if (recoveryOn(x) && x.recovery.cooldown === '0') {
+      out.push('Warning: a recovery has no wait and can be carried out at once.');
+    }
   }
   if (x.guardian && x.council) {
     for (const m of x.councilModules ?? []) if (m !== x.recovery?.delay) out.push(`Warning: ${m} can hand this Chronobox to a new wallet at once.`);
-    if ((x.councilOwners ?? []).length && (x.councilThreshold !== '2' || x.councilOwners!.length !== 2)) {
-      out.push(`Warning: the Safe ${x.council} that the wallet and the guardian share does not need both of them.`);
+    if (x.councilGuard && x.councilGuard !== ZERO_ADDRESS) {
+      out.push(`Warning: ${x.councilGuard} is attached to the shared Safe ${x.council}.`);
+    }
+    if ((x.councilOwners ?? []).length) {
+      const owners = x.councilOwners!;
+      const rightPair = x.controllers.length === 1
+        ? owners.length === 2 && owners.includes(x.controllers[0]) && owners.includes(x.guardian)
+        : owners.length === 2;
+      if (x.councilThreshold !== '2' || !rightPair) {
+        out.push(`Warning: the Safe ${x.council} that the wallet and the guardian share does not need both of them.`);
+      }
     }
   }
   return out;
@@ -270,9 +295,9 @@ export class Watcher {
   }
 
   /** A step in the line of the recovery. `roles` and `delay` are the cancel contract and the Delay of the vault. */
-  private buildRecoveryItem(nonce: number, createdAt: bigint, log: any | undefined, delay: string, roles: string): Item {
+  private buildRecoveryItem(nonce: number, createdAt: bigint, log: any | undefined, delay: string, roles: string, council?: string): Item {
     const tx = log ? decodeTransactionAdded(log) : undefined;
-    const wallet = tx ? recoveryWallet(tx, delay, roles) ?? '' : '';
+    const wallet = tx ? recoveryWallet(tx, delay, roles, council) ?? '' : '';
     return {
       nonce, createdAt: createdAt.toString(), kind: 'recovery', priority: 5, wallet,
       ...(tx ? { block: tx.block, to: tx.to, value: tx.value.toString(), data: tx.data, operation: tx.operation } : {}),
@@ -284,23 +309,27 @@ export class Watcher {
   /** The guardian, the shared Safe and the recovery Delay of a vault with a cancel contract. */
   private async guardSettings(vault: string, controllers: string[], members: string[], tag: string): Promise<Partial<Settings>> {
     const out: Partial<Settings> = { guardian: '' };
+    const slotAddr = async (addr: string, slot: string) => toAddr(strip(String(await this.rpc.call('eth_getStorageAt', [addr, slot, tag]))));
     if (controllers.length === 1) {
       const g = await readGuard({
         code: async (a) => String(await this.rpc.call('eth_getCode', [a, tag])).toLowerCase(),
+        singleton: (a) => slotAddr(a, '0x0'),
+        guard: (a) => slotAddr(a, SAFE_GUARD_SLOT),
         owners: async (a) => decodeAddresses(await this.call(a, SEL.getOwners, tag)),
         threshold: (a) => this.callUint(a, SEL.getThreshold, tag),
         modules: (a) => this.modules(a, tag),
       }, vault, controllers[0], members);
-      if (g) Object.assign(out, { guardian: g.guardian, council: g.council, councilOwners: g.owners, councilThreshold: g.threshold, councilModules: g.modules });
+      if (g) Object.assign(out, { guardian: g.guardian, council: g.council, councilOwners: g.owners, councilThreshold: g.threshold, councilModules: g.modules, councilGuard: g.guard });
     }
     const rd = predictRecoveryDelay(vault);
-    const recovery: RecoverySettings = { delay: rd, made: false, owner: '', avatar: '', target: '', modules: [], cooldown: '0', expiration: '0' };
+    const recovery: RecoverySettings = { delay: rd, made: false, owner: '', avatar: '', target: '', guard: ZERO_ADDRESS, modules: [], cooldown: '0', expiration: '0' };
     if ((await this.moduleKind(rd, tag)) === 'delay') {
-      const [owner, avatar, target, modules, cooldown, expiration] = await Promise.all([
+      const [owner, avatar, target, guard, modules, cooldown, expiration] = await Promise.all([
         this.callAddr(rd, SEL.owner, tag), this.callAddr(rd, SEL.avatar, tag), this.callAddr(rd, SEL.target, tag),
-        this.modules(rd, tag), this.callUint(rd, SEL.txCooldown, tag), this.callUint(rd, SEL.txExpiration, tag),
+        this.callAddr(rd, SEL.getGuard, tag), this.modules(rd, tag),
+        this.callUint(rd, SEL.txCooldown, tag), this.callUint(rd, SEL.txExpiration, tag),
       ]);
-      Object.assign(recovery, { made: true, owner, avatar, target, modules, cooldown: cooldown.toString(), expiration: expiration.toString() });
+      Object.assign(recovery, { made: true, owner, avatar, target, guard, modules, cooldown: cooldown.toString(), expiration: expiration.toString() });
     }
     out.recovery = recovery;
     return out;
@@ -464,7 +493,7 @@ export class Watcher {
     const rec = settings.recovery;
     const ctx: DescribeCtx = {
       chainId, delay, vault, controllers, roles: roles || undefined, cooldown,
-      recoveryDelay: rec?.delay, recoveryWait: rec?.made ? BigInt(rec.cooldown) : undefined,
+      recoveryDelay: rec?.delay, recoveryWait: rec?.made ? BigInt(rec.cooldown) : rec ? DEFAULT_RECOVERY_WAIT : undefined,
     };
     const first = s.lastBlock === undefined;
 
@@ -517,14 +546,14 @@ export class Watcher {
       }
       for (let n = start; n < rQueue; n++) {
         if (n >= start + FIRST_START_LOOKUP_LIMIT) {
-          rNew.push(this.buildRecoveryItem(n, await this.callUint(rd, SEL.getTxCreatedAt + encUint(n), tag), undefined, delay, roles));
+          rNew.push(this.buildRecoveryItem(n, await this.callUint(rd, SEL.getTxCreatedAt + encUint(n), tag), undefined, delay, roles, settings.council));
           continue;
         }
         let log = byNonce.get(n);
         let createdAt: bigint;
         if (log) createdAt = await this.callUint(rd, SEL.getTxCreatedAt + encUint(n), tag);
         else ({ createdAt, log } = await this.locate(n, rd, head, tag));
-        rNew.push(this.buildRecoveryItem(n, createdAt, log, delay, roles));
+        rNew.push(this.buildRecoveryItem(n, createdAt, log, delay, roles, settings.council));
       }
     }
     const rClosing = followed ? [...Object.values(s.recoveryItems!), ...rNew].filter((it) => it.nonce < rTx) : [];
@@ -564,7 +593,7 @@ export class Watcher {
       const asTx = (list: Item[]) => new Map(list.map((it) => [it.nonce, { createdAt: BigInt(it.createdAt), to: it.to, value: it.value, data: it.data, operation: it.operation }]));
       if (closing.length) {
         reasons = replayQueue({
-          from: s.txNonce ?? txNonce, to: txNonce, events: events.filter((e) => e.safe === vault), delay, now,
+          from: s.txNonce ?? txNonce, to: txNonce, events: events.filter((e) => e.safe === vault), delay, execSafes: [vault], ownerSafe: vault, now,
           before: { cooldown: BigInt(s.settings!.cooldown), expiration: BigInt(s.settings!.expiration) },
           after: { cooldown, expiration },
           items: asTx(closing),
@@ -574,7 +603,7 @@ export class Watcher {
       if (rClosing.length) {
         const pr = s.settings!.recovery!;
         rReasons = replayQueue({
-          from: s.recoveryTxNonce ?? rTx, to: rTx, events, delay: rec!.delay, now,
+          from: s.recoveryTxNonce ?? rTx, to: rTx, events, delay: rec!.delay, execSafes: councils, ownerSafe: vault, now,
           before: { cooldown: BigInt(pr.cooldown), expiration: BigInt(pr.expiration) },
           after: { cooldown: BigInt(rec!.cooldown), expiration: BigInt(rec!.expiration) },
           items: asTx(rClosing),
@@ -649,8 +678,8 @@ export class Watcher {
         const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
         const [event, title, message] =
           r.how === 'executed' ? ['recovery_done', `Recovery done: ${it.summary}`,
-            it.wallet ? `The recovery was carried out on ${fmtWhen(now)}. The wallet ${it.wallet} now holds this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
-              : `${what} was carried out on ${fmtWhen(now)}. Open your Chronobox to see what changed.`]
+            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now holds this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
+              : `${what} was carried out on ${fmtWhen(r.ts)}. Open your Chronobox to see what changed.`]
           : r.how === 'cancelled' ? ['recovery_stopped', `Recovery stopped: ${it.summary}`, `${what} was stopped on ${fmtWhen(r.ts)}. The wallet of this Chronobox did not change.`]
           : r.how === 'expired' ? ['recovery_expired', `Recovery void: ${it.summary}`, `${what} was not carried out in time. It is void, and the wallet of this Chronobox did not change.`]
           : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who holds it.`];
@@ -665,7 +694,20 @@ export class Watcher {
           if (it.nonce < rTx) continue;
           const st = rTimes(it);
           s.recoveryItems[it.nonce] = it;
-          const wait = `The wait ends on ${fmtWhen(st.readyAt)}${st.readyAt > now ? ` (in ${fmtDuration(st.readyAt - now)})` : ''}. After that, anybody can carry it out.`;
+          if (st.status === 'expired') {
+            it.sentReady = true; it.sentExpiring = true; it.sentExpired = true;
+            const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
+            this.push({
+              event: 'recovery_expired', nonce: it.nonce, priority: 3, at: Number(now),
+              title: `Recovery void: ${it.summary}`,
+              message: `${what} was not carried out before ${fmtWhen(st.expiresAt!)}. It is void now, and the wallet of this Chronobox did not change.`,
+            });
+            continue;
+          }
+          if (st.status === 'ready') it.sentReady = true;
+          const wait = st.status === 'ready'
+            ? `The wait ended on ${fmtWhen(st.readyAt)}. Anybody can carry it out now${st.expiresAt === null ? '' : `, until ${fmtWhen(st.expiresAt)}`}.`
+            : `The wait ends on ${fmtWhen(st.readyAt)}${st.readyAt > now ? ` (in ${fmtDuration(st.readyAt - now)})` : ''}. After that, anybody can carry it out.`;
           this.push({
             event: 'recovery_started', nonce: it.nonce, priority: it.priority, at: Number(now),
             title: it.wallet ? `Recovery started: ${it.summary}` : 'Recovery line: a step that the app does not make',

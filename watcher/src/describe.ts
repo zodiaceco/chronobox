@@ -170,6 +170,12 @@ export function describeTx(
   const rd = ctx.recoveryDelay;
   if (rd && tx.operation === 0 && to === rd && tx.value === 0n && selector === SET_RECOVERY_WAIT && strip(data).length === 72) {
     const next = toBig(strip(data).slice(8));
+    if (next === 0n) {
+      return {
+        kind: 'recovery_wait', summary: 'Remove the recovery wait', priority: 5,
+        detail: 'After this, a recovery does not wait at all. The guardian can hand this Chronobox to another wallet at once.',
+      };
+    }
     const now = ctx.recoveryWait;
     return {
       kind: 'recovery_wait', summary: `Change the recovery wait to ${fmtDuration(next)}`, priority: 5,
@@ -186,9 +192,13 @@ export function describeTx(
     const wait = waitCall ? toBig(strip(waitCall.data).slice(8)) : ctx.recoveryWait;
     const recoveryOn = onRecovery.find((c) => c.data.startsWith(ENABLE_MODULE) && strip(c.data).length === 72);
     const recoveryOff = onRecovery.some((c) => c.data.startsWith(DISABLE_MODULE));
-    const waits = wait === undefined ? '' : ` A recovery waits ${fmtDuration(wait)}, and the wallet and the guardian can stop it in that time.`;
+    const waits = wait === undefined
+      ? ''
+      : wait === 0n
+        ? ' Warning: the recovery wait is zero, so a recovery can be carried out at once.'
+        : ` A recovery waits ${fmtDuration(wait)}, and the wallet and the guardian can stop it in that time.`;
     const enable = onDelay.find((c) => c.data.startsWith(ENABLE_MODULE) && strip(c.data).length === 72);
-    if (enable) {
+    if (enable && onDelay.length + onRoles.length + onRecovery.length === calls.length) {
       const removes = onDelay.some((c) => c.data.startsWith(DISABLE_MODULE) && ctx.controllers.includes(toAddr(strip(c.data).slice(72, 136))));
       return handover(toAddr(strip(enable.data).slice(8)), removes);
     }

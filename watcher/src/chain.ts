@@ -22,6 +22,12 @@ export const SET_TX_NONCE = '0x46ba2307';
 export const TOPIC_ENABLED_MODULE = '0xecdf3a3effea5783a3c4c2140e677577666428d44ed9d474a0b3a4c9943f8440';
 export const TOPIC_DISABLED_MODULE = '0xaab4fa2b463f581b2b32cb3b7e3b704b9ce37cc209b5fb4d77e593ace4054276';
 export const BURN_ADDRESS = '0x000000000000000000000000000000000000dead';
+/** Safe 1.4.1 guard storage slot: keccak256("guard_manager.guard.address"). */
+export const SAFE_GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
+/** SafeL2 1.4.1 singleton address. */
+export const SAFE_L2_SINGLETON = '0x29fcb43b46531bca003ddc8fcb67ffe91900c762';
+/** keccak256 of the runtime code of SafeProxy 1.4.1 (without 0x). */
+export const SAFE_PROXY_CODE_HASH = 'd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c';
 // ModuleProxyCreation(address indexed proxy, address indexed masterCopy), from the Zodiac ModuleProxyFactory.
 export const TOPIC_MODULE_PROXY_CREATION = '0x2150ada912bf189ed721c44211199e270903fc88008c2a1e1e889ef30fe67c5f';
 export const MODULE_PROXY_FACTORY = '0x000000000000addb49795b0f9ba5bc298cdda236';
@@ -47,6 +53,7 @@ export const SEL = {
   getModulesPaginated: '0xcc2f8452',
   getOwners: '0xa0e67e2b',
   getThreshold: '0xe75235b8',
+  getGuard: '0xc9106389',
   transfer: '0xa9059cbb',
   symbol: '0x95d89b41',
   decimals: '0x313ce567',

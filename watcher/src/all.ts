@@ -351,7 +351,7 @@ export class AllWatcher {
       for (const l of created) {
         if (String(l.address).toLowerCase() !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
         const delay = toAddr(strip(l.topics[1]));
-        if (byDelay.has(delay) || waiting.has(delay)) continue;
+        if (watched.has(delay) || waiting.has(delay)) continue;
         // A flood of Delays is dropped. A Chronobox in it is still found when somebody presses Start for it.
         if (queue.length >= MAX_QUEUE) { dropped++; continue; }
         queue.push(delay);
