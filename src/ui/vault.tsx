@@ -47,12 +47,13 @@ import {
   MIN_COOLDOWN,
   QUEUE_PAGE,
 } from "../lib/chronobox.ts";
-import { errorText } from "../lib/wallet.ts";
+import { canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { Ring } from "./ring.tsx";
 import { LookupSheet, OwnerHoldings } from "./holdings.tsx";
+import { GroupCard, WithdrawManySheet, collectCalls, groupsOf } from "./batch.tsx";
 import { lookupAllowed } from "../lib/store.ts";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
@@ -285,6 +286,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
   // Counts the times third-party services were switched: the list then reads again.
   const [lookupRound, setLookupRound] = useState(0);
+  // The wallet can send several calls as one. Then several assets can be withdrawn together, and collected together.
+  const [batch, setBatch] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    setBatch(false);
+    canBatch(session.wallet.provider, session.account, chain.id).then((yes) => !stale && setBatch(yes));
+    return () => {
+      stale = true;
+    };
+  }, [session.wallet, session.account, chain.id]);
   // What was cancelled a moment ago, and how much of its wait was still ahead: for the sheet that shows the cancel.
   const [cancelled, setCancelled] = useState<{ title: string; left: number; count: number } | null>(null);
   const [cancellingAll, setCancellingAll] = useState(false);
@@ -416,6 +427,15 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       try {
         await sendAndWait(session.rpc, session.account, tx, { ...sending, ...waiting });
         setCancellingAll(false);
+      } finally {
+        refresh();
+      }
+    });
+  // All items of a group in one confirmation, in their order in the line. All of them or none.
+  const collectGroup = (group: QueueItem[]) =>
+    action.run(`finish-${group[0].nonce}`, async (waiting) => {
+      try {
+        await sendBatch(session.wallet.provider, session.account, chain.id, collectCalls(group, inspection.delay!), undefined, waiting.shouldStop);
       } finally {
         refresh();
       }
@@ -596,7 +616,29 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </div>
           ) : null}
           <ol class="queue">
-            {queue.map((item, index) => (
+            {(batch ? groupsOf(queue, vault) : queue.map((item) => [item])).map((group, groupIndex) => {
+              const item = group[0];
+              const index = queue.indexOf(item);
+              if (group.length > 1) {
+                return (
+                  <GroupCard
+                    key={`group-${item.nonce}`}
+                    items={group}
+                    first={groupIndex === 0}
+                    status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
+                    now={now}
+                    cooldown={inspection.cooldown}
+                    vault={vault}
+                    assets={assets}
+                    busy={action.busy}
+                    onCollect={() => collectGroup(group)}
+                    // A cancel takes an item and every item before it, so the last one of the group takes the group.
+                    onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
+                    cancelLabel={isGuardian ? "Stop all" : "Cancel all"}
+                  />
+                );
+              }
+              return (
               <QueueCard
                 key={String(item.nonce)}
                 item={item}
@@ -617,7 +659,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 onCancel={canCancel ? () => askCancel(item) : null}
                 cancelLabel={isGuardian ? "Stop it" : "Cancel"}
               />
-            ))}
+              );
+            })}
           </ol>
           <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -663,7 +706,10 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </ul>
       ) : null}
 
-      {sheet === "withdraw" && vault ? (
+      {sheet === "withdraw" && vault && batch ? (
+        <WithdrawManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+      ) : null}
+      {sheet === "withdraw" && vault && !batch ? (
         <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (

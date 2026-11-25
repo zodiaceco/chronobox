@@ -3787,3 +3787,34 @@ img.token-badge.token-icon {
   font-size: 1rem;
   letter-spacing: 0.08em;
 }
+
+/* Several withdrawals that wait together */
+.queue-lines {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.queue-lines li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.queue-lines .token-badge {
+  width: 22px;
+  height: 22px;
+}
+
+.many-line {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.many-line .amount-row {
+  width: 100%;
+}

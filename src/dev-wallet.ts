@@ -133,14 +133,21 @@ async function sendAsSafe(owner: string, safe: string, calls: RawCall[]): Promis
  */
 async function sendTogether(from: string, calls: RawCall[]): Promise<string> {
   const before = await rpc("evm_snapshot");
-  let last = "";
+  const hashes: string[] = [];
   try {
-    for (const c of calls) {
-      last = (await rpc("eth_sendTransaction", [{ from, to: c.to, data: c.data ?? "0x", value: c.value ?? "0x0" }])) as string;
-      // The fork mines at once, but the receipt can be a moment behind the hash.
+    // A real batch lands in one block. The fork stops mining on its own, takes every call, and mines them as one block.
+    await rpc("evm_setAutomine", [false]);
+    try {
+      for (const c of calls) hashes.push((await rpc("eth_sendTransaction", [{ from, to: c.to, data: c.data ?? "0x", value: c.value ?? "0x0", gas: "0x1c9c380" }])) as string);
+      await rpc("evm_mine");
+    } finally {
+      await rpc("evm_setAutomine", [true]);
+    }
+    for (const hash of hashes) {
+      // The receipt can be a moment behind the block.
       let receipt: { status: string } | null = null;
       for (let tries = 0; tries < 40 && !receipt; tries++) {
-        receipt = (await rpc("eth_getTransactionReceipt", [last])) as { status: string } | null;
+        receipt = (await rpc("eth_getTransactionReceipt", [hash])) as { status: string } | null;
         if (!receipt) await new Promise((r) => setTimeout(r, 100));
       }
       if (!receipt || BigInt(receipt.status) !== 1n) throw new ProviderRpcError(3, "execution reverted: a call of the batch failed");
@@ -149,7 +156,7 @@ async function sendTogether(from: string, calls: RawCall[]): Promise<string> {
     await rpc("evm_revert", [before]);
     throw error;
   }
-  return last;
+  return hashes[hashes.length - 1] ?? "";
 }
 
 let recent: number[] = [];
