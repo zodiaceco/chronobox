@@ -67,14 +67,22 @@ module chronobox {
 
   // ---------------------------------------------------------------------
   // State
+  //
+  // Each right is its own field, as on chain:
+  //   hot        the module of the Vault Delay (queues anything on the Vault)
+  //   cancelers  the members of the Roles "cancel" role (Vault Delay, Recovery Delay)
+  //   owners     the owners of the Council Safe (all must sign); empty in the simple setup
+  //   recMod     the module of the Recovery Delay (queues a recovery); "" without recovery
+  //   councilRole  whether the Council still has its Roles role on the Vault
   // ---------------------------------------------------------------------
 
   type Effect =
     | Payout(str)                    // the vault pays everything to "defender" or "attacker"
-    | SetCooldownA(int)              // shortens or lengthens the vault Delay
-    | SetCouncilRole(bool)           // gives or takes the Council's vault role
-    | SetGuardian(str)               // the Council's second owner (H's guardian change, queued on Vault Delay)
-    | Rekey({ h: str, g: str })      // the Council's key swap: who queues and cancels everywhere
+    | SetCooldownA(int)              // shortens or lengthens the Vault Delay
+    | SetCouncilRole(bool)           // gives or takes the Council's Roles role
+    | SetGuardian(str)               // the Vault replaces the guardian everywhere (queued on the Vault Delay)
+    | Rekey({ h: str, g: str })      // the Vault replaces both keys everywhere (queued on the Vault Delay)
+    | Recover(str)                   // the Council, run by the Recovery Delay, swaps its hot-wallet owner
 
   type Item = { eff: Effect, at: int, by: str }
 
@@ -84,11 +92,13 @@ module chronobox {
     time: int,
     funds: str,                      // "vault", "defender" or "attacker"
     cooldownA: int,
-    hot: str,                        // the hot key: queues on the vault, cancels; owner seat on the Council
-    guardian: str,                   // the guardian key, "" in the simple setup
+    hot: str,
+    cancelers: Set[str],
+    owners: Set[str],
+    recMod: str,
     councilRole: bool,
-    queueA: List[Item],              // vault Delay
-    queueC: List[Item],              // recovery Delay (guardianRecovery)
+    queueA: List[Item],              // Vault Delay
+    queueC: List[Item],              // Recovery Delay (guardianRecovery)
     defender: Set[str],
     attacker: Set[str],
   }
@@ -101,48 +111,75 @@ module chronobox {
 
   pure def keysOf(st: State, p: str): Set[str] = if (p == "defender") st.defender else st.attacker
   pure def holds(st: State, p: str, k: str): bool = k != "" and keysOf(st, p).contains(k)
+  pure def hasAny(st: State, p: str, ks: Set[str]): bool = keysOf(st, p).intersect(ks) != Set()
+  pure def only(st: State, k: str): bool = holds(st, "defender", k) and not(holds(st, "attacker", k))
 
   pure def guarded(st: State): bool = st.setup != "simple"
+  pure def recoveryOn(st: State): bool = st.setup == "guardianRecovery"
 
-  /** The Council acts when both its owners sign. */
-  pure def controls(st: State, p: str): bool = guarded(st) and holds(st, p, st.hot) and holds(st, p, st.guardian)
+  /** The Council acts when all its owners sign. */
+  pure def controls(st: State, p: str): bool = st.owners != Set() and st.owners.subseteq(keysOf(st, p))
 
   pure def canQueueA(st: State, p: str): bool = holds(st, p, st.hot)
-  pure def canCancelA(st: State, p: str): bool =
-    holds(st, p, st.hot) or (guarded(st) and holds(st, p, st.guardian)) or (st.councilRole and controls(st, p))
-  /**
-   * Recovery (dead man's switch): G alone may queue "replace H" on Recovery Delay,
-   * which waits RECOVERY. Recovery Delay is owned by the Vault, so the CANCEL role
-   * (H, G) and the Council can cancel it, instantly.
-   */
-  pure def recoveryOn(st: State): bool = st.setup == "guardianRecovery"
-  pure def canQueueC(st: State, p: str): bool = recoveryOn(st) and holds(st, p, st.guardian)
-  pure def canCancelC(st: State, p: str): bool =
-    recoveryOn(st) and (holds(st, p, st.hot) or holds(st, p, st.guardian) or controls(st, p))
-  /** Instant key swaps by the Council; on the vault only with its role. */
-  pure def canRekeyNow(st: State, p: str): bool = guarded(st) and controls(st, p) and st.councilRole
+  /** The cancel role; the Council can give itself that role for one step, so it can cancel too while it has its role. */
+  pure def canCancelA(st: State, p: str): bool = hasAny(st, p, st.cancelers) or (st.councilRole and controls(st, p))
+  /** Only the Recovery Delay's module queues a recovery. The cancel role covers the Recovery Delay too. */
+  pure def canQueueC(st: State, p: str): bool = recoveryOn(st) and holds(st, p, st.recMod)
+  pure def canCancelC(st: State, p: str): bool = recoveryOn(st) and canCancelA(st, p)
 
-  /** The attacker holds a key that has any power. */
-  pure def attackerPowerful(st: State): bool = holds(st, "attacker", st.hot) or (guarded(st) and holds(st, "attacker", st.guardian))
+  /** The guardian's seat on the Council: the owner that is not the hot wallet. */
+  pure def gKey(st: State): str = st.owners.exclude(Set(st.hot)).fold("", (a, b) => b)
+
+  /** The attacker holds a key with any power on the Vault Delay, the cancel role or the Council. */
+  pure def attackerOnKeys(st: State): bool = holds(st, "attacker", st.hot) or hasAny(st, "attacker", st.cancelers) or hasAny(st, "attacker", st.owners)
+  /** ... or can queue a recovery. */
+  pure def attackerPowerful(st: State): bool = attackerOnKeys(st) or (recoveryOn(st) and holds(st, "attacker", st.recMod))
 
   /** The defender alone holds every key that has power. */
   pure def recovered(st: State): bool =
-    not(attackerPowerful(st)) and holds(st, "defender", st.hot) and (not(guarded(st)) or holds(st, "defender", st.guardian))
+    not(attackerPowerful(st)) and holds(st, "defender", st.hot)
+      and (not(guarded(st)) or controls(st, "defender"))
+      and (not(recoveryOn(st)) or holds(st, "defender", st.recMod))
 
   pure def age(st: State, i: Item): int = st.time - i.at
   pure def ready(st: State, i: Item, cd: int): bool = age(st, i) >= cd and age(st, i) < cd + EXPIRATION
   pure def expired(st: State, i: Item, cd: int): bool = age(st, i) >= cd + EXPIRATION
 
+  /** The Vault, through the Vault Delay, replaces keys everywhere: Delay module, cancel role, Council, Recovery Delay. */
+  pure def vaultRekey(st: State, h: str, g: str): State =
+    if (guarded(st)) { ...st, hot: h, cancelers: Set(h, g), owners: Set(h, g), recMod: if (recoveryOn(st)) g else "" }
+    else { ...st, hot: h, cancelers: Set(h) }
+
+  /**
+   * The Council's instant key swap (both owners sign): its own owners always; on the Vault (hot
+   * wallet, cancel role) only while it has its Roles role. It cannot touch the Recovery Delay,
+   * which the Vault owns: the old guardian stays its module until a Vault Delay item changes it.
+   */
+  pure def councilRekey(st: State, h: str, g: str): State =
+    if (st.councilRole) { ...st, owners: Set(h, g), hot: h, cancelers: Set(h, g) } else { ...st, owners: Set(h, g) }
+
+  /**
+   * A recovery runs as the Council: it swaps the hot wallet's seat among the Council's owners,
+   * whether or not the Council still has its role, and with the role it replaces the hot wallet on the Vault.
+   * If the hot wallet is no longer an owner, the swap reverts and nothing changes.
+   */
+  pure def recover(st: State, h: str): State =
+    if (not(st.owners.contains(st.hot))) st
+    else {
+      val seated = { ...st, owners: st.owners.exclude(Set(st.hot)).union(Set(h)) }
+      if (st.councilRole) { ...seated, hot: h, cancelers: st.cancelers.exclude(Set(st.hot)).union(Set(h)) } else seated
+    }
+
   pure def apply(st: State, e: Effect): State = match e {
     | Payout(p) => if (st.funds == "vault") { ...st, funds: p } else st
     | SetCooldownA(n) => { ...st, cooldownA: n }
     | SetCouncilRole(b) => { ...st, councilRole: b }
-    | SetGuardian(g) => { ...st, guardian: g }
-    | Rekey(r) => if (st.councilRole) { ...st, hot: r.h, guardian: r.g } else { ...st, guardian: r.g }
+    | SetGuardian(g) => vaultRekey(st, st.hot, g)
+    | Rekey(r) => vaultRekey(st, r.h, r.g)
+    | Recover(h) => recover(st, h)
   }
 
   pure def dropFirst(l: List[Item], n: int): List[Item] = l.slice(n, l.length())
-  pure def foreign(l: List[Item]): List[Item] = l.select(i => i.by != "defender")
   pure def firstOwn(l: List[Item]): int =
     l.indices().filter(i => l[i].by == "defender").fold(l.length(), (a, b) => if (b < a) b else a)
   /**
@@ -166,38 +203,44 @@ module chronobox {
   // The defender's response plan (deterministic; first matching rule wins)
   // ---------------------------------------------------------------------
 
-  pure def goodH(st: State): str = if (holds(st, "defender", st.hot) and not(holds(st, "attacker", st.hot))) st.hot else "H2"
-  pure def goodG(st: State): str = if (holds(st, "defender", st.guardian) and not(holds(st, "attacker", st.guardian))) st.guardian else "G2"
+  pure def goodH(st: State): str = if (only(st, st.hot)) st.hot else "H2"
+  pure def goodG(st: State): str = if (only(st, gKey(st))) gKey(st) else "G2"
+
+  /** The guardian side is clean: the defender alone holds the guardian's seat, cancel right and recovery right. */
+  pure def guardianClean(st: State): bool =
+    only(st, gKey(st)) and st.cancelers == Set(st.hot, gKey(st)) and (not(recoveryOn(st)) or st.recMod == gKey(st))
 
   /** Returns (rule, next state). "none" means nothing to do. */
   pure def defense(st: State): (str, State) = {
-    val fix = Rekey({ h: goodH(st), g: goodG(st) })
     val payout = Payout("defender")
     val ownA = st.queueA.length() > 0 and st.queueA[0].by == "defender"
     val ownC = st.queueC.length() > 0 and st.queueC[0].by == "defender"
+    val fixGuardian = SetGuardian(goodG(st))
+    val fixHot = Recover("H2")
     if (lastForeign(st.queueA, canCancelA(st, "attacker")) >= 0 and canCancelA(st, "defender"))
       ("cancel", { ...st, queueA: dropFirst(st.queueA, lastForeign(st.queueA, canCancelA(st, "attacker")) + 1) })
     else if (lastForeign(st.queueC, canCancelC(st, "attacker")) >= 0 and canCancelC(st, "defender"))
       ("cancel", { ...st, queueC: dropFirst(st.queueC, lastForeign(st.queueC, canCancelC(st, "attacker")) + 1) })
-    // The Council replaces any key the attacker holds, at once.
-    else if (attackerPowerful(st) and canRekeyNow(st, "defender"))
-      ("rekey now", apply(st, fix))
-    // Without the guardian's signature: H swaps the guardian on the Vault Delay.
-    else if (guarded(st) and holds(st, "defender", st.hot) and not(holds(st, "defender", st.guardian))
-             and not(pending(st.queueA, SetGuardian("G2"))) and st.queueA.length() < MAX_QUEUE)
-      ("queue guardian swap", { ...st, queueA: enqueue(st.queueA, SetGuardian("G2"), st.time, "defender") })
-    // Without the hot key: the guardian starts a recovery on Recovery Delay.
+    // The Council replaces any key the attacker holds on the Vault Delay, the cancel role or the Council, at once.
+    else if (guarded(st) and attackerOnKeys(st) and controls(st, "defender") and st.councilRole)
+      ("rekey now", councilRekey(st, goodH(st), goodG(st)))
+    // The guardian side is not clean (lost, hostile or leaked guardian, or an old guardian still on the
+    // Recovery Delay): H replaces the guardian everywhere through the Vault Delay.
+    else if (guarded(st) and only(st, st.hot) and not(guardianClean(st))
+             and not(pending(st.queueA, fixGuardian)) and st.queueA.length() < MAX_QUEUE)
+      ("queue guardian swap", { ...st, queueA: enqueue(st.queueA, fixGuardian, st.time, "defender") })
+    // Without the hot key: the guardian starts a recovery on the Recovery Delay.
     else if (recoveryOn(st) and not(holds(st, "defender", st.hot)) and canQueueC(st, "defender")
-             and not(pending(st.queueC, fix)) and st.queueC.length() < MAX_QUEUE)
-      ("queue recovery", { ...st, queueC: enqueue(st.queueC, fix, st.time, "defender") })
+             and not(pending(st.queueC, fixHot)) and st.queueC.length() < MAX_QUEUE)
+      ("queue recovery", { ...st, queueC: enqueue(st.queueC, fixHot, st.time, "defender") })
     else if (ownC and ready(st, st.queueC[0], RECOVERY))
       ("execute", { ...apply(st, st.queueC[0].eff), queueC: dropFirst(st.queueC, 1) })
     else if (ownA and ready(st, st.queueA[0], st.cooldownA))
       ("execute", { ...apply(st, st.queueA[0].eff), queueA: dropFirst(st.queueA, 1) })
     // Simple setup: the only way to change keys is the vault queue, which a leaked key can cancel.
     else if (not(guarded(st)) and attackerPowerful(st) and canQueueA(st, "defender")
-             and not(pending(st.queueA, fix)) and st.queueA.length() < MAX_QUEUE)
-      ("queue rekey on the vault", { ...st, queueA: enqueue(st.queueA, fix, st.time, "defender") })
+             and not(pending(st.queueA, Rekey({ h: goodH(st), g: "" }))) and st.queueA.length() < MAX_QUEUE)
+      ("queue rekey on the vault", { ...st, queueA: enqueue(st.queueA, Rekey({ h: goodH(st), g: "" }), st.time, "defender") })
     else if (recovered(st) and st.funds == "vault" and not(pending(st.queueA, payout)) and st.queueA.length() < MAX_QUEUE)
       ("queue withdrawal", { ...st, queueA: enqueue(st.queueA, payout, st.time, "defender") })
     else ("none", st)
@@ -212,15 +255,14 @@ module chronobox {
     all { r._1 != "none", s' = r._2 }
   }
 
-  pure val TAKEOVER = Rekey({ h: "HA", g: "GA" })
-  pure val ATTACK_A = Set(SetGuardian("GA"), Payout("attacker"), SetCooldownA(0), SetCouncilRole(false), TAKEOVER)
+  pure val ATTACK_A = Set(Payout("attacker"), SetCooldownA(0), SetCouncilRole(false), SetGuardian("GA"), Rekey({ h: "HA", g: "GA" }))
 
   action attackQueueA = {
     nondet e = ATTACK_A.oneOf()
     all { canQueueA(s, "attacker"), s.queueA.length() < MAX_QUEUE, s' = { ...s, queueA: enqueue(s.queueA, e, s.time, "attacker") } }
   }
   action attackQueueC = all {
-    canQueueC(s, "attacker"), s.queueC.length() < MAX_QUEUE, s' = { ...s, queueC: enqueue(s.queueC, TAKEOVER, s.time, "attacker") },
+    canQueueC(s, "attacker"), s.queueC.length() < MAX_QUEUE, s' = { ...s, queueC: enqueue(s.queueC, Recover("HA"), s.time, "attacker") },
   }
   action attackCancel = {
     nondet n = 1.to(MAX_QUEUE).oneOf()
@@ -229,7 +271,7 @@ module chronobox {
       all { canCancelC(s, "attacker"), n <= s.queueC.length(), s' = { ...s, queueC: dropFirst(s.queueC, n) } },
     }
   }
-  action attackRekeyNow = all { canRekeyNow(s, "attacker"), s' = apply(s, TAKEOVER) }
+  action attackRekeyNow = all { guarded(s), controls(s, "attacker"), s' = councilRekey(s, "HA", "GA") }
 
   /** Anyone may execute the oldest ready item of any queue, or skip an expired one. */
   action execute = any {
@@ -293,7 +335,11 @@ module chronobox {
       else Set()
     {
       setup: setup, scenario: scenario, time: 0, funds: "vault", cooldownA: COOLDOWN_A,
-      hot: "H", guardian: if (guardian) "G" else "", councilRole: guardian,
+      hot: "H",
+      cancelers: if (guardian) Set("H", "G") else Set("H"),
+      owners: if (guardian) Set("H", "G") else Set(),
+      recMod: if (setup == "guardianRecovery") "G" else "",
+      councilRole: guardian,
       queueA: List(), queueC: List(),
       defender: defender, attacker: Set("HA", "GA").union(stolen),
     }

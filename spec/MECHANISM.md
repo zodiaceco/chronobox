@@ -31,7 +31,9 @@ This is the wiring that this repository deploys (`src/lib/chronobox.ts`). There 
 
 Recovery of a lost key is out of scope for the mechanism. "Hot wallet" and "guardian" are addresses, not necessarily single keys: either can itself be a Safe or another smart account with its own recovery or multi-signature setup. The mechanism then treats that account as one key.
 
-What the Council can never do: move funds, change the vault's delay, or add other modules. Those always go through H's queue and wait the delay.
+What the Council can never do: move funds, change the vault's delay, add other modules, or change the Recovery Delay (the Vault owns it). Those always go through H's queue and wait the delay. So when the guardian key leaks with recovery on, the Council's instant swap removes it from the Council and the cancel role, but it stays the Recovery Delay's module until H's "replace guardian" runs one delay later. Until then it can queue a recovery, which H or the new guardian cancels.
+
+A recovery runs as the Council Safe itself, through its module: it swaps the Council's owners whether or not the Council still holds its Roles role.
 
 ## Who is involved
 
@@ -46,7 +48,7 @@ These are the defender's rules, highest priority first. The model checker found 
 1. **Cancel** foreign items before their delay runs out.
 2. **Swap leaked keys right away**, before anything else waits. An attacker who re-queues after every cancel would otherwise keep the defender busy forever.
 3. **Never cancel past your own pending item when the attacker cannot cancel it.** A cancel (`setTxNonce`) drops every item up to a point. If the attacker keeps queueing behind your key swap, cancelling would also drop your swap. Let your item execute first (oldest first), then cancel what is behind it. Where the attacker *can* cancel your items, do the opposite and cancel everything. Otherwise the attacker cancels only your item and executes its own matured item in the same moment.
-4. **Replace a missing guardian:** H queues "replace guardian", which waits the delay. A hostile guardian can cancel that; this is accepted (see Results).
+4. **Replace a guardian that is missing, hostile or leaked:** H queues "replace guardian", which waits the delay and replaces it everywhere, including on the Recovery Delay. A hostile guardian can cancel that; this is accepted (see Results).
 5. **Execute your own ready items promptly.** Then withdraw.
 
 ## Properties
@@ -89,6 +91,7 @@ Each ❌ comes with a counterexample trace in `results/` after a run.
   - Only the owner cancels, with `setTxNonce`, which drops a **prefix** of the queue.
   - Expired items can be skipped by anyone.
   - Removing a module does not remove its queued items.
+- **The model keeps every right separate, as on chain:** the Vault Delay's module (the hot wallet), the members of the cancel role, the Council's owners, and the Recovery Delay's module. Each changes only through the call that changes it on chain.
 - **Zodiac Roles:** a member can make exactly the calls its role allows.
   - The cancel role (H, G) allows `setTxNonce` on the Vault Delay, and with recovery on the Recovery Delay.
   - The Council's role allows `enableModule` / `disableModule` on the Vault Delay and `assignRoles` / `disableModule` on Roles. That is enough to replace keys, and to give itself the cancel role for one step.
