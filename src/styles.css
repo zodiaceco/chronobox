@@ -3708,3 +3708,82 @@ img.token-badge.token-icon {
     display: none;
   }
 }
+
+/* The dev bar. Only the dev server shows it. */
+
+.devbar {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(11 26 61 / 0.18);
+  font-size: 0.8rem;
+}
+
+.devbar-tag {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--alarm);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.devbar-label {
+  color: var(--muted);
+}
+
+.devbar-kinds {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+.devbar-kind {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.devbar-kind-on {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+.devbar-account {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.devbar-account select {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.lockup-word {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+}

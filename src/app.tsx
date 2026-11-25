@@ -6,6 +6,7 @@ import { buildChanged, lastWallet, setLastAccount, setLastWallet } from "./lib/s
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
 import { CreatePage } from "./ui/create.tsx";
+import { DevBar } from "./ui/devbar.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
 import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
@@ -314,6 +315,7 @@ export function App() {
           {UPDATED ? " · updated since your last visit" : ""}
         </span>
       </footer>
+      {__DEV__ ? <DevBar /> : null}
       <div class="horizon" aria-hidden="true" />
 
       {connectOpen ? (
