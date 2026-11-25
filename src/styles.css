@@ -3182,6 +3182,19 @@ button.row-strong:hover .row-hint {
   flex: 1.5 1 0;
 }
 
+/* How long a recovery waits: one row of pills, on a narrow phone too. */
+.wait-pills {
+  display: flex;
+  gap: 6px;
+}
+
+.wait-pills .fund-stop {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
 .support-plain {
   border-color: var(--line);
   background: var(--panel);
