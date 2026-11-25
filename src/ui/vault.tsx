@@ -52,7 +52,7 @@ import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { Ring } from "./ring.tsx";
-import { LookupSheet, useFoundTokens } from "./holdings.tsx";
+import { LookupSheet, useFoundTokens } from "./third-party.tsx";
 import { GroupCard, WithdrawManySheet, collectCalls, groupsOf } from "./batch.tsx";
 import { lookupAllowed } from "../lib/store.ts";
 import { DepositPanel } from "./deposit.tsx";

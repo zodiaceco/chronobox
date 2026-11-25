@@ -316,7 +316,8 @@ export function TechnicalPage() {
         </ul>
         <p class="tech-note">
           Alerts are the exception, and you choose them. Our alert service must know who follows a Chronobox to send an alert, and we can see that.
-          You can also run the alert service yourself.
+          You can also run the alert service yourself. Third-party services are the other one, also off until you switch them on: Blockscout is
+          then asked which tokens your Chronobox holds, and sees your IP address with its address.
         </p>
       </div>
 
