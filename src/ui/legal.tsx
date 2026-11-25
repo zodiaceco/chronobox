@@ -286,15 +286,15 @@ export function TermsPage() {
 
       <Block title="3. What you are responsible for">
         <ul>
-          <li>Your wallet controls your Chronobox. If you can no longer sign with it, the money in your Chronobox is gone. We cannot get it back.</li>
+          <li>Your wallet controls your Chronobox. If you can no longer sign with it and have not turned on guardian recovery, the money in your Chronobox is gone. We cannot get it back.</li>
           <li>Check each transaction in your wallet before you sign it. Transactions on a blockchain are final.</li>
           <li>
             Look at your Chronobox regularly. If somebody steals your key, the delay protects you only if you cancel their withdrawal in
             time.
           </li>
           <li>
-            If you add a guardian, choose a wallet you trust. A guardian can cancel every withdrawal. A guardian cannot withdraw, and is not
-            a backup for a lost wallet.
+            If you add a guardian, choose a wallet you trust. A guardian can cancel every withdrawal and cannot withdraw. If you also turn on
+            guardian recovery, your guardian can start a recovery to a wallet they choose after a long wait unless you stop it in time.
           </li>
           <li>You pay the network fees.</li>
           <li>Use Chronobox only where it is legal for you, and not for crime or to get around sanctions.</li>

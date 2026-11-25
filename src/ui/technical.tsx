@@ -166,13 +166,14 @@ export function TechnicalPage() {
           </li>
         </ul>
         <p class="tech-note">
-          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. A guardian
-          alone is not a backup: a move by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding and removing a
-          guardian wait in the time lock, like every change.
+          The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. By
+          default a guardian is not a backup: a move by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding,
+          changing or removing a guardian or a recovery waits in the time lock, like every change.
         </p>
         <p class="tech-note">
-          Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), and a Safe 1.4.1 that needs your wallet and your
-          guardian together. The app checks both every time you open the Chronobox.
+          Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), a Safe 1.4.1
+          that needs your wallet and your guardian together, and (when recovery is on) a second <Ext href={DELAY_DOCS}>Zodiac Delay</Ext>{" "}
+          owned by the Chronobox that acts on that shared Safe. The app checks all of them every time you open the Chronobox.
         </p>
       </div>
 
@@ -283,11 +284,11 @@ export function TechnicalPage() {
             </p>
           </li>
           <li>
-            <strong>It cannot bring a lost wallet back by itself.</strong>
+            <strong>It cannot bring a lost wallet back on its own.</strong>
             <p>
               If you can no longer sign with your wallet and the recovery is off, the money in the Chronobox is lost. A guardian alone cannot help.
               With the recovery on, your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself still
-              works too.
+              works too. Zodiac cannot recover it for you.
             </p>
           </li>
           <li>

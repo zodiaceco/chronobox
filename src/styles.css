@@ -1964,7 +1964,7 @@ a:focus-visible {
   inset: 0;
   z-index: 10;
   display: grid;
-  place-items: center;
+  place-items: safe center;
   padding: 16px;
   background: rgb(0 0 0 / 0.45);
   overflow-y: auto;
@@ -1972,6 +1972,7 @@ a:focus-visible {
 
 .modal {
   width: min(480px, 100%);
+  margin: auto;
   padding: 20px;
   border-radius: 20px;
   background: var(--bg);
@@ -2404,7 +2405,7 @@ a:focus-visible {
   gap: 12px;
   width: 100%;
   min-height: 54px;
-  padding: 0 18px;
+  padding: 10px 18px;
   border: 0;
   background: none;
   color: var(--fg);
@@ -2539,6 +2540,7 @@ button.row-strong:hover .row-hint {
   }
   .modal {
     width: 100%;
+    margin: 0;
     border-radius: 24px 24px 0 0;
     padding-bottom: max(22px, env(safe-area-inset-bottom));
     max-height: 92dvh;
@@ -3240,4 +3242,9 @@ button.row-strong:hover .row-hint {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+}
+
+.recovery-list {
+  display: grid;
+  gap: 10px;
 }

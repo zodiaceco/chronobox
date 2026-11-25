@@ -34,7 +34,7 @@ import { errorText } from "../lib/wallet.ts";
 import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, copyText, useAction } from "./common.tsx";
 import { QrCode } from "./deposit.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
-import { RecoverySheet, type RecoveryWaiting, StartRecoverySheet, TAKE_OVER, type WaitPick, WaitPicker, ensureRecoveryDelay, pickedWait } from "./recovery.tsx";
+import { RecoverySheet, type RecoveryWaiting, StartRecoverySheet, TAKE_OVER, WATCH_RECOVERY, type WaitPick, WaitPicker, defaultCustomDays, ensureRecoveryDelay, pickedWait } from "./recovery.tsx";
 
 /** The page of this Chronobox, as a link for another person. `request`: with a request for a new wallet. */
 export function guardianLink(chain: Chain, safe: Address, request?: SwapRequest): string {
@@ -171,10 +171,12 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   const [text, setText] = useState("");
   const [stops, setStops] = useState(false);
   const [accepts, setAccepts] = useState(false);
+  const [watches, setWatches] = useState(false);
   // Null until the owner chose: with a recovery, or without.
   const [recovers, setRecovers] = useState<boolean | null>(null);
   const [picked, setPicked] = useState<WaitPick>(null);
-  const [customDays, setCustomDays] = useState("120");
+  const [customDays, setCustomDays] = useState(() => defaultCustomDays(props.inspection.cooldown));
+  const [delayMade, setDelayMade] = useState(Boolean(vault.recoveryDelay?.deployed));
   const [isContract, setIsContract] = useState(false);
   const [incompatible, setIncompatible] = useState(false);
   const action = useAction();
@@ -189,6 +191,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
     setRecovers(value);
     // What the owner accepts is another thing with a recovery, so it is asked again.
     setAccepts(false);
+    setWatches(false);
   };
   useEffect(() => {
     setIsContract(false);
@@ -224,7 +227,10 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
                 : null;
   const submit = () =>
     action.run("queue", async (waiting) => {
-      if (recovers && !(await ensureRecoveryDelay(session, chain, vault.safe, parts, waiting))) return setStage("unknown");
+      if (recovers) {
+        if (!(await ensureRecoveryDelay(session, chain, vault.safe, parts, waiting))) return setStage("unknown");
+        setDelayMade(true);
+      }
       const receipt = await queueItem(session, chain, vault, tx!, waiting);
       setStage(receipt ? "done" : "unknown");
     });
@@ -300,7 +306,10 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
           onClick={() => setStops(!stops)}
         />
         {recovers === null ? null : recovers ? (
-          <Choice role="checkbox" on={accepts} title={TAKE_OVER.title} text={TAKE_OVER.text} disabled={!!action.busy} onClick={() => setAccepts(!accepts)} />
+          <>
+            <Choice role="checkbox" on={accepts} title={TAKE_OVER.title} text={TAKE_OVER.text} disabled={!!action.busy} onClick={() => setAccepts(!accepts)} />
+            <Choice role="checkbox" on={watches} title={WATCH_RECOVERY.title} text={WATCH_RECOVERY.text} disabled={!!action.busy} onClick={() => setWatches(!watches)} />
+          </>
         ) : (
           <Choice
             role="checkbox"
@@ -312,14 +321,21 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
           />
         )}
       </div>
-      {recovers && parts && !parts.deployed ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
+      {recovers && parts && !delayMade ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
       <div class="modal-actions">
-        <Button kind="primary" disabled={!tx || !!problem || incompatible || !stops || !accepts} busy={action.busy === "queue"} onClick={submit}>
+        <Button kind="primary" disabled={!tx || !!problem || incompatible || !stops || !accepts || (recovers === true && !watches)} busy={action.busy === "queue"} onClick={submit}>
           {action.busy ? "Confirm in your wallet" : "Start the wait"}
         </Button>
-        <Button kind="quiet" onClick={() => setStage("intro")} disabled={!!action.busy}>
+        <Button
+          kind="quiet"
+          onClick={() => {
+            action.clearError();
+            setStage("intro");
+          }}
+          disabled={!!action.busy}
+        >
           Back
         </Button>
       </div>
@@ -388,7 +404,14 @@ function ManageSheet(props: {
           <Button kind="primary" disabled={!tx} busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
-          <Button kind="quiet" onClick={() => setStage("show")} disabled={!!action.busy}>
+          <Button
+            kind="quiet"
+            onClick={() => {
+              action.clearError();
+              setStage("show");
+            }}
+            disabled={!!action.busy}
+          >
             Back
           </Button>
         </div>
@@ -507,7 +530,7 @@ function useSwap(rpc: Rpc, vault: VaultRef, request: { to: Address; upTo: bigint
 export async function prepareSwap(session: Session, chain: Chain, vault: VaultRef, waiting: { onSlow: () => void; shouldStop: () => boolean }): Promise<void> {
   const code = (await session.rpc("eth_getCode", [vault.council!, "latest"])) as string;
   if (typeof code === "string" && code.length > 2) return;
-  await sendAndWait(session.rpc, session.account, councilCreateTx(vault.safe, vault.controller, vault.guardian!), { chainId: chain.id, chainName: chain.name, ...waiting });
+  await sendAndWait(session.rpc, session.account, councilCreateTx(vault.safe, vault.controller, vault.guardian!, Boolean(vault.councilRecovery)), { chainId: chain.id, chainName: chain.name, ...waiting });
 }
 
 type Line = { state: "loading" } | { state: "error"; message: string } | { state: "read"; txNonce: bigint; queueNonce: bigint; waiting: bigint };
