@@ -33,7 +33,7 @@ Recovery of a lost key is out of scope for the mechanism. "Hot wallet" and "guar
 
 What the Council can never do: move funds, change the vault's delay, add other modules, or change the Recovery Delay (the Vault owns it). Those always go through H's queue and wait the delay. So when the guardian key leaks with recovery on, the Council's instant swap removes it from the Council and the cancel role, but it stays the Recovery Delay's module until H's "replace guardian" runs one delay later. Until then it can queue a recovery, which H or the new guardian cancels.
 
-A recovery runs as the Council Safe itself, through its module: it swaps the Council's owners whether or not the Council still holds its Roles role.
+A recovery runs as the Council Safe itself, through its module. The app's recovery is the Council's key swap, so it reverts if the Council no longer holds its Roles role. A hostile guardian can instead queue a plain owner swap of the Council, which works either way; the model allows the attacker that.
 
 ## Who is involved
 
@@ -56,8 +56,10 @@ These are the defender's rules, highest priority first. The model checker found 
 Each property is checked for every setup and scenario, over every reachable state up to three delays (TLC, exhaustive), with the delay at 48 h and at 72 h.
 
 - **P1 No theft:** the attacker never receives the funds.
-- **P2 Recovers:** within one delay (with recovery: within the recovery period), only the defender holds keys with any power again.
-- **P3 Can withdraw:** one delay after that, the defender has the funds out.
+- **P2 Recovers:** by the end of one delay (with recovery: of the recovery period), only the defender holds keys with any power again.
+- **P3 Can withdraw:** by the end of one delay after that, the defender has the funds out.
+
+"By the end": time moves in whole days, and an item that becomes ready at the deadline runs in that moment. The checker requires that time cannot move past the deadline before the property holds.
 
 ## Results
 

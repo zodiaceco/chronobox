@@ -87,7 +87,8 @@ module chronobox {
     | SetCouncilRole(bool)           // gives or takes the Council's Roles role
     | SetGuardian(str)               // the Vault replaces the guardian everywhere (queued on the Vault Delay)
     | Rekey({ h: str, g: str })      // the Vault replaces both keys everywhere (queued on the Vault Delay)
-    | Recover(str)                   // the Council, run by the Recovery Delay, swaps its hot-wallet owner
+    | Recover(str)                   // the Council, run by the Recovery Delay, swaps its hot-wallet owner (any transaction the guardian queues)
+    | RecoverApp(str)                // the app's recovery: the Council's key swap, which reverts without the Council's role
 
   type Item = { eff: Effect, at: int, by: str }
 
@@ -182,6 +183,7 @@ module chronobox {
     | SetGuardian(g) => vaultRekey(st, st.hot, g)
     | Rekey(r) => vaultRekey(st, r.h, r.g)
     | Recover(h) => recover(st, h)
+    | RecoverApp(h) => if (st.councilRole) recover(st, h) else st
   }
 
   pure def dropFirst(l: List[Item], n: int): List[Item] = l.slice(n, l.length())
@@ -221,7 +223,7 @@ module chronobox {
     val ownA = st.queueA.length() > 0 and st.queueA[0].by == "defender"
     val ownC = st.queueC.length() > 0 and st.queueC[0].by == "defender"
     val fixGuardian = SetGuardian(goodG(st))
-    val fixHot = Recover("H2")
+    val fixHot = RecoverApp("H2")
     if (lastForeign(st.queueA, canCancelA(st, "attacker")) >= 0 and canCancelA(st, "defender"))
       ("cancel", { ...st, queueA: dropFirst(st.queueA, lastForeign(st.queueA, canCancelA(st, "attacker")) + 1) })
     else if (lastForeign(st.queueC, canCancelC(st, "attacker")) >= 0 and canCancelC(st, "defender"))
@@ -388,8 +390,10 @@ module chronobox {
 
   /** P2 Recovers: within one delay (with recovery: within the recovery wait), the defender alone holds every key with power again. */
   pure def deadline(st: State): int = if (recoveryOn(st)) RECOVERY else DELAY
-  val recovers = s.time <= deadline(s) or recovered(s)
+  // At the deadline itself the defender may still be acting (an item that becomes ready runs in
+  // that moment), but time cannot move past the deadline unless the property holds.
+  val recovers = s.time < deadline(s) or recovered(s) or not(mayTick(s))
 
   /** P3 Can withdraw: within two delays, the defender has the funds out. */
-  val withdraws = s.time <= deadline(s) + DELAY or s.funds == "defender"
+  val withdraws = s.time < deadline(s) + DELAY or s.funds == "defender" or not(mayTick(s))
 }
