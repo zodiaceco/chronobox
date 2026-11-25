@@ -77,6 +77,17 @@ export function guardWarnings(x: Settings, vault: string): string[] {
   return out;
 }
 
+/**
+ * Reminders before the wait of a recovery ends, longest first. When the wait ends, anybody can carry the recovery out
+ * in the next block. So the last safe moment to stop it is before that, and "wait over" can come too late.
+ */
+export const RECOVERY_REMINDERS = [7n * 86400n, 86400n];
+
+/** How many reminders are due for a step that waits until `readyAt`. */
+function remindersDue(readyAt: bigint, now: bigint): number {
+  return RECOVERY_REMINDERS.filter((lead) => now >= readyAt - lead).length;
+}
+
 export function emptyState(): State {
   return { version: 1, items: {}, outbox: [], failCount: 0, problemOpen: false, seq: 0 };
 }
@@ -642,6 +653,7 @@ export class Watcher {
       for (const it of rNew) {
         const st = rTimes(it);
         markSeen(it, st, BigInt(rec!.expiration));
+        it.remindersSent = remindersDue(st.readyAt, now);
         rLines.push(waitLine(it.summary, st));
       }
       s.recoveryItems = live ? Object.fromEntries(rNew.map((it) => [it.nonce, it])) : undefined;
@@ -705,6 +717,8 @@ export class Watcher {
             continue;
           }
           if (st.status === 'ready') it.sentReady = true;
+          // The end of the wait is in this message. A reminder that is due already is not sent on top of it.
+          it.remindersSent = remindersDue(st.readyAt, now);
           const wait = st.status === 'ready'
             ? `The wait ended on ${fmtWhen(st.readyAt)}. Anybody can carry it out now${st.expiresAt === null ? '' : `, until ${fmtWhen(st.expiresAt)}`}.`
             : `The wait ends on ${fmtWhen(st.readyAt)}${st.readyAt > now ? ` (in ${fmtDuration(st.readyAt - now)})` : ''}. After that, anybody can carry it out.`;
@@ -795,11 +809,22 @@ export class Watcher {
       }
     }
 
-    // The recovery: wait over, ends soon, void.
+    // The recovery: its wait ends soon, wait over, ends soon, void.
     if (!live) s.recoveryItems = undefined;
     for (const it of Object.values(s.recoveryItems ?? {}).sort((a, b) => a.nonce - b.nonce)) {
       const st = rTimes(it);
       const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
+      const due = remindersDue(st.readyAt, now);
+      if (st.status === 'waiting' && due > (it.remindersSent ?? 0)) {
+        it.remindersSent = due;
+        this.push({
+          event: 'recovery_soon', nonce: it.nonce, priority: it.priority, at: Number(now),
+          title: `Recovery wait ends soon: ${it.summary}`,
+          message: `The wait of ${lowerFirst(what)} ends on ${fmtWhen(st.readyAt)}. That is in ${fmtDuration(st.readyAt - now)}. ` +
+            `Then anybody can carry it out at once${it.wallet ? ', and that wallet holds this Chronobox' : ''}.` +
+            '\n\nIf you did not ask for this, open your Chronobox and stop it before then.',
+        });
+      }
       if (st.status === 'ready' && !it.sentReady) {
         it.sentReady = true;
         this.push({

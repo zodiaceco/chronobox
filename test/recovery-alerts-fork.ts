@@ -190,7 +190,22 @@ try {
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, started));
   await poll();
   assert.deepEqual(events(heard()), ["recovery_started"]);
-  await warp(WAIT + 60n);
+  // Reminders before the wait ends: when it ends, anybody can carry it out at once.
+  await warp(WAIT - 7n * DAY + 60n);
+  await poll();
+  got = heard();
+  assert.deepEqual(events(got), ["recovery_soon"]);
+  assert.match(got[0].title, /^Recovery wait ends soon: Recovery to 0x2361…1e8f$/i);
+  assert.match(got[0].message, /That is in 6 days 23 hours\. Then anybody can carry it out at once, and that wallet holds this Chronobox\.\n\nIf you did not ask for this, open your Chronobox and stop it before then\.$/);
+  await poll();
+  assert.deepEqual(events(heard()), []);
+  await warp(6n * DAY);
+  await poll();
+  got = heard();
+  assert.deepEqual(events(got), ["recovery_soon"]);
+  assert.match(got[0].message, /That is in 23 hours/);
+  ok("reminders 7 days and 1 day before the wait ends, each once");
+  await warp(DAY);
   await poll();
   got = heard();
   assert.deepEqual(events(got), ["recovery_ready"]);

@@ -60,6 +60,8 @@ export type Item = {
   sentReady?: boolean;
   sentExpiring?: boolean;
   sentExpired?: boolean;
+  /** A step in the line of the recovery: how many of the reminders before its wait ends were sent (RECOVERY_REMINDERS). */
+  remindersSent?: number;
 };
 
 export type Alert = {

@@ -106,6 +106,7 @@ The messages use the words of the Chronobox app. No message in Telegram has a li
 - **Done**, **Removed** or **Closed**: a request is gone without a cancel. The message says if it was carried out, or if it was too late and was removed.
 - **This Chronobox changed**: the delay, the wallet, the guardian, the recovery, who can cancel, or the parts of the Chronobox are different from the last look. This comes from the state of the contracts, so it also catches a change that was not announced by a request, such as a new wallet that the wallet and the guardian set together at once.
 - **Recovery started**: the guardian started a recovery. The message names the new wallet and when the wait ends. The wallet and the guardian can stop it until it is carried out.
+- **Recovery wait ends soon**: 7 days and 1 day before the wait of a recovery ends. When it ends, anybody can carry the recovery out at once, so this is the last safe moment to stop it.
 - **Recovery wait over**, **Recovery ends soon**, **Recovery void**: as for a request, for the recovery.
 - **Recovery stopped**, **Recovery done** or **Recovery closed**: the recovery left its line. Done means that the new wallet holds the Chronobox now.
 - **All quiet**: once a day, without a sound, so that silence is different from a broken watcher.
@@ -328,7 +329,7 @@ With `WEBHOOK_URL`, every alert is a JSON POST:
 { "event": "queued", "title": "...", "message": "...", "priority": 3, "vault": "0x...", "delay": "0x...", "chainId": 1, "nonce": 4, "at": "2026-11-17T19:00:00.000Z" }
 ```
 
-`event` is one of `watching`, `queued`, `ready`, `expires_soon`, `expired`, `cancelled`, `closed`, `settings_changed`, `recovery_started`, `recovery_ready`, `recovery_expires_soon`, `recovery_expired`, `recovery_stopped`, `recovery_done`, `recovery_closed`, `heartbeat`, `watcher_problem`, `watcher_recovered`. The `nonce` of a recovery event is its place in the line of the recovery, not in the line of withdrawals. `priority` goes from 2 (All quiet) to 5 (a change of the Chronobox). Any answer other than 2xx counts as failed and is tried again.
+`event` is one of `watching`, `queued`, `ready`, `expires_soon`, `expired`, `cancelled`, `closed`, `settings_changed`, `recovery_started`, `recovery_soon`, `recovery_ready`, `recovery_expires_soon`, `recovery_expired`, `recovery_stopped`, `recovery_done`, `recovery_closed`, `heartbeat`, `watcher_problem`, `watcher_recovered`. The `nonce` of a recovery event is its place in the line of the recovery, not in the line of withdrawals. `priority` goes from 2 (All quiet) to 5 (a change of the Chronobox). Any answer other than 2xx counts as failed and is tried again.
 
 If you want the alerts of your own Chronobox in Telegram without anybody else's service, run the alert service above on your own machine with your own bot. See "Run it yourself".
 

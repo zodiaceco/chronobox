@@ -110,7 +110,7 @@ With a guardian, the wallet can turn a recovery on: a way back in when the walle
 - The **guardian starts** a recovery, and **chooses the new wallet** at that time. The owner does not have to know that wallet in advance.
 - A recovery waits a long time. The owner chooses how long: 90, 180 or 365 days, or an own length from 30 to 730 days, and never shorter than the delay. 180 days unless they choose another time.
 - The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out for 30 days, and the new wallet is the wallet of the Chronobox. After those 30 days it is void. No money moves.
-- The alert service tells everybody who follows the Chronobox when a recovery starts, when its wait is over, and when it is stopped or carried out.
+- The alert service tells everybody who follows the Chronobox when a recovery starts, 7 days and 1 day before its wait ends, when its wait is over, and when it is stopped or carried out. When the wait ends, anybody can carry the recovery out at once, so stop it before then.
 - The cost: if the owner does not stop a recovery in time, the guardian can take the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
 
 How it is built:
