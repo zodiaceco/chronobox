@@ -18,17 +18,17 @@ export function expiryLead(expiration: bigint): bigint {
 
 export type CloseReason =
   | { how: 'cancelled'; block: number; ts: bigint }
-  | { how: 'executed'; block: number }
+  | { how: 'executed'; block: number; ts: bigint }
   | { how: 'expired' }
   /** The alert service could not see what happened. It never says that no money moved then. */
   | { how: 'executed_or_cancelled' };
 
-/** A log of the Safe of a vault, in the order of the chain (block, then log index). */
+/** A log of the Safe of a vault, in the order of the chain (block, then log index). `safe`: the Safe that logged it. */
 export type VaultEvent =
   /** SafeModuleTransaction (SafeL2): a module asks the Safe to do something. Its result follows. */
-  | { kind: 'call'; block: number; index: number; module: string; to: string; value: bigint; data: string; operation: number }
+  | { kind: 'call'; block: number; index: number; module: string; to: string; value: bigint; data: string; operation: number; safe?: string }
   /** ExecutionFromModuleSuccess or ExecutionFromModuleFailure: how the last call of that module went. */
-  | { kind: 'result'; block: number; index: number; module: string; success: boolean };
+  | { kind: 'result'; block: number; index: number; module: string; success: boolean; safe?: string };
 
 /** What the watcher knows about a request that left the queue. */
 export type QueueTx = { createdAt: bigint; to?: string; value?: string; data?: string; operation?: number };
@@ -69,6 +69,10 @@ export function replayQueue(args: {
   to: number;
   events: VaultEvent[];
   delay: string;
+  /** Safe(s) on which `delay` executes queued items. Defaults to any Safe in `events`. */
+  execSafes?: string[];
+  /** Safe that owns `delay` and can call setTxNonce/setTxCooldown/setTxExpiration. Defaults to any Safe in `events`. */
+  ownerSafe?: string;
   items: Map<number, QueueTx>;
   /** The timing at the last poll, and as read now. */
   before: Timing;
@@ -118,13 +122,18 @@ export function replayQueue(args: {
   };
   for (const e of args.events) {
     if (e.kind === 'call') { open.push(e); continue; }
-    // The result belongs to the last open call of the same module (a call can contain another one).
-    const at = open.map((c) => c.module).lastIndexOf(e.module);
+    // The result belongs to the last open call of the same module on the same Safe (a call can contain another one).
+    let at = -1;
+    for (let i = open.length - 1; i >= 0; i--) {
+      if (open[i].module === e.module && open[i].safe === e.safe) { at = i; break; }
+    }
     const call = at >= 0 ? open.splice(at, 1)[0] : undefined;
     if (!e.success) continue;
     if (!call) { sure = false; break; }
     const ts = args.timeOf(e.block);
-    if (e.module === delay) {
+    const isExecSafe = !args.execSafes || (e.safe !== undefined && args.execSafes.includes(e.safe));
+    const isOwnerSafe = !args.ownerSafe || e.safe === args.ownerSafe;
+    if (e.module === delay && isExecSafe) {
       // Which request did the Delay carry out? The Delay carries out only the head, and only while its time has not
       // run out; skipExpired removed the void ones before it (no log). So: the first request from the head on that is
       // exactly the call and still valid then. Each one before it must be void then, also one that is the same call
@@ -139,10 +148,10 @@ export function replayQueue(args: {
       }
       if (j >= args.to) { sure = false; break; }
       for (; cur < j; cur++) reasons.set(cur, { how: 'expired' });
-      reasons.set(j, { how: 'executed', block: e.block });
+      reasons.set(j, { how: 'executed', block: e.block, ts });
       cur = j + 1;
     }
-    if (!effects(call, e.block, ts)) { sure = false; break; }
+    if (isOwnerSafe && !effects(call, e.block, ts)) { sure = false; break; }
   }
   // The timing at the end must be the one read now. Else something changed it that the replay did not see.
   if (timing.cooldown !== args.after.cooldown || timing.expiration !== args.after.expiration) sure = false;

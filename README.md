@@ -22,6 +22,7 @@ Chronobox adds no contract of its own. It uses contracts that are audited and al
 | Zodiac ModuleProxyFactory | `0x000000000000aDdB49795b0f9bA5BC298cDda236` |
 | Zodiac Delay | `0xd54895B1121A2eE3f37b502F507631FA1331BED6` |
 | Zodiac Roles 2.1.1 | `0xF2964CE6161ce0e75964Fe7927cE114cb0B283D5` |
+| SafeModuleSetup 0.3.0 (only with the recovery) | `0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47` |
 
 A finished Chronobox has four parts:
 
@@ -107,8 +108,9 @@ After setup, the wallet can add a guardian: a second wallet, on another device o
 With a guardian, the wallet can turn a recovery on: a way back in when the wallet is lost. It can go on in the same step as the guardian, or later. Turning it on waits the full delay, and the guardian can cancel it.
 
 - The **guardian starts** a recovery, and **chooses the new wallet** at that time. The owner does not have to know that wallet in advance.
-- A recovery waits a long time. The owner chooses how long: 180 days unless they choose another time, at least 30 days, and never shorter than the delay.
-- The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out, and the new wallet is the wallet of the Chronobox. No money moves.
+- A recovery waits a long time. The owner chooses how long: 90, 180 or 365 days, or an own length from 30 to 730 days, and never shorter than the delay. 180 days unless they choose another time.
+- The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out for 30 days, and the new wallet is the wallet of the Chronobox. After those 30 days it is void. No money moves.
+- The alert service tells everybody who follows the Chronobox when a recovery starts, 7 days and 1 day before its wait ends, when its wait is over, and when it is stopped or carried out. When the wait ends, anybody can carry the recovery out at once, so stop it before then.
 - The cost: if the owner does not stop a recovery in time, the guardian can take the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
 
 How it is built:
@@ -158,7 +160,7 @@ Each queued withdrawal has an **Add to calendar** link: one reminder when it bec
 
 Alerts have two parts. The app has one button. The alert service is a project of its own, in `watcher/`. It is not part of the website: it is deployed as a second Vercel project, with Vercel Cron, a Telegram webhook and Upstash Redis, and the website stays a static site. It can also run on a machine that stays on. Without it, the button leads to a bot that does not answer.
 
-The alert service has no runtime dependencies. It watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, and when the Chronobox itself changes. The messages use the words of this app and hold no links. See `watcher/README.md`.
+The alert service watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, when a guardian starts a recovery, and when the Chronobox itself changes: a new wallet, a guardian, the recovery on or off. The messages use the words of this app and hold no links. See `watcher/README.md`.
 
 `ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, "Get told" has the way "Telegram", with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 

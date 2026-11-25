@@ -16,6 +16,7 @@
     "test:fork:recovery": "node test/recovery-fork.ts",
     "test:fork:deposit": "node test/deposit-fork.ts",
     "test:fork:alerts": "node --import ./watcher/jsx.mjs test/alerts-fork.ts",
+    "test:fork:recovery-alerts": "node --import ./watcher/jsx.mjs test/recovery-alerts-fork.ts",
     "scenarios": "node test/scenarios.ts",
     "scenarios:shots": "node test/screenshots.ts",
     "test:tokens": "node test/tokens-live.ts",
