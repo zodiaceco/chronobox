@@ -762,25 +762,6 @@ a:focus-visible {
   font-weight: 400;
 }
 
-/* The lengths of the wait, each with a word on what it is good for. */
-.hiw-times {
-  margin: 0;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 7px 14px;
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.hiw-times dt {
-  font-weight: 600;
-}
-
-.hiw-times dd {
-  margin: 0;
-  color: var(--muted);
-}
-
 /* What the guardian can do, by how long it takes. The slow lane is the recovery. */
 .hiw-lanes {
   margin: 0;
@@ -1542,6 +1523,33 @@ a:focus-visible {
 .wiz-choice-on {
   border-color: var(--blue);
   background: var(--blue-wash);
+}
+
+/* A choice and what belongs to it, in one frame: the settings open under the choice when it is picked. */
+.choice-group-open {
+  border: 1.5px solid var(--blue);
+  border-radius: 18px;
+  background: var(--blue-wash);
+  overflow: hidden;
+}
+
+.choice-group-open > .wiz-choice {
+  border: 0;
+  border-radius: 0;
+}
+
+.choice-group-more {
+  display: grid;
+  gap: 10px;
+  padding: 4px 18px 18px;
+}
+
+.choice-group-more .field-label {
+  margin: 0;
+}
+
+.choice-group-more .fund-stop:not(.fund-stop-on) {
+  background: var(--bg);
 }
 
 .wiz-choice-text {

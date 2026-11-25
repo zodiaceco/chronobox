@@ -189,7 +189,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   const tx = !guardian || !base || recovers === null ? null : !recovers ? addGuardianTx(base, guardian) : parts && recoveryWait !== null ? addGuardianTx(base, guardian, { parts, wait: recoveryWait }) : null;
   const choose = (value: boolean) => {
     setRecovers(value);
-    // A recovery starts with the wait that most people want. The owner can pick another.
+    // A recovery starts with a wait already picked, so it takes one tap less. The owner can pick another.
     if (value && picked === null) setPicked(DEFAULT_RECOVERY_WAIT);
     setPromised(false);
   };
@@ -293,23 +293,32 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   if (stage === "lost") {
     const waitProblem = recovers ? pickedWait(picked, customDays, props.inspection.cooldown).problem : null;
     return (
-      <Modal title="If you lose your wallet" lead="What can your guardian do then? You can change this later." onClose={props.onClose}>
+      <Modal title="If you lose your wallet" lead="Can your guardian bring this Chronobox back? You can change this later." onClose={props.onClose}>
         <div class="wiz-list" role="radiogroup" aria-label="If you lose your wallet">
-          <Choice role="radio" on={recovers === false} title="Nobody can bring it back" text="Your guardian can only say stop. If you lose your wallet, the money in this Chronobox is lost." onClick={() => choose(false)} />
           <Choice
             role="radio"
-            on={recovers === true}
-            title="My guardian can bring it back"
-            text="After a long wait, to a wallet that your guardian chooses. While it waits, you can stop it at once."
-            onClick={() => choose(true)}
+            on={recovers === false}
+            title="Without recovery"
+            text="Your guardian can only say stop. If you lose your wallet, the money in this Chronobox is lost."
+            onClick={() => choose(false)}
           />
+          {/* The wait belongs to the recovery, so it opens inside the same frame. */}
+          <div class={`choice-group${recovers ? " choice-group-open" : ""}`}>
+            <Choice
+              role="radio"
+              on={recovers === true}
+              title="With recovery"
+              text="Your guardian can move this Chronobox to a new wallet that your guardian chooses. It waits as long as you choose, and you can stop it at once."
+              onClick={() => choose(true)}
+            />
+            {recovers ? (
+              <div class="choice-group-more">
+                <p class="field-label">How long a recovery waits</p>
+                <WaitPicker picked={picked} onPick={setPicked} customDays={customDays} onCustomDays={setCustomDays} cooldown={props.inspection.cooldown} disabled={false} />
+              </div>
+            ) : null}
+          </div>
         </div>
-        {recovers ? (
-          <>
-            <p class="field-label">How long a recovery waits</p>
-            <WaitPicker picked={picked} onPick={setPicked} customDays={customDays} onCustomDays={setCustomDays} cooldown={props.inspection.cooldown} disabled={false} />
-          </>
-        ) : null}
         {incompatible ? <p class="field-error">This guardian address was used with this Chronobox before and cannot be added again. Use another wallet address.</p> : null}
         <div class="modal-actions">
           <Button kind="primary" disabled={!tx || incompatible || !!waitProblem} onClick={() => setStage("review")}>
@@ -333,8 +342,8 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
           <dd class="mono">{guardian ? <AddressText address={guardian} full /> : null}</dd>
         </div>
         <div>
-          <dt>If you lose your wallet</dt>
-          <dd>{recovers && recoveryWait !== null ? `Your guardian can bring it back after ${formatDuration(recoveryWait)}` : "Nobody can bring it back"}</dd>
+          <dt>Recovery</dt>
+          <dd>{recovers && recoveryWait !== null ? `On. A recovery waits ${formatDuration(recoveryWait)}` : "Off. If you lose your wallet, nobody can bring it back"}</dd>
         </div>
         <div>
           <dt>Starts</dt>

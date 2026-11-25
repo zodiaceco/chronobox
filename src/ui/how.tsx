@@ -169,16 +169,12 @@ export function HowItWorks() {
             text: "Every withdrawal waits this long. You can change it later, and that change waits too.",
             side: (
               <>
-                <dl class="hiw-times">
-                  <dt>12 hours</dt>
-                  <dd>Overnight</dd>
-                  <dt>1 day</dt>
-                  <dd>A good start</dd>
-                  <dt>1 week</dt>
-                  <dd>The strongest of the three</dd>
-                  <dt>Your own</dt>
-                  <dd>From 1 hour to 90 days</dd>
-                </dl>
+                <ul class="hiw-chips">
+                  {["12 hours", "1 day", "1 week"].map((time) => (
+                    <li key={time}>{time}</li>
+                  ))}
+                  <li class="hiw-chip-quiet">or your own, from 1 hour to 90 days</li>
+                </ul>
               </>
             ),
           }}
