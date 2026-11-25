@@ -44,10 +44,11 @@ import { FundList } from "./fund.tsx";
 import { OnUs, Support } from "./give.tsx";
 import { Mark } from "./logo.tsx";
 
-const PRESETS: { label: string; hint: string; seconds: bigint }[] = [
-  { label: "12 hours", hint: "Overnight", seconds: 12n * 3600n },
-  { label: "1 day", hint: "A good start", seconds: 24n * 3600n },
-  { label: "1 week", hint: "The strongest of the three", seconds: 7n * 24n * 3600n },
+// Plain lengths, without a word on which is better: the owner knows what is right for them.
+const PRESETS: { label: string; seconds: bigint }[] = [
+  { label: "12 hours", seconds: 12n * 3600n },
+  { label: "1 day", seconds: 24n * 3600n },
+  { label: "1 week", seconds: 7n * 24n * 3600n },
 ];
 
 /**
@@ -757,7 +758,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       <Screen title="How long should a withdrawal wait?" lead="Longer than a thief can wait in your home. Short enough that you can live with it.">
         <div class="wiz-list" role="radiogroup" aria-label="Delay">
           {PRESETS.map((p, i) => (
-            <Choice key={p.label} role="radio" on={preset === i} title={p.label} text={p.hint} onClick={() => setPreset(i)} />
+            <Choice key={p.label} role="radio" on={preset === i} title={p.label} onClick={() => setPreset(i)} />
           ))}
           <Choice role="radio" on={preset === "custom"} title="Another length" text="From 1 hour to 90 days" onClick={() => setPreset("custom")} />
         </div>

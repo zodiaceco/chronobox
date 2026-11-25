@@ -47,10 +47,11 @@ import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, typ
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 
 const DAY = 86_400n;
-const WAIT_CHOICES: { label: string; text: string; seconds: bigint }[] = [
-  { label: "90 days", text: "Short. Look at your Chronobox often.", seconds: 90n * DAY },
-  { label: "180 days", text: "A good start.", seconds: 180n * DAY },
-  { label: "365 days", text: "The most time to notice.", seconds: 365n * DAY },
+// Plain lengths, without a word on which is better: the owner knows what is right for them.
+const WAIT_CHOICES: { label: string; seconds: bigint }[] = [
+  { label: "90 days", seconds: 90n * DAY },
+  { label: "180 days", seconds: 180n * DAY },
+  { label: "365 days", seconds: 365n * DAY },
 ];
 
 /** A recovery change that is in the line and has not started yet. */
@@ -142,7 +143,7 @@ export function WaitPicker(props: {
   const { picked, disabled } = props;
   const { problem } = pickedWait(picked, props.customDays, props.cooldown);
   const choices = WAIT_CHOICES.filter((c) => c.seconds >= shortestWait(props.cooldown));
-  const note = picked === "custom" ? `In days, from ${shortestWait(props.cooldown) / DAY} to ${MAX_RECOVERY_WAIT / DAY}.` : choices.find((c) => c.seconds === picked)?.text;
+  const note = picked === "custom" ? `In days, from ${shortestWait(props.cooldown) / DAY} to ${MAX_RECOVERY_WAIT / DAY}.` : null;
   // One row of pills, not a list of cards: the wait is a setting, not a promise.
   const pill = (on: boolean, label: string, pick: WaitPick) => (
     <button type="button" role="radio" aria-checked={on} key={label} class={on ? "fund-stop fund-stop-on" : "fund-stop"} disabled={disabled} onClick={() => props.onPick(pick)}>
