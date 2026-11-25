@@ -194,6 +194,8 @@ export function GroupCard(props: {
   assets: Asset[];
   busy: string | null;
   onCollect: () => void;
+  /** Clears expired items from the front of the line. */
+  onRemove: () => void;
   onCancel: (() => void) | null;
   cancelLabel: string;
 }) {
@@ -239,6 +241,11 @@ export function GroupCard(props: {
         {status.phase === "ready" && props.first ? (
           <Button kind="primary" small busy={props.busy === `finish-${items[0].nonce}`} disabled={!!props.busy} onClick={props.onCollect}>
             Collect all
+          </Button>
+        ) : null}
+        {status.phase === "expired" && props.first ? (
+          <Button small busy={props.busy === "remove"} disabled={!!props.busy} onClick={props.onRemove}>
+            Clear
           </Button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (

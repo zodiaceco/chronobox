@@ -286,6 +286,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
   // Counts the times third-party services were switched: the list then reads again.
   const [lookupRound, setLookupRound] = useState(0);
+  // Tokens in the Chronobox that only the index knows. They can be withdrawn like the others.
+  const [found, setFound] = useState<{ assets: Asset[]; box: (bigint | null)[] }>({ assets: [], box: [] });
   // The wallet can send several calls as one. Then several assets can be withdrawn together, and collected together.
   const [batch, setBatch] = useState(false);
   useEffect(() => {
@@ -537,7 +539,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {isController ? (
             // The owner sees one list: what the wallet holds (unlocked) next to what the Chronobox holds (locked).
-            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound + data.fetchedAt} onLookup={() => setSheet("lookup")} />
+            <OwnerHoldings session={session} chain={chain} safe={safe} boxBase={data.balancesRead ? balances : null} round={lookupRound + data.fetchedAt} onLookup={() => setSheet("lookup")} onFound={setFound} />
           ) : (
             <>
               <p class="eyebrow">{`A Chronobox on ${chain.name}`}</p>
@@ -632,6 +634,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                     assets={assets}
                     busy={action.busy}
                     onCollect={() => collectGroup(group)}
+                    onRemove={remove}
                     // A cancel takes an item and every item before it, so the last one of the group takes the group.
                     onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
                     cancelLabel={isGuardian ? "Stop all" : "Cancel all"}
@@ -707,10 +710,10 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
 
       {sheet === "withdraw" && vault && batch ? (
-        <WithdrawManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={[...assets, ...found.assets]} balances={[...balances, ...found.box]} queue={queue} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "withdraw" && vault && !batch ? (
-        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={[...assets, ...found.assets]} balances={[...balances, ...found.box]} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>

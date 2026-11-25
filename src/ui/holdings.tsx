@@ -63,7 +63,13 @@ export function useHoldings(session: Session, chain: Chain, safe: Address | null
         const fresh = lists.flat().filter((t, i, list) => list.findIndex((o) => sameAddress(o.address, t.address)) === i && !base.some((a) => sameAddress(a.token, t.address)));
         if (fresh.length === 0 || stale) return;
         // What the index says about a token is taken only where the chain agrees.
-        const decimals = await readMany(session.rpc, fresh.map((t) => ({ to: t.address, data: call("decimals()") })));
+        // In pieces, as the balances are read: a weak network refuses one large request. A piece that fails leaves its tokens out.
+        const decimals: (string | null)[] = [];
+        for (let i = 0; i < fresh.length; i += 20) {
+          const piece = fresh.slice(i, i + 20);
+          decimals.push(...(await readMany(session.rpc, piece.map((t) => ({ to: t.address, data: call("decimals()") }))).catch(() => piece.map(() => null))));
+          if (stale) return;
+        }
         const good = fresh.filter((t, i) => {
           const answer = decimals[i];
           return answer !== null && answer.length >= 66 && BigInt(answer.slice(0, 66)) === BigInt(t.decimals);
@@ -278,8 +284,22 @@ export function LookupSheet(props: { chain: Chain; onClose: () => void; onChange
 }
 
 /** The head and the list for the owner of a Chronobox. */
-export function OwnerHoldings(props: { session: Session; chain: Chain; safe: Address; boxBase: (bigint | null)[] | null; round: number; onLookup: () => void }) {
+export function OwnerHoldings(props: {
+  session: Session;
+  chain: Chain;
+  safe: Address;
+  boxBase: (bigint | null)[] | null;
+  round: number;
+  onLookup: () => void;
+  /** The tokens that only the index knows, with what the Chronobox holds of them: so they can be withdrawn too. */
+  onFound?: (found: { assets: Asset[]; box: (bigint | null)[] }) => void;
+}) {
   const holdings = useHoldings(props.session, props.chain, props.safe, props.boxBase, props.round);
+  const baseCount = useMemo(() => assetsOf(props.chain).length, [props.chain]);
+  const foundKey = holdings.assets.slice(baseCount).map((a) => a.token).join(",") + "|" + holdings.box.slice(baseCount).join(",");
+  useEffect(() => {
+    props.onFound?.({ assets: holdings.assets.slice(baseCount), box: holdings.box.slice(baseCount) });
+  }, [foundKey]);
   return (
     <>
       <NetworkHeader session={props.session} chain={props.chain} />
