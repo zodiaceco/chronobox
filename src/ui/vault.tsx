@@ -631,9 +631,10 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                     now={now}
                     cooldown={inspection.cooldown}
                     vault={vault}
-                    assets={assets}
+                    assets={[...assets, ...found.assets]}
                     busy={action.busy}
                     onCollect={() => collectGroup(group)}
+                    onCollectFirst={() => finish(group[0])}
                     onRemove={remove}
                     // A cancel takes an item and every item before it, so the last one of the group takes the group.
                     onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
@@ -651,7 +652,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 cooldown={inspection.cooldown}
                 action={item.tx ? classify(item.tx, vault) : null}
                 recoveryOn={Boolean(vault.recoveryOn)}
-                assets={assets}
+                assets={[...assets, ...found.assets]}
                 chain={chain}
                 safe={safe}
                 rpc={session.rpc}

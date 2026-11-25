@@ -194,6 +194,8 @@ export function GroupCard(props: {
   assets: Asset[];
   busy: string | null;
   onCollect: () => void;
+  /** Carries out the first item alone: when one of the group can no longer go through, the others still can, in their order. */
+  onCollectFirst: () => void;
   /** Clears expired items from the front of the line. */
   onRemove: () => void;
   onCancel: (() => void) | null;
@@ -242,6 +244,11 @@ export function GroupCard(props: {
           <Button kind="primary" small busy={props.busy === `finish-${items[0].nonce}`} disabled={!!props.busy} onClick={props.onCollect}>
             Collect all
           </Button>
+        ) : null}
+        {status.phase === "ready" && props.first ? (
+          <button type="button" class="link-button" disabled={!!props.busy} onClick={props.onCollectFirst}>
+            One at a time
+          </button>
         ) : null}
         {status.phase === "expired" && props.first ? (
           <Button small busy={props.busy === "remove"} disabled={!!props.busy} onClick={props.onRemove}>
