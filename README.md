@@ -100,23 +100,29 @@ After setup, the wallet can add a guardian: a second wallet, on another device o
 - The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Delay and nothing else.
 - A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
 - The guardian cannot withdraw. It can cancel every withdrawal, and the wallet can remove the guardian only through the queue, where the guardian can cancel that too.
-- A guardian alone is not a backup. A wallet change by both needs the wallet. For a lost wallet, set a recovery.
+- A guardian alone is not a backup. A wallet change by both needs the wallet. For a lost wallet, turn the recovery on.
 
 ### The optional recovery
 
-With a guardian, the wallet can set a recovery: a way back in when the wallet is lost. Setting it waits the full delay, and the guardian can cancel it.
+With a guardian, the wallet can turn a recovery on: a way back in when the wallet is lost. It can go on in the same step as the guardian, or later. Turning it on waits the full delay, and the guardian can cancel it.
 
-- The owner chooses a **recovery wallet**, a second key kept in another place, and how long a recovery waits (for example 90 days, never shorter than the delay).
-- The **guardian can start** the recovery. The **wallet can stop** it while it waits. When the wait is over, anybody can carry it out, and the recovery wallet is the wallet of the Chronobox. No money moves.
-- The guardian decides only when a recovery starts. Where the Chronobox goes was fixed by the owner. So nobody gains from the owner's silence alone: a theft needs the guardian's key and the recovery wallet.
-- The recovery wallet alone can do nothing.
+- The **guardian starts** a recovery, and **chooses the new wallet** at that time. The owner does not have to know that wallet in advance.
+- A recovery waits a long time. The owner chooses how long: 180 days unless they choose another time, at least 30 days, and never shorter than the delay.
+- The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out, and the new wallet is the wallet of the Chronobox. No money moves.
+- The cost: if the owner does not stop a recovery in time, the guardian can take the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
 
 How it is built:
 
-- A second Delay, the **recovery Delay**, at an address that depends only on the Chronobox. Owner, avatar and target are the Safe, and its only module is the Safe itself. So only the Safe can put something into its line.
-- A third role, "recover", in the Roles modifier, with the guardian as its one member. It allows one exact call: put the recovery into the line of the recovery Delay. The rule compares every argument, the whole batch included. The role "cancel" covers that line too.
-- The recovery itself is the same batch as a wallet change with a guardian, from the wallet of now to the recovery wallet. It is fixed when the recovery is set. If the wallet or the guardian changes later, the batch no longer fits and does nothing. The app says so, and the owner sets the recovery again.
-- The app proves all of this from the event history of the Roles modifier, like the other permissions: the rule must be exactly the one this app writes, and the batch in it may only enable and disable modules of the Delay and move roles.
+| Part | What it is | What it can do |
+| --- | --- | --- |
+| Recovery Delay | A second Delay, at an address that depends only on the Chronobox. The Safe owns it. It is never a module of the Safe. | It acts on the shared Safe. Its one module is the guardian. |
+| Shared Safe | The 2 of 2 Safe of wallet and guardian, in a second form: it has the recovery Delay as its one module from its first moment. | What it could do before: change the wallet. It cannot move money. |
+| Role "cancel" | Covers `setTxNonce` on the recovery Delay too. | The wallet and the guardian empty the line of the recovery at once. |
+
+- A recovery is the same step that wallet and guardian sign together to change the wallet at once. The guardian puts it into the line of the recovery Delay. After the wait, that Delay makes the shared Safe run it. So the guardian alone, after the wait, can do what both can do together at once, and nothing more.
+- The shared Safe gets its module in its own setup, through Safe's `SafeModuleSetup` 0.3.0. Its address can hold only that one Safe, and anybody can make it. The recovery Delay is made the same way, before the step that turns the recovery on, so nobody can make that step fail by making it first.
+- Turning the recovery off takes the guardian off the recovery Delay and points that Delay back at the Safe, where it can do nothing. A recovery that waited at that moment can never run. Turning it on again first throws out what is left in that line.
+- The app checks all of this each time: the recovery Delay is owned by the Safe, acts on the shared Safe, has the guardian as its only module, waits, and can be stopped. One more address on the recovery Delay makes the Chronobox fail its checks.
 
 `npm run test:fork:recovery` proves it against the real contracts on a fork.
 
@@ -128,7 +134,8 @@ Read these. They are the honest edge of what a delay can do.
 - **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can move the Chronobox to a new wallet at once.
 - **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian move the Chronobox to a new wallet at once. Frozen funds are better than lost funds.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
-- **Lost wallet, lost funds, unless you set a recovery.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With a recovery (above), your guardian can bring the Chronobox to your recovery wallet after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
+- **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
+- **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet holds your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
 - **A recovery does not end a standoff.** A person who has your wallet can stop every recovery, as they can cancel every withdrawal. The recovery is for a lost key, not for a stolen one.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
 - **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own, and a Telegram account. Without them, use the calendar file, and look at your Chronobox regularly.

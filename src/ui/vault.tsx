@@ -32,6 +32,8 @@ import {
   readQueue,
   readRecoveryLine,
   type RecoveryItem,
+  councilOwnersNow,
+  recoveryDelayCreateTx,
   readBalances,
   readToken,
   sendAndWait,
@@ -49,7 +51,7 @@ import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choic
 import { SunPassArt } from "./art.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
-import { RecoveryCard, RecoverySheet, type RecoveryWaiting } from "./recovery.tsx";
+import { RecoveryCard, type RecoveryWaiting, guarded } from "./recovery.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 import { RowIcon, type RowIconName } from "./row-icons.tsx";
 
@@ -74,7 +76,23 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "recovery" | "checks" | "alerts" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | null;
+
+/** The parts of a locked Chronobox, in the form that the builders want. */
+function vaultOf(safe: Address, inspection: Inspection): VaultRef {
+  return {
+    safe,
+    delay: inspection.delay!,
+    controller: inspection.controller!,
+    roles: inspection.roles,
+    guardian: inspection.guardian,
+    council: inspection.council,
+    members: inspection.members,
+    recoveryDelay: inspection.recoveryDelay,
+    recoveryOn: inspection.recovery !== null,
+    councilRecovery: inspection.councilRecovery,
+  };
+}
 
 function useVault(session: Session, chain: Chain, safe: Address) {
   const [data, setData] = useState<VaultData | null>(null);
@@ -155,11 +173,15 @@ function useVault(session: Session, chain: Chain, safe: Address) {
               () => publish({ queueRead: "failed" }),
             )
           : Promise.resolve();
-        const recoveryLine = inspection.recovery
-          ? readRecoveryLine(rpc, inspection.recovery).then(
-              (line) => publish({ recoveryLine: line }),
-              () => undefined,
-            )
+        // Each item is read back and compared with the recovery that this app builds, so the page can say where it leads.
+        const guard = inspection.recovery && inspection.delay && inspection.controller ? guarded(vaultOf(safe, inspection)) : null;
+        const recoveryLine = guard
+          ? councilOwnersNow(rpc, guard, inspection.councilMade)
+              .then((owners) => readRecoveryLine(rpc, guard, owners))
+              .then(
+                (line) => publish({ recoveryLine: line }),
+                () => undefined,
+              )
           : Promise.resolve();
         await Promise.all([balances, queue, recoveryLine]);
       } catch (e) {
@@ -265,10 +287,9 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     // It is remembered for the wallet that is its key, so it shows in that wallet's list only.
     if (data?.inspection.state !== "locked" || !data.inspection.controller) return;
     // A guardian finds it in the list of the guardian's own wallet. On the guardian's device, that is the wallet to remember.
-    // The same for the recovery wallet: after a recovery it is the key, and before it this is how its holder finds the Chronobox.
-    const asGuardian = sameAddress(data.inspection.guardian, session.account) || sameAddress(data.inspection.recovery?.wallet, session.account);
+    const asGuardian = sameAddress(data.inspection.guardian, session.account);
     rememberVault({ chainId: chain.id, safe, wallet: asGuardian ? session.account : data.inspection.controller });
-  }, [data?.inspection.state, data?.inspection.controller, data?.inspection.guardian, data?.inspection.recovery?.wallet, session.account, chain.id, safe]);
+  }, [data?.inspection.state, data?.inspection.controller, data?.inspection.guardian, session.account, chain.id, safe]);
 
   if (error && !data) {
     return (
@@ -296,46 +317,29 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const canCancel = (isController || isGuardian) && !!inspection.roles;
   // Another wallet is the key. This wallet can look, and nothing else.
   const viewOnly = locked && !isController && !isGuardian;
-  const vault: VaultRef | null = locked
-    ? {
-        safe,
-        delay: inspection.delay!,
-        controller: inspection.controller!,
-        roles: inspection.roles,
-        guardian: inspection.guardian,
-        council: inspection.council,
-        members: inspection.members,
-        modules: inspection.modules,
-        recoveryDelay: inspection.recoveryDelay,
-        recoveryOn: inspection.recovery !== null,
-      }
-    : null;
+  const vault: VaultRef | null = locked ? vaultOf(safe, inspection) : null;
   // A recovery change that is in the line and has not started yet.
   const queued = vault ? queue.map((item) => (item.tx ? classify(item.tx, vault) : null)) : [];
   const setting = queued.find((a): a is Extract<Action, { kind: "set-recovery" }> => a?.kind === "set-recovery");
-  const recoveryWaiting: RecoveryWaiting = setting ? { kind: "set", wallet: setting.wallet, wait: setting.wait } : queued.some((a) => a?.kind === "remove-recovery") ? { kind: "remove" } : null;
+  const recoveryWaiting: RecoveryWaiting = setting ? { kind: "set", wait: setting.wait } : queued.some((a) => a?.kind === "remove-recovery") ? { kind: "remove" } : null;
   const recovery = locked ? inspection.recovery : null;
   const recoveryLine = recovery ? data.recoveryLine : [];
   const role = isController ? "owner" : isGuardian ? "guardian" : "viewer";
-  const recoveryValue = recoveryWaiting
-    ? recoveryWaiting.kind === "set"
-      ? "Starts soon"
-      : "Goes off soon"
-    : recovery
-      ? !recovery.fits
-        ? isController
-          ? "Set it again"
-          : "Not working"
-        : recoveryLine.length > 0
-          ? "Waiting"
-          : `After ${formatDuration(recovery.wait)}`
-      : isController
-        ? "Add"
-        : "None";
+  // What the row "Guardian" says about the recovery, under the guardian's address.
+  const recoveryNote = !inspection.guardian
+    ? null
+    : recoveryLine.length > 0
+      ? "A recovery waits"
+      : recoveryWaiting?.kind === "set" && !recovery
+        ? "Recovery goes on soon"
+        : recoveryWaiting?.kind === "remove"
+          ? "Recovery goes off soon"
+          : recovery
+            ? `Can recover after ${formatDuration(recovery.wait)}`
+            : null;
   // A guardian that is in the line and has not started yet.
-  const guardianWaiting = vault
-    ? (queue.map((item) => (item.tx ? classify(item.tx, vault) : null)).find((a): a is Extract<Action, { kind: "add-guardian" }> => a?.kind === "add-guardian")?.guardian ?? null)
-    : null;
+  const adding = queued.find((a): a is Extract<Action, { kind: "add-guardian" }> => a?.kind === "add-guardian") ?? null;
+  const guardianWaiting = adding?.guardian ?? null;
   const close = () => {
     setSheet(null);
     refresh();
@@ -347,6 +351,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       // The item can leave the line while this waits: it was cancelled, or carried out from another device. Then there is nothing to wait for.
       const gone = () => !line.current.some((q) => q.nonce === item.nonce);
       try {
+        // A step that turns a recovery on needs the recovery Delay. It is made when the step is asked for. If it is still missing, it is made now.
+        const step = vault && item.tx ? classify(item.tx, vault) : null;
+        const needsDelay = step?.kind === "set-recovery" || (step?.kind === "add-guardian" && step.recoveryWait !== undefined);
+        if (needsDelay && inspection.recoveryDelay && !inspection.recoveryDelay.deployed) {
+          const code = (await session.rpc("eth_getCode", [inspection.recoveryDelay.delay, "latest"])) as string;
+          if (code.length <= 2) await sendAndWait(session.rpc, session.account, recoveryDelayCreateTx(safe), { ...sending, ...waiting });
+        }
         await sendAndWait(session.rpc, session.account, executeTx(inspection.delay!, item.tx!), { ...sending, ...waiting, shouldStop: () => waiting.shouldStop() || gone() });
       } catch (e) {
         if (!(e instanceof StoppedWaiting && gone())) throw e;
@@ -492,7 +503,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           {isGuardian ? (
             <p class="hint">
               When a withdrawal waits here, call the owner. If you cannot reach them, or they did not ask for it, stop it. You cannot withdraw.
-              {recovery?.fits ? ' If the owner has lost the wallet, start the recovery under "Recovery".' : ""}
+              {recovery ? ' If the owner has lost the wallet, start a recovery under "Guardian".' : ""}
             </p>
           ) : null}
         </div>
@@ -500,11 +511,6 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
 
       {vault && recovery && recoveryLine.length > 0 ? (
         <RecoveryCard session={session} chain={chain} vault={vault} recovery={recovery} item={recoveryLine[0]} now={now} role={role} onChanged={refresh} />
-      ) : null}
-      {locked && recovery && !isController && sameAddress(recovery.wallet, session.account) ? (
-        <Notice kind="info" title="Your wallet is the recovery wallet of this Chronobox.">
-          It can do nothing now. After a recovery that nobody stopped, it is the key of this Chronobox.
-        </Notice>
       ) : null}
 
       {vault && waitingCount > 0n ? (
@@ -565,12 +571,14 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             <Row
               icon="guardian"
               label="Guardian"
-              value={isGuardian ? "You" : inspection.guardian ? shortAddress(inspection.guardian) : guardianWaiting ? "Starts soon" : isController ? "Add" : "None"}
+              value={
+                <>
+                  {isGuardian ? "You" : inspection.guardian ? shortAddress(inspection.guardian) : guardianWaiting ? "Starts soon" : isController ? "Add" : "None"}
+                  {recoveryNote ? <small class="row-sub">{recoveryNote}</small> : null}
+                </>
+              }
               onClick={isController || inspection.guardian ? () => setSheet("guardian") : undefined}
             />
-          ) : null}
-          {inspection.roles ? (
-            <Row icon="recovery" label="Recovery" value={recoveryValue} onClick={isController || recovery ? () => setSheet("recovery") : undefined} />
           ) : null}
           <Row
             icon="checks"
@@ -598,19 +606,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "wallet" && vault ? <ChangeWalletSheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
       {sheet === "guardian" && vault ? (
-        <GuardianSheet session={session} chain={chain} vault={vault} inspection={inspection} role={role} waiting={guardianWaiting} onClose={close} />
-      ) : null}
-      {sheet === "recovery" && vault ? (
-        <RecoverySheet
+        <GuardianSheet
           session={session}
           chain={chain}
           vault={vault}
           inspection={inspection}
           role={role}
-          waiting={recoveryWaiting}
-          guardianWaiting={guardianWaiting !== null}
-          started={recoveryLine.length > 0}
-          onGuardian={() => setSheet("guardian")}
+          waiting={guardianWaiting}
+          waitingRecovery={adding?.recoveryWait ?? null}
+          recoveryWaiting={recoveryWaiting}
+          recoveryStarted={recoveryLine.length > 0}
           onClose={close}
         />
       ) : null}
@@ -852,13 +857,19 @@ function describe(action: Action | null, assets: Asset[], tokens: Record<string,
     case "change-wallet":
       return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Chronobox.`, finish: "Apply now" };
     case "add-guardian":
-      return { title: `Add the guardian ${shortAddress(action.guardian)}`, warning: `After this, the wallet ${action.guardian} can stop every withdrawal.`, finish: "Apply now" };
+      return action.recoveryWait === undefined
+        ? { title: `Add the guardian ${shortAddress(action.guardian)}`, warning: `After this, the wallet ${action.guardian} can stop every withdrawal.`, finish: "Apply now" }
+        : {
+            title: `Add the guardian ${shortAddress(action.guardian)}, with a recovery`,
+            warning: `After this, the wallet ${action.guardian} can stop every withdrawal. It can also start a recovery: after ${formatDuration(action.recoveryWait)}, a wallet that the guardian chooses holds this Chronobox, unless the owner stops it.`,
+            finish: "Apply now",
+          };
     case "remove-guardian":
       return { title: "Remove the guardian", warning: "After this, only the wallet of this Chronobox can cancel a withdrawal.", finish: "Apply now" };
     case "set-recovery":
       return {
-        title: `Set the recovery wallet ${shortAddress(action.wallet)}`,
-        warning: `After this, the guardian can start a recovery. A recovery waits ${formatDuration(action.wait)}, and then the wallet ${action.wallet} holds this Chronobox.`,
+        title: `Let the guardian recover after ${formatDuration(action.wait)}`,
+        warning: `After this, the guardian can start a recovery. A recovery waits ${formatDuration(action.wait)}. Then a wallet that the guardian chooses holds this Chronobox, unless the owner stops it.`,
         finish: "Apply now",
       };
     case "remove-recovery":

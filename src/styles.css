@@ -3216,6 +3216,14 @@ button.row-strong:hover .row-hint {
 }
 
 /* The recovery. */
+.row-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
 .field-label {
   margin: 6px 0 -4px;
   font-weight: 600;
