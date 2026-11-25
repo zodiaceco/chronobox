@@ -26,9 +26,9 @@ Chronobox adds no contract of its own. It uses contracts that are audited and al
 
 A finished Chronobox has four parts:
 
-- **Your setup wallet**: the control unit. It is the only module of the Delay. It can queue any transaction, and it can cancel what is in the queue.
-- **Delay**: the only way to move funds or to change the vault. Owner, avatar and target are the Safe. The cooldown is the delay you picked. A queued transaction can be executed for 7 days after the cooldown, then it expires.
-- **Roles**: the cancel permission. A Zodiac Roles modifier (2.1.1) on the Safe with one rule: your wallet may call `setTxNonce` on the Delay. An optional guardian adds a second rule (see below). It cannot move funds and it cannot change the delay. Its owner is the Safe, so the rule can only change through the Delay.
+- **Your hot wallet**: the control unit. It is the only module of the Vault Delay. It can queue any transaction, and it can cancel what is in the queue.
+- **Vault Delay**: the only way to move funds or to change the vault. Owner, avatar and target are the Safe. The cooldown is the delay you picked. A queued transaction can be executed for 7 days after the cooldown, then it expires.
+- **Roles**: the cancel permission. A Zodiac Roles modifier (2.1.1) on the Safe with one rule: your wallet may call `setTxNonce` on the Vault Delay. An optional guardian adds a second rule (see below). It cannot move funds and it cannot change the delay. Its owner is the Safe, so the rule can only change through the Vault Delay.
 - **Safe**: holds the funds. The owner is `0x…dEaD`, an address with no key and no code. No guard, no fallback handler.
 
 So everything waits the full delay: a withdrawal, a new delay, a new wallet. One thing does not wait: cancel, and a cancel moves nothing.
@@ -36,7 +36,7 @@ So everything waits the full delay: a withdrawal, a new delay, a new wallet. One
 Setup takes two transactions from your wallet:
 
 1. **Create** a 1 of 1 Safe owned by your wallet.
-2. **Lock**: one Safe transaction deploys the Delay and the cancel permission, enables them, makes your wallet the only module of the Delay, and replaces your wallet as owner with the burn address. All of it happens together or not at all.
+2. **Lock**: one Safe transaction deploys the Vault Delay and the cancel permission, enables them, makes your wallet the only module of the Vault Delay, and replaces your wallet as owner with the burn address. All of it happens together or not at all.
 
 ### The contribution
 
@@ -49,22 +49,22 @@ The hosted app can ask for a one-time contribution when a Chronobox is created. 
 
 ### Cancel, and why it needs a second contract
 
-In the Delay, only the owner can remove a queued transaction (`setTxNonce`). The owner can also set the delay to zero and add wallets, at once. So the setup wallet must not be the owner: the owner is the Safe, and the Safe acts only through the queue.
+In the Vault Delay, only the owner can remove a queued transaction (`setTxNonce`). The owner can also set the delay to zero and add wallets, at once. So the hot wallet must not be the owner: the owner is the Safe, and the Safe acts only through the queue.
 
-To give the setup wallet cancel and nothing else, a Zodiac Roles modifier sits beside the Delay as a second module of the Safe. It has one permission: the setup wallet can make the Safe call `setTxNonce` on the Delay. Its owner is the Safe, so the permission can change only through the queue.
+To give the hot wallet cancel and nothing else, a Zodiac Roles modifier sits beside the Vault Delay as a second module of the Safe. It has one permission: the hot wallet can make the Safe call `setTxNonce` on the Vault Delay. Its owner is the Safe, so the permission can change only through the queue.
 
 - The queue is first in, first out. A cancel removes one item and every item before it.
 - Cancel cannot move funds, change the delay, or add anybody.
 
-The Roles contract has no function that lists its permissions, so the app proves "cancel only" from the contract's whole event history: it accepts only the exact cancel setup: the setup wallet as the one member, or the setup wallet and the guardian setup described below. This needs old logs. If the wallet's RPC does not serve them, the vault shows as **unverified**: withdrawals and cancel work, but the app tells you not to deposit until the check passes.
+The Roles contract has no function that lists its permissions, so the app proves "cancel only" from the contract's whole event history: it accepts only the exact cancel setup: the hot wallet as the one member, or the hot wallet and the guardian setup described below. This needs old logs. If the wallet's RPC does not serve them, the vault shows as **unverified**: withdrawals and cancel work, but the app tells you not to deposit until the check passes.
 
-### What the setup wallet can queue
+### What the hot wallet can queue
 
-The Delay lets the setup wallet queue any transaction. The app builds three, and shows anything else in the queue with a warning:
+The Vault Delay lets the hot wallet queue any transaction. The app builds three, and shows anything else in the queue with a warning:
 
-- **Withdraw**: funds go back to the setup wallet.
-- **Change the delay**: the Safe calls `setTxCooldown` on the Delay.
-- **Change the wallet**: the Safe enables the new wallet on the Delay and disables the old one, and moves the right to cancel the same way, in one step. After it executes, only the new wallet controls the vault. The new wallet does not find the vault by itself, so keep its address.
+- **Withdraw**: funds go back to the hot wallet.
+- **Change the delay**: the Safe calls `setTxCooldown` on the Vault Delay.
+- **Change the wallet**: the Safe enables the new wallet on the Vault Delay and disables the old one, and moves the right to cancel the same way, in one step. After it executes, only the new wallet controls the vault. The new wallet does not find the vault by itself, so keep its address.
 
 ### Money in the setup
 
@@ -98,8 +98,8 @@ The address of your nth vault depends only on your wallet address and n. The app
 
 After setup, the wallet can add a guardian: a second wallet, on another device or held by a person you trust. Adding it waits the full delay, like every change. The app checks the result every time you open the vault.
 
-- The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Delay and nothing else.
-- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
+- The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Vault Delay and nothing else.
+- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Vault Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
 - The guardian cannot withdraw. It can cancel every withdrawal, and the wallet can remove the guardian only through the queue, where the guardian can cancel that too.
 - A guardian alone is not a backup. A wallet change by both needs the wallet. For a lost wallet, turn the recovery on.
 
@@ -117,14 +117,14 @@ How it is built:
 
 | Part | What it is | What it can do |
 | --- | --- | --- |
-| Recovery Delay | A second Delay, at an address that depends only on the Chronobox. The Safe owns it. It is never a module of the Safe. | It acts on the shared Safe. Its one module is the guardian. |
-| Shared Safe | The 2 of 2 Safe of wallet and guardian, in a second form: it has the recovery Delay as its one module from its first moment. | What it could do before: change the wallet. It cannot move money. |
-| Role "cancel" | Covers `setTxNonce` on the recovery Delay too. | The wallet and the guardian empty the line of the recovery at once. |
+| Recovery Delay | A second Delay, at an address that depends only on the Chronobox. The Safe owns it. It is never a module of the Safe. | It acts on the Council Safe. Its one module is the guardian. |
+| Shared Safe | The 2 of 2 Safe of wallet and guardian, in a second form: it has the Recovery Delay as its one module from its first moment. | What it could do before: change the wallet. It cannot move money. |
+| Role "cancel" | Covers `setTxNonce` on the Recovery Delay too. | The wallet and the guardian empty the line of the recovery at once. |
 
-- A recovery is the same step that wallet and guardian sign together to change the wallet at once. The guardian puts it into the line of the recovery Delay. After the wait, that Delay makes the shared Safe run it. So the guardian alone, after the wait, can do what both can do together at once, and nothing more.
-- The shared Safe gets its module in its own setup, through Safe's `SafeModuleSetup` 0.3.0. Its address can hold only that one Safe, and anybody can make it. The recovery Delay is made the same way, before the step that turns the recovery on, so nobody can make that step fail by making it first.
-- Turning the recovery off takes the guardian off the recovery Delay and points that Delay back at the Safe, where it can do nothing. A recovery that waited at that moment can never run. Turning it on again first throws out what is left in that line.
-- The app checks all of this each time: the recovery Delay is owned by the Safe, acts on the shared Safe, has the guardian as its only module, waits, and can be stopped. One more address on the recovery Delay makes the Chronobox fail its checks.
+- A recovery is the same step that wallet and guardian sign together to change the wallet at once. The guardian puts it into the line of the Recovery Delay. After the wait, that Delay makes the Council Safe run it. So the guardian alone, after the wait, can do what both can do together at once, and nothing more.
+- The Council Safe gets its module in its own setup, through Safe's `SafeModuleSetup` 0.3.0. Its address can hold only that one Safe, and anybody can make it. The Recovery Delay is made the same way, before the step that turns the recovery on, so nobody can make that step fail by making it first.
+- Turning the recovery off takes the guardian off the Recovery Delay and points that Delay back at the Safe, where it can do nothing. A recovery that waited at that moment can never run. Turning it on again first throws out what is left in that line.
+- The app checks all of this each time: the Recovery Delay is owned by the Safe, acts on the Council Safe, has the guardian as its only module, waits, and can be stopped. One more address on the Recovery Delay makes the Chronobox fail its checks.
 
 `npm run test:fork:recovery` proves it against the real contracts on a fork.
 
@@ -135,7 +135,7 @@ Read these. They are the honest edge of what a delay can do.
 - **Your wallet controls it.** The app does not know what kind of wallet that is: one key, a Safe with several signers, or a smart account. Whatever protects your wallet also protects your Chronobox.
 - **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can move the Chronobox to a new wallet at once.
 - **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian move the Chronobox to a new wallet at once. Frozen funds are better than lost funds.
-- **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
+- **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Vault Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
 - **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
 - **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet holds your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
 - **A recovery does not end a standoff.** A person who has your wallet can stop every recovery, as they can cancel every withdrawal. The recovery is for a lost key, not for a stolen one.
@@ -217,13 +217,13 @@ npm run build        # production build in out/, prints the build hash
 `npm run test:fork` proves, against the deployed contracts:
 
 - the predicted addresses, both setup transactions and every check
-- nobody can act as owner (five signature types), and the wallet cannot change the Delay directly
+- nobody can act as owner (five signature types), and the wallet cannot change the Vault Delay directly
 - through the Roles modifier the wallet can cancel and nothing else (nine other attempts fail)
 - deposit, queue, early execution fails, execution after the delay, cancel, expiry and skip
 - a change of the delay and a change of the wallet, each after its own wait; the old wallet can then neither queue nor cancel, and the new one can
 - a contribution sent with the lock transaction arrives, and the vault stays empty
 - a Safe as the wallet: create, lock and two deposits in one transaction; a batch that cannot pay its deposit creates nothing
-- ten tampered setups (for example a second module, a second wallet that can queue, a hidden second role, a second address that can cancel, a delay of zero, a guard on the Delay) are all rejected by the checks
+- ten tampered setups (for example a second module, a second wallet that can queue, a hidden second role, a second address that can cancel, a delay of zero, a guard on the Vault Delay) are all rejected by the checks
 - a vault is "unverified", not "locked", when the RPC cannot serve the event history
 
 ## Updates

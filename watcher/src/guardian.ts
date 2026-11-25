@@ -2,7 +2,7 @@
 //
 // With a guardian, the cancel contract (Roles) has three members: the wallet, the guardian, and a 2 of 2 Safe of the
 // two (the "council"). Together, wallet and guardian can hand the Chronobox to a new wallet at once. With the
-// recovery on, a second Delay (the recovery Delay) acts on that Safe, and the guardian is its one module: the guardian
+// recovery on, a second Delay (the Recovery Delay) acts on that Safe, and the guardian is its one module: the guardian
 // alone can put a wallet change into its line, and after a long wait anybody can carry it out. The wallet and the
 // guardian can empty that line at once. The addresses are fixed for each Chronobox, as in the app (src/lib/chronobox.ts).
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -15,7 +15,7 @@ import { batchCalls } from './describe.ts';
 export const SAFE_PROXY_FACTORY = '0x4e1dcf7ad4e460cfd30791ccc4f9c8a4f820ec67';
 /** keccak256 of the SafeProxy 1.4.1 creation code with the SafeL2 singleton. The same as in the app. */
 const SAFE_PROXY_INIT_CODE_HASH = 'e298282cefe913ab5d282047161268a8222e4bd4ed106300c547894bbefd31ee';
-/** SafeModuleSetup 0.3.0: the shared Safe of a recovery enables the recovery Delay with it in its setup. */
+/** SafeModuleSetup 0.3.0: the Council Safe of a recovery enables the Recovery Delay with it in its setup. */
 const SAFE_MODULE_SETUP = '0x2dd68b007b46fbe91b9a7c3eda5a7a1063cb5b47';
 export const DEFAULT_RECOVERY_WAIT = 180n * 86400n;
 export const RECOVERY_EXPIRATION = 30n * 86400n;
@@ -28,13 +28,13 @@ const keccakText = (s: string) => Buffer.from(keccak_256(enc.encode(s))).toStrin
 const selector = (sig: string) => keccakText(sig).slice(0, 8);
 export const topicOf = (sig: string) => '0x' + keccakText(sig);
 
-/** The salt of the Chronobox app: the nth vault of a wallet uses SALT_BASE + n, the recovery Delay SALT_BASE + 1. */
+/** The salt of the Chronobox app: the nth vault of a wallet uses SALT_BASE + n, the Recovery Delay SALT_BASE + 1. */
 const SALT_BASE = BigInt('0x' + keccakText('zodiac-timebox:v1'));
 
 const create2 = (deployer: string, salt: string, initCodeHash: string) =>
   toAddr(keccakHex('ff' + strip(deployer) + salt + initCodeHash));
 
-/** The recovery Delay of a Chronobox. Anybody can make it, always at this address. It may not be made yet. */
+/** The Recovery Delay of a Chronobox. Anybody can make it, always at this address. It may not be made yet. */
 export function predictRecoveryDelay(vault: string): string {
   const v = encAddr(vault);
   const params = v + v + v + encUint(DEFAULT_RECOVERY_WAIT) + encUint(RECOVERY_EXPIRATION);
@@ -112,7 +112,7 @@ function decodeSingleAssign(data: string): { module: string; role: string; on: b
 
 /**
  * The new wallet of a recovery as the app makes it: the exact 9-call `councilSwapTx` batch of the
- * shared Safe. Every call, target, role, and address relationship is verified so a rogue guardian
+ * Council Safe. Every call, target, role, and address relationship is verified so a rogue guardian
  * cannot spoof the alerted destination wallet while executing different middle calls.
  * Null for anything else.
  */
@@ -144,7 +144,7 @@ export function recoveryWallet(
   const from = toAddr(c1.data.slice(72, 136));
   if (from === wallet) return null;
 
-  // 2 & 4: temporarily grant/revoke CANCEL_ROLE on the shared Safe to clear the main Delay line.
+  // 2 & 4: temporarily grant/revoke CANCEL_ROLE on the Council Safe to clear the main Delay line.
   if (c2.target !== roles || c2.role !== COUNCIL_ROLE || !c2.shouldRevert) return null;
   if (c4.target !== roles || c4.role !== COUNCIL_ROLE || !c4.shouldRevert) return null;
   const a2 = decodeSingleAssign(c2.data);
@@ -187,11 +187,11 @@ export type Reader = {
   modules(of: string): Promise<string[]>;
 };
 
-/** The guardian and the shared Safe, as read now. */
+/** The guardian and the Council Safe, as read now. */
 export type GuardInfo = { guardian: string; council: string; made: boolean; owners: string[]; threshold: string; modules: string[]; guard: string };
 
 /**
- * Which of the members of the cancel contract are the guardian and the shared Safe. A guardian is there when the
+ * Which of the members of the cancel contract are the guardian and the Council Safe. A guardian is there when the
  * contract has three members: the wallet, and two more, one of which is the 2 of 2 Safe of the wallet and the other.
  * Null when it is not so: then the watcher names the members as they are.
  */

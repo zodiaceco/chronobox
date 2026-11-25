@@ -80,7 +80,7 @@ const hasCode = async (session: Session, address: Address) => {
 };
 
 /**
- * The recovery Delay must be there before a step that turns the recovery on can run. Anybody can
+ * The Recovery Delay must be there before a step that turns the recovery on can run. Anybody can
  * make it, so this is a transaction of its own, never a part of the step: then nobody can make
  * the step fail by making the Delay first. False means that the outcome is not known.
  */
@@ -89,7 +89,7 @@ export async function ensureRecoveryDelay(session: Session, chain: Chain, safe: 
   return (await send(session, chain, recoveryDelayCreateTx(safe), waiting)) !== null;
 }
 
-/** The shared Safe must be there before a recovery can run. Anybody can make it. False means that the outcome is not known. */
+/** The Council Safe must be there before a recovery can run. Anybody can make it. False means that the outcome is not known. */
 async function ensureCouncil(session: Session, chain: Chain, vault: Guarded, waiting: Waiting): Promise<boolean> {
   if (await hasCode(session, vault.council)) return true;
   return (await send(session, chain, councilCreateTx(vault.safe, vault.controller, vault.guardian, true), waiting)) !== null;
@@ -346,7 +346,7 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
       {same ? <p class="field-error">That is the wait now.</p> : null}
       {incompatible ? (
         <Notice kind="bad">
-          The shared Safe for a recovery with this wallet and guardian was used before with different owners. Hand over to a new wallet first, or use another guardian.
+          The Council Safe for a recovery with this wallet and guardian was used before with different owners. Hand over to a new wallet first, or use another guardian.
         </Notice>
       ) : null}
       <div class="modal-actions">
