@@ -30,21 +30,21 @@ export const RECOVERY_WINDOW = 5;
  */
 export const TOKEN_META_GAS = 200_000;
 
-/** True when the guardian alone can start a recovery: the recovery Delay acts on the shared Safe, and somebody can use it. */
+/** True when the guardian alone can start a recovery: the Recovery Delay acts on the Council Safe, and somebody can use it. */
 export function recoveryOn(x: Settings): boolean {
   return Boolean(x.guardian && x.council && x.recovery?.made && x.recovery.modules.length > 0 && x.recovery.target === x.council);
 }
 
-/** The line of the recovery Delay can act on something: it is made, and it does not point at the vault, where it can do nothing. */
+/** The line of the Recovery Delay can act on something: it is made, and it does not point at the vault, where it can do nothing. */
 function recoveryLive(x: Settings, vault: string): boolean {
   return Boolean(x.recovery?.made && x.recovery.target !== vault);
 }
 
 /**
  * What can hand a vault with a guardian to a new wallet besides the wallet and the guardian, or tamper with
- * its recovery: a hijacked recovery owner, a guard on the recovery Delay or shared Safe, a second address on
- * the recovery Delay, zero recovery wait, a module of the shared Safe that is not the recovery Delay, or a
- * shared Safe whose owners/threshold do not require both the wallet and the guardian.
+ * its recovery: a hijacked recovery owner, a guard on the Recovery Delay or Council Safe, a second address on
+ * the Recovery Delay, zero recovery wait, a module of the Council Safe that is not the Recovery Delay, or a
+ * Council Safe whose owners/threshold do not require both the wallet and the guardian.
  */
 export function guardWarnings(x: Settings, vault: string): string[] {
   const out: string[] = [];
@@ -58,7 +58,7 @@ export function guardWarnings(x: Settings, vault: string): string[] {
     if (recoveryLive(x, vault)) {
       for (const m of x.recovery.modules) if (m !== x.guardian) out.push(`Warning: ${m} can start a recovery.`);
       if (x.council && x.recovery.target === x.council && x.recovery.avatar && x.recovery.avatar !== x.council) {
-        out.push(`Warning: the recovery does not point cleanly at the shared Safe ${x.council}.`);
+        out.push(`Warning: the recovery does not point cleanly at the Council Safe ${x.council}.`);
       }
     }
     if (recoveryOn(x) && x.recovery.cooldown === '0') {
@@ -68,7 +68,7 @@ export function guardWarnings(x: Settings, vault: string): string[] {
   if (x.guardian && x.council) {
     for (const m of x.councilModules ?? []) if (m !== x.recovery?.delay) out.push(`Warning: ${m} can hand this Chronobox to a new wallet at once.`);
     if (x.councilGuard && x.councilGuard !== ZERO_ADDRESS) {
-      out.push(`Warning: ${x.councilGuard} is attached to the shared Safe ${x.council}.`);
+      out.push(`Warning: ${x.councilGuard} is attached to the Council Safe ${x.council}.`);
     }
     if ((x.councilOwners ?? []).length) {
       const owners = x.councilOwners!;
@@ -323,7 +323,7 @@ export class Watcher {
     };
   }
 
-  /** The guardian, the shared Safe and the recovery Delay of a vault with a cancel contract. */
+  /** The guardian, the Council Safe and the Recovery Delay of a vault with a cancel contract. */
   private async guardSettings(vault: string, controllers: string[], members: string[], tag: string): Promise<Partial<Settings>> {
     const out: Partial<Settings> = { guardian: '' };
     const slotAddr = async (addr: string, slot: string) => toAddr(strip(String(await this.rpc.call('eth_getStorageAt', [addr, slot, tag]))));
@@ -585,7 +585,7 @@ export class Watcher {
     let rReasons = new Map<number, CloseReason>();
     if (!first && (closing.length || rClosing.length)) {
       const events: VaultEvent[] = [];
-      // A recovery is carried out by the recovery Delay, as a call of the shared Safe. That Safe can be the one of
+      // A recovery is carried out by the Recovery Delay, as a call of the Council Safe. That Safe can be the one of
       // the last poll or the one of now.
       const councils = rClosing.length ? [...new Set([s.settings!.council, settings.council].filter((c): c is string => Boolean(c)))] : [];
       const sources = [vault, ...councils];

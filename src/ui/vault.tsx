@@ -362,7 +362,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       // The item can leave the line while this waits: it was cancelled, or carried out from another device. Then there is nothing to wait for.
       const gone = () => !line.current.some((q) => q.nonce === item.nonce);
       try {
-        // A step that turns a recovery on needs the recovery Delay. It is made when the step is asked for. If it is still missing, it is made now.
+        // A step that turns a recovery on needs the Recovery Delay. It is made when the step is asked for. If it is still missing, it is made now.
         const step = vault && item.tx ? classify(item.tx, vault) : null;
         const needsDelay = step?.kind === "set-recovery" || (step?.kind === "add-guardian" && step.recoveryWait !== undefined);
         if (needsDelay && inspection.recoveryDelay && !inspection.recoveryDelay.deployed) {
@@ -1198,9 +1198,9 @@ function WithdrawSheet(props: {
 }
 
 const DELAY_CHOICES: { label: string; seconds: bigint }[] = [
-  { label: "12 hours", seconds: 12n * 3600n },
-  { label: "1 day", seconds: 24n * 3600n },
-  { label: "1 week", seconds: 7n * 24n * 3600n },
+  { label: "24 hours", seconds: 24n * 3600n },
+  { label: "48 hours", seconds: 48n * 3600n },
+  { label: "7 days", seconds: 7n * 24n * 3600n },
   { label: "30 days", seconds: 30n * 24n * 3600n },
 ];
 

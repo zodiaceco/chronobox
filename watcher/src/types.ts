@@ -25,7 +25,7 @@ export type Settings = {
   recovery?: RecoverySettings;
 };
 
-/** The recovery Delay of a vault, as read. */
+/** The Recovery Delay of a vault, as read. */
 export type RecoverySettings = {
   delay: string;
   made: boolean;
@@ -85,7 +85,7 @@ export type State = {
   queueNonce?: number;
   settings?: Settings;
   items: Record<string, Item>;
-  /** The line of the recovery Delay, while it can act. Missing in a state from before the watcher knew of it. */
+  /** The line of the Recovery Delay, while it can act. Missing in a state from before the watcher knew of it. */
   recoveryTxNonce?: number;
   recoveryQueueNonce?: number;
   recoveryItems?: Record<string, Item>;

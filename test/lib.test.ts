@@ -204,7 +204,7 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   const next = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const;
   const plain = { safe: SAFE, delay, roles, controller: WALLET } as const;
   const council = predictCouncil(SAFE, WALLET, guardian);
-  // The address of the shared Safe depends on the Chronobox, the wallet and the guardian, in that order.
+  // The address of the Council Safe depends on the Chronobox, the wallet and the guardian, in that order.
   assert.notEqual(council, predictCouncil(SAFE, guardian, WALLET));
   assert.notEqual(council, predictCouncil(delay, WALLET, guardian));
 
@@ -214,7 +214,7 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   assert.equal(classify({ ...adding, operation: 0 }, plain).kind, "unknown");
   for (const bad of [WALLET, SAFE, delay, roles] as `0x${string}`[]) assert.equal(addGuardianTx(plain, bad), null);
 
-  // The contract keeps its members newest first: the shared Safe, the guardian, the wallet.
+  // The contract keeps its members newest first: the Council Safe, the guardian, the wallet.
   const guarded = { ...plain, guardian, council, members: [council, guardian, WALLET] as `0x${string}`[] };
   // With a guardian, the same batch is not "add a guardian" any more.
   assert.equal(classify(adding, guarded).kind, "unknown");
@@ -222,14 +222,14 @@ test("guardian changes are recognised, and nothing close to them is", () => {
   assert.equal(classify(removeGuardianTx(guarded)!, plain).kind, "unknown");
   const alone = changeWalletTx(delay, WALLET, next, roles, SAFE, guarded)!;
   assert.deepEqual(classify(alone, guarded), { kind: "change-wallet", to: next });
-  // The hand-over of a Chronobox without a guardian leaves the shared Safe as it is, so it is not the right one here.
+  // The hand-over of a Chronobox without a guardian leaves the Council Safe as it is, so it is not the right one here.
   assert.equal(classify(changeWalletTx(delay, WALLET, next, roles, SAFE)!, guarded).kind, "unknown");
   assert.equal(changeWalletTx(delay, WALLET, guardian, roles, SAFE, guarded), null);
 
-  // Wallet and guardian together: never to the guardian, the shared Safe or the wallet itself.
+  // Wallet and guardian together: never to the guardian, the Council Safe or the wallet itself.
   for (const bad of [WALLET, guardian, council, SAFE] as `0x${string}`[]) assert.equal(councilSwapTx(guarded, [WALLET, guardian], bad, 0n), null);
   assert.ok(councilSwapTx(guarded, [WALLET, guardian], next, 0n));
-  assert.equal(councilSwapTx(guarded, [guardian], next, 0n), null, "the wallet must be an owner of the shared Safe");
+  assert.equal(councilSwapTx(guarded, [guardian], next, 0n), null, "the wallet must be an owner of the Council Safe");
 
   // Handing back to a previous wallet alone when its predicted council Safe is already the active council Safe is refused.
   const rotatedGuarded = { ...plain, controller: next, guardian, council, members: [next, council, guardian] as `0x${string}`[] };

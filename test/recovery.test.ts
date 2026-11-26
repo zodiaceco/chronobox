@@ -48,13 +48,13 @@ const delayR = predictRecoveryDelay(safe);
 const none: RecoveryParts = { delay: delayR, deployed: false, sound: true, avatar: safe, target: safe, modules: [], cooldown: DEFAULT_RECOVERY_WAIT, expiration: 30n * DAY, txNonce: 0n, queueNonce: 0n };
 /** Made, and nobody can use it. */
 const made: RecoveryParts = { ...none, deployed: true };
-/** On: it acts on the shared Safe, and the guardian can use it. */
+/** On: it acts on the Council Safe, and the guardian can use it. */
 const on: RecoveryParts = { ...made, avatar: shared, target: shared, modules: [GUARDIAN] };
 
 const off = (recoveryDelay: RecoveryParts) => ({ safe, delay, roles, controller: WALLET, guardian: GUARDIAN, council: plain, members: [plain, GUARDIAN, WALLET], recoveryDelay, recoveryOn: false, councilRecovery: false });
 const live = { safe, delay, roles, controller: WALLET, guardian: GUARDIAN, council: shared, members: [shared, GUARDIAN, WALLET], recoveryDelay: on, recoveryOn: true, councilRecovery: true };
 
-test("the recovery Delay and the shared Safe of a recovery have their own addresses", () => {
+test("the Recovery Delay and the Council Safe of a recovery have their own addresses", () => {
   assert.notEqual(delayR.toLowerCase(), delay.toLowerCase());
   assert.notEqual(delayR.toLowerCase(), predictDelay(safe, DEFAULT_RECOVERY_WAIT, 30n * DAY).toLowerCase());
   assert.notEqual(delayR.toLowerCase(), predictRecoveryDelay(predictSafe(WALLET, 1)).toLowerCase());
@@ -62,7 +62,7 @@ test("the recovery Delay and the shared Safe of a recovery have their own addres
   assert.notEqual(shared.toLowerCase(), predictCouncil(predictSafe(WALLET, 1), WALLET, GUARDIAN, true).toLowerCase());
 });
 
-test("turning the recovery on is the same step before and after the recovery Delay is made", () => {
+test("turning the recovery on is the same step before and after the Recovery Delay is made", () => {
   const first = setRecoveryTx(off(none), DEFAULT_RECOVERY_WAIT)!;
   assert.equal(first.to, CONTRACTS.multiSend);
   assert.equal(first.operation, 1);
@@ -99,7 +99,7 @@ test("with the recovery on, another wait is one call, and the same wait is nothi
   assert.equal(setRecoveryTx(live, DEFAULT_RECOVERY_WAIT), null);
 });
 
-test("a recovery is the wallet change of the shared Safe, and only with the recovery on", () => {
+test("a recovery is the wallet change of the Council Safe, and only with the recovery on", () => {
   const owners = [WALLET, GUARDIAN];
   assert.deepEqual(recoveryTx(live, owners, NEW, 4n), councilSwapTx(live, owners, NEW, 4n));
   assert.equal(recoveryTx({ ...live, recoveryOn: false }, owners, NEW, 4n), null);
@@ -113,7 +113,7 @@ test("turning it off, removing the guardian, and a wallet change are read back f
   assert.deepEqual(classify(leaving, live), { kind: "remove-guardian", guardian: GUARDIAN });
   // With a recovery, removing the guardian does more: the recovery goes too.
   assert.ok(leaving.data.length > removeGuardianTx({ ...live, recoveryOn: false })!.data.length);
-  // A wallet change keeps the recovery: the new shared Safe is one with the recovery Delay.
+  // A wallet change keeps the recovery: the new Council Safe is one with the Recovery Delay.
   const moving = changeWalletTx(delay, WALLET, NEW, roles, safe, { guardian: GUARDIAN, council: shared, members: live.members }, on)!;
   assert.deepEqual(classify(moving, live), { kind: "change-wallet", to: NEW });
   assert.ok(moving.data.toLowerCase().includes(predictCouncil(safe, NEW, GUARDIAN, true).slice(2).toLowerCase()));
@@ -132,7 +132,7 @@ test("a guardian with a recovery is one step, and it is read back with its wait"
   assert.equal(addGuardianTx(base, GUARDIAN, { parts: none, wait: DAY }), null);
 });
 
-test("councilCreateTx builds distinct setup calldata for plain vs recovery shared Safes", () => {
+test("councilCreateTx builds distinct setup calldata for plain vs recovery Council Safes", () => {
   const plainTx = councilCreateTx(safe, WALLET, GUARDIAN, false);
   const recTx = councilCreateTx(safe, WALLET, GUARDIAN, true);
   assert.notEqual(plainTx.data, recTx.data);
