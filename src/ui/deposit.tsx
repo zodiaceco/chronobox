@@ -35,7 +35,17 @@ export function QrCode(props: { text: string; label: string }) {
   );
 }
 
-export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; onBusy?: (busy: boolean) => void; quiet?: boolean }) {
+export function DepositPanel(props: {
+  session: Session;
+  chain: Chain;
+  safe: Address;
+  assets: Asset[];
+  onSent?: () => void;
+  onBusy?: (busy: boolean) => void;
+  quiet?: boolean;
+  /** Only the address and its QR code: the connected wallet is not the one of this Chronobox. */
+  addressOnly?: boolean;
+}) {
   const { session, chain, safe, assets } = props;
   const [copied, setCopied] = useState(false);
   const [assetIndex, setAssetIndex] = useState(0);
@@ -48,7 +58,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
   currentAsset.current = safeIndex;
   const asset = assets[safeIndex];
   const amount = parseUnits(amountText, asset.decimals);
-  const balances = useBalances(session.rpc, session.account, assets, round);
+  const balances = useBalances(session.rpc, props.addressOnly ? null : session.account, assets, round);
   const held = balances[safeIndex];
 
   useEffect(() => {
@@ -122,6 +132,8 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
 
   return (
     <div class="deposit">
+      {props.addressOnly ? null : (
+        <>
       <div class="deposit-wallet">
         <AssetAmount
           assets={assets}
@@ -157,7 +169,9 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
       </div>
 
       {/* From anywhere else: the address of the Chronobox, to copy or to scan. */}
-      <p class="deposit-or">Or add money from anywhere by sending it to:</p>
+        </>
+      )}
+      <p class={props.addressOnly ? "deposit-or deposit-or-only" : "deposit-or"}>{props.addressOnly ? "Add money by sending it to:" : "Or add money from anywhere by sending it to:"}</p>
       <button type="button" class="deposit-address" onClick={copy} aria-label="Copy the address">
         <code>{safe}</code>
         <span class="deposit-copy">{copied ? "Copied" : "Tap to copy"}</span>

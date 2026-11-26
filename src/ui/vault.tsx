@@ -772,7 +772,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>
-          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} onSent={refresh} onBusy={setDepositBusy} />
+          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} onSent={refresh} onBusy={setDepositBusy} addressOnly={!isController} />
         </Modal>
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}

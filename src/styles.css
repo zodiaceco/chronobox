@@ -3870,3 +3870,10 @@ img.token-badge.token-icon {
     opacity: 1;
   }
 }
+
+/* Add money from a wallet that is not the one of this Chronobox: only the address, with no line above it */
+.deposit-or-only {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
