@@ -124,7 +124,7 @@ try {
     assert.equal(state.state, "locked");
   };
 
-  step("0. The helper contract of Safe that the shared Safe uses in its setup");
+  step("0. The helper contract of Safe that the Council Safe uses in its setup");
   assert.equal(keccak((await rpc("eth_getCode", [CONTRACTS.safeModuleSetup, "latest"])) as Hex), SAFE_MODULE_SETUP_CODE_HASH);
   ok("its code is the code that this app expects");
 
@@ -145,7 +145,7 @@ try {
   assert.ok(state.recoveryDelay && !state.recoveryDelay.deployed && sameAddress(state.recoveryDelay.delay, delayR));
   const plainCouncil = state.council!;
   assert.ok(sameAddress(plainCouncil, predictCouncil(safe, WALLET, GUARDIAN)));
-  ok("locked, guardian, no recovery, the recovery Delay is not made");
+  ok("locked, guardian, no recovery, the Recovery Delay is not made");
   const viaRoles = (to: Address, data: Hex, role: Hex) => ({
     to: roles,
     data: call("execTransactionWithRole(address,uint256,bytes,uint8,bytes32,bool)", [to, 0n, data, 0, role, true]),
@@ -159,10 +159,10 @@ try {
   assert.equal(classify({ ...setting, data: `${setting.data}00` as Hex }, partsOf(state)).kind, "unknown");
   await reverts(STRANGER, queueTx(delay, setting), "a stranger turns the recovery on");
   await reverts(GUARDIAN, queueTx(delay, setting), "the guardian turns the recovery on");
-  // The recovery Delay is made first. Anybody can make it, and the result is the same.
+  // The Recovery Delay is made first. Anybody can make it, and the result is the same.
   const made = await sendAndWait(rpc, STRANGER, recoveryDelayCreateTx(safe));
-  ok(`a stranger made the recovery Delay (gas ${gas(made)})`);
-  await reverts(STRANGER, recoveryDelayCreateTx(safe), "making the recovery Delay a second time");
+  ok(`a stranger made the Recovery Delay (gas ${gas(made)})`);
+  await reverts(STRANGER, recoveryDelayCreateTx(safe), "making the Recovery Delay a second time");
   state = await inspect(rpc, safe);
   locked(state);
   assert.equal(state.recovery, null);
@@ -187,7 +187,7 @@ try {
   assert.ok(sameAddress(state.recoveryDelay!.target, council) && sameAddress(state.recoveryDelay!.avatar, council));
   assert.ok(state.checks.some((c) => c.id === "recovery-wiring" && c.ok) && state.checks.some((c) => c.id === "recovery-stop" && c.ok));
   ok(`the recovery is on, it waits ${WAIT / DAY} days, and the Chronobox still passes every check (gas ${gas(applied)})`);
-  await reverts(plainCouncil, viaRoles(delay, call("enableModule(address)", [STRANGER]), COUNCIL_ROLE), "the shared Safe of before uses its role");
+  await reverts(plainCouncil, viaRoles(delay, call("enableModule(address)", [STRANGER]), COUNCIL_ROLE), "the Council Safe of before uses its role");
 
   step("3. What the guardian can not do");
   const stealing = withdrawalTx(GUARDIAN, null, ETH);
@@ -209,13 +209,13 @@ try {
   ok("two things wait in the line of the recovery, and the app calls neither of them a recovery");
   const before = await rpc("evm_snapshot", []);
   await warp(WAIT + 60n);
-  await reverts(STRANGER, executeTx(delayR, stealing), "after the wait: a payment out of the shared Safe, which holds nothing");
+  await reverts(STRANGER, executeTx(delayR, stealing), "after the wait: a payment out of the Council Safe, which holds nothing");
   await rpc("evm_revert", [before]);
   // The second one can only be tried when the first is gone.
   await sendAndWait(rpc, WALLET, cancelTx(roles, delayR, line[0].nonce));
   const before2 = await rpc("evm_snapshot", []);
   await warp(WAIT + 60n);
-  await reverts(STRANGER, executeTx(delayR, viaCouncil), "after the wait: a withdrawal with the role of the shared Safe");
+  await reverts(STRANGER, executeTx(delayR, viaCouncil), "after the wait: a withdrawal with the role of the Council Safe");
   await rpc("evm_revert", [before2]);
   state = await inspect(rpc, safe);
   await sendAndWait(rpc, WALLET, cancelAllTx(roles, delayR, state.recovery!)!);
@@ -328,7 +328,7 @@ try {
   assert.equal(state.recovery!.wait, WAIT);
   ok("the wait changed to 180 days, with one step in the line");
 
-  step("9. The wallet changes by the normal way: the recovery stays on, for the new shared Safe");
+  step("9. The wallet changes by the normal way: the recovery stays on, for the new Council Safe");
   const moving = changeWalletTx(delay, NEW, OTHER, roles, safe, { guardian: GUARDIAN, council: state.council!, members: state.members }, state.recoveryDelay);
   assert.deepEqual(classify(moving!, partsOf(state)), { kind: "change-wallet", to: OTHER });
   await through(delay, NEW, moving!);
@@ -338,8 +338,8 @@ try {
   assert.ok(sameAddress(state.controller, OTHER) && sameAddress(state.council, council2));
   assert.ok(state.recovery && state.councilRecovery && !state.councilMade);
   assert.ok(sameAddress(state.recoveryDelay!.target, council2));
-  await reverts(council, viaRoles(delay, call("enableModule(address)", [STRANGER]), COUNCIL_ROLE), "the shared Safe of the wallet before uses its role");
-  // And a recovery works there too, from a shared Safe that the guardian makes when it starts.
+  await reverts(council, viaRoles(delay, call("enableModule(address)", [STRANGER]), COUNCIL_ROLE), "the Council Safe of the wallet before uses its role");
+  // And a recovery works there too, from a Council Safe that the guardian makes when it starts.
   const owners3 = await councilOwnersNow(rpc, partsOf(state), state.councilMade);
   const third = recoveryTx(partsOf(state), owners3, WALLET, state.queueNonce)!;
   await sendAndWait(rpc, GUARDIAN, councilCreateTx(safe, OTHER, GUARDIAN, true));
@@ -349,9 +349,9 @@ try {
   state = await inspect(rpc, safe);
   locked(state);
   assert.ok(sameAddress(state.controller, WALLET) && state.recovery);
-  ok("new shared Safe, recovery on, and a recovery through it works");
+  ok("new Council Safe, recovery on, and a recovery through it works");
 
-  step("10. Something else than the guardian on the recovery Delay is found");
+  step("10. Something else than the guardian on the Recovery Delay is found");
   const before5 = await rpc("evm_snapshot", []);
   await through(delay, WALLET, { to: delayR, value: 0n, data: call("enableModule(address)", [STRANGER]), operation: 0 });
   state = await inspect(rpc, safe);

@@ -6,7 +6,7 @@
 // chats and the email addresses that follow it, and to the webhook.
 //
 // The watcher reads logs only from contracts it chose: the factory, and the Delays of the Chronoboxes it knows (the
-// Delay for withdrawals, and the recovery Delay at its fixed address).
+// Delay for withdrawals, and the Recovery Delay at its fixed address).
 // Anybody can deploy contracts that emit any event, so logs from every contract would let anybody fill a poll.
 //
 // What it knows is in the store, under "all" (the network) and under the address of each vault. Every poll and
@@ -335,7 +335,7 @@ export class AllWatcher {
     if (from <= to) {
       const byDelay = new Map(Object.entries(s.vaults).map(([vault, k]) => [k.delay, vault]));
       // The requests of the Chronoboxes it knows, and a wallet that comes or goes without a request: wallet and
-      // guardian together, or a recovery. Only their Delays can emit these logs. The recovery Delay of a vault may
+      // guardian together, or a recovery. Only their Delays can emit these logs. The Recovery Delay of a vault may
       // not be made: then it has no logs.
       const watched = new Map(byDelay);
       for (const vault of Object.keys(s.vaults)) watched.set(predictRecoveryDelay(vault), vault);

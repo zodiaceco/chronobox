@@ -162,18 +162,18 @@ export function TechnicalPage() {
             <Tick on />A person who has your wallet gains nothing by keeping you from cancelling. Your guardian cancels.
           </li>
           <li>
-            <Tick on />A leaked key is no standoff. You and your guardian move the Chronobox to a new wallet.
+            <Tick on />A leaked key is no standoff. You and your guardian change the wallet of the Chronobox.
           </li>
         </ul>
         <p class="tech-note">
           The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. By
-          default a guardian is not a backup: a move by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding,
+          default a guardian is not a backup: a wallet change by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding,
           changing or removing a guardian or a recovery waits in the time lock, like every change.
         </p>
         <p class="tech-note">
           Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), a Safe 1.4.1
           that needs your wallet and your guardian together, and (when recovery is on) a second <Ext href={DELAY_DOCS}>Zodiac Delay</Ext>{" "}
-          owned by the Chronobox that acts on that shared Safe. The app checks all of them every time you open the Chronobox.
+          owned by the Chronobox that acts on that Council Safe. The app checks all of them every time you open the Chronobox.
         </p>
       </div>
 
@@ -187,8 +187,8 @@ export function TechnicalPage() {
           </div>
         </div>
         <p class="tech-optional-lead">
-          A way back in when your wallet is lost. Your guardian starts it and enters the new wallet. Then it waits a long time, and you can stop it at
-          once. You turn it on with the guardian, or later, on the page of your Chronobox.
+          A way back in if you lose your wallet. Your guardian starts it and chooses the new wallet. Then it waits a long time, and you can stop it at
+          once. You turn it on when you add the guardian, or later, on the page of your Chronobox.
         </p>
         <ul class="tech-rows">
           <li>
@@ -223,12 +223,12 @@ export function TechnicalPage() {
           </li>
           <li>
             <span>When it is carried out</span>
-            <span class="tech-value">The new wallet holds the Chronobox</span>
+            <span class="tech-value">The new wallet controls the Chronobox</span>
           </li>
         </ul>
         <p class="tech-note">
           The price: your guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, your guardian
-          can take the Chronobox. The long wait and the alerts protect you: an alert tells you when a recovery starts. After a recovery, every
+          can take over the Chronobox. The long wait and the alerts protect you: an alert tells you when a recovery starts. After a recovery, every
           withdrawal still waits your delay. A recovery is for a lost wallet. A person who has your wallet can stop it too.
         </p>
         <p class="tech-note">
@@ -287,13 +287,13 @@ export function TechnicalPage() {
             <strong>It cannot bring a lost wallet back on its own.</strong>
             <p>
               If you can no longer sign with your wallet and the recovery is off, the money in the Chronobox is lost. A guardian alone cannot help.
-              With the recovery on, your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself still
+              With the recovery on, your guardian can change the wallet of the Chronobox after a long wait. The recovery of your wallet itself still
               works too. Zodiac cannot recover it for you.
             </p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>
-            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone. A guardian can help you move to a new wallet.</p>
+            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone. A guardian can help you change the wallet.</p>
           </li>
         </ul>
         <p class="tech-note">
@@ -344,29 +344,29 @@ export function TechnicalPage() {
         <details class="tech-more">
           <summary>For developers</summary>
           <p>
-            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Delay</Ext> and the{" "}
+            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Vault Delay</Ext> and the{" "}
             <Ext href={ROLES_DOCS}>Roles modifier</Ext>, wires them, and replaces the owner with <span class="tech-mono">0x…dEaD</span>. A wallet that can batch
             (EIP-5792), such as a Safe or an EIP-7702 account, creates the Chronobox, switches on the time delay and makes the deposits as one atomic transaction.
           </p>
           <p>
-            A change of the delay is <code>setTxCooldown</code> on the Delay. A hand-over enables the new wallet on the Delay and the Roles
-            modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Delay, called by the Safe through
+            A change of the delay is <code>setTxCooldown</code> on the Vault Delay. A hand-over enables the new wallet on the Vault Delay and the Roles
+            modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Vault Delay, called by the Safe through
             the Roles modifier. The app proves that this is the only permission from the full event history of the Roles contract.
           </p>
           <p>
-            A guardian is one batch through the Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
+            A guardian is one batch through the Vault Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
             address of a 2 of 2 Safe of wallet and guardian. That role can call <code>enableModule</code> and <code>disableModule</code> on the
-            Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
+            Vault Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
             A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
           <p>
             The recovery is a second Delay, at an address that depends only on the Chronobox. The Safe owns it, and it is never a module of the
             Safe. Turned on, it points at the 2 of 2 Safe (<code>setAvatar</code>, <code>setTarget</code>), and the guardian is its one module.
             That 2 of 2 Safe is then made in a second form: its setup calls <code>enableModules</code> of SafeModuleSetup 0.3.0, so the
-            recovery Delay is its one module from its first moment. A recovery is the same batch as a hand-over by both. The guardian queues it
-            on the recovery Delay, and after the wait anybody calls <code>executeNextTx</code>. The role "cancel" also covers{" "}
-            <code>setTxNonce</code> on the recovery Delay: that is how the wallet and the guardian stop it. Turning it off takes the guardian off
-            the recovery Delay and points it back at the Safe, where it can do nothing.
+            Recovery Delay is its one module from its first moment. A recovery is the same batch as a hand-over by both. The guardian queues it
+            on the Recovery Delay, and after the wait anybody calls <code>executeNextTx</code>. The role "cancel" also covers{" "}
+            <code>setTxNonce</code> on the Recovery Delay: that is how the wallet and the guardian stop it. Turning it off takes the guardian off
+            the Recovery Delay and points it back at the Safe, where it can do nothing.
           </p>
           <ul class="tech-addresses">
             {(

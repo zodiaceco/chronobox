@@ -30,21 +30,21 @@ export const RECOVERY_WINDOW = 5;
  */
 export const TOKEN_META_GAS = 200_000;
 
-/** True when the guardian alone can start a recovery: the recovery Delay acts on the shared Safe, and somebody can use it. */
+/** True when the guardian alone can start a recovery: the Recovery Delay acts on the Council Safe, and somebody can use it. */
 export function recoveryOn(x: Settings): boolean {
   return Boolean(x.guardian && x.council && x.recovery?.made && x.recovery.modules.length > 0 && x.recovery.target === x.council);
 }
 
-/** The line of the recovery Delay can act on something: it is made, and it does not point at the vault, where it can do nothing. */
+/** The line of the Recovery Delay can act on something: it is made, and it does not point at the vault, where it can do nothing. */
 function recoveryLive(x: Settings, vault: string): boolean {
   return Boolean(x.recovery?.made && x.recovery.target !== vault);
 }
 
 /**
  * What can hand a vault with a guardian to a new wallet besides the wallet and the guardian, or tamper with
- * its recovery: a hijacked recovery owner, a guard on the recovery Delay or shared Safe, a second address on
- * the recovery Delay, zero recovery wait, a module of the shared Safe that is not the recovery Delay, or a
- * shared Safe whose owners/threshold do not require both the wallet and the guardian.
+ * its recovery: a hijacked recovery owner, a guard on the Recovery Delay or Council Safe, a second address on
+ * the Recovery Delay, zero recovery wait, a module of the Council Safe that is not the Recovery Delay, or a
+ * Council Safe whose owners/threshold do not require both the wallet and the guardian.
  */
 export function guardWarnings(x: Settings, vault: string): string[] {
   const out: string[] = [];
@@ -58,7 +58,7 @@ export function guardWarnings(x: Settings, vault: string): string[] {
     if (recoveryLive(x, vault)) {
       for (const m of x.recovery.modules) if (m !== x.guardian) out.push(`Warning: ${m} can start a recovery.`);
       if (x.council && x.recovery.target === x.council && x.recovery.avatar && x.recovery.avatar !== x.council) {
-        out.push(`Warning: the recovery does not point cleanly at the shared Safe ${x.council}.`);
+        out.push(`Warning: the recovery does not point cleanly at the Council Safe ${x.council}.`);
       }
     }
     if (recoveryOn(x) && x.recovery.cooldown === '0') {
@@ -68,7 +68,7 @@ export function guardWarnings(x: Settings, vault: string): string[] {
   if (x.guardian && x.council) {
     for (const m of x.councilModules ?? []) if (m !== x.recovery?.delay) out.push(`Warning: ${m} can hand this Chronobox to a new wallet at once.`);
     if (x.councilGuard && x.councilGuard !== ZERO_ADDRESS) {
-      out.push(`Warning: ${x.councilGuard} is attached to the shared Safe ${x.council}.`);
+      out.push(`Warning: ${x.councilGuard} is attached to the Council Safe ${x.council}.`);
     }
     if ((x.councilOwners ?? []).length) {
       const owners = x.councilOwners!;
@@ -323,7 +323,7 @@ export class Watcher {
     };
   }
 
-  /** The guardian, the shared Safe and the recovery Delay of a vault with a cancel contract. */
+  /** The guardian, the Council Safe and the Recovery Delay of a vault with a cancel contract. */
   private async guardSettings(vault: string, controllers: string[], members: string[], tag: string): Promise<Partial<Settings>> {
     const out: Partial<Settings> = { guardian: '' };
     const slotAddr = async (addr: string, slot: string) => toAddr(strip(String(await this.rpc.call('eth_getStorageAt', [addr, slot, tag]))));
@@ -585,7 +585,7 @@ export class Watcher {
     let rReasons = new Map<number, CloseReason>();
     if (!first && (closing.length || rClosing.length)) {
       const events: VaultEvent[] = [];
-      // A recovery is carried out by the recovery Delay, as a call of the shared Safe. That Safe can be the one of
+      // A recovery is carried out by the Recovery Delay, as a call of the Council Safe. That Safe can be the one of
       // the last poll or the one of now.
       const councils = rClosing.length ? [...new Set([s.settings!.council, settings.council].filter((c): c is string => Boolean(c)))] : [];
       const sources = [vault, ...councils];
@@ -701,11 +701,11 @@ export class Watcher {
         const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
         const [event, title, message] =
           r.how === 'executed' ? ['recovery_done', `Recovery done: ${it.summary}`,
-            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now holds this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
+            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now controls this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
               : `${what} was carried out on ${fmtWhen(r.ts)}. Open your Chronobox to see what changed.`]
           : r.how === 'cancelled' ? ['recovery_stopped', `Recovery stopped: ${it.summary}`, `${what} was stopped on ${fmtWhen(r.ts)}. The wallet of this Chronobox did not change.`]
           : r.how === 'expired' ? ['recovery_expired', `Recovery void: ${it.summary}`, `${what} was not carried out in time. It is void, and the wallet of this Chronobox did not change.`]
-          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who holds it.`];
+          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who controls it.`];
         if (r.how === 'executed' && it.wallet) recoveredTo = it.wallet;
         this.push({ event, nonce: it.nonce, priority: r.how === 'executed_or_cancelled' ? 5 : 3, at: Number(now), title, message });
         delete s.recoveryItems![it.nonce];
@@ -737,8 +737,8 @@ export class Watcher {
             event: 'recovery_started', nonce: it.nonce, priority: it.priority, at: Number(now),
             title: it.wallet ? `Recovery started: ${it.summary}` : 'Recovery line: a step that the app does not make',
             message: (it.wallet
-              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. It hands this Chronobox to the wallet ${it.wallet}. After that, ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
-              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who holds this Chronobox. No money can move through it.`) +
+              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. When it is carried out, the wallet ${it.wallet} controls this Chronobox, and ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
+              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who controls this Chronobox. No money can move through it.`) +
               `\n\n${wait}\n\nIf you did not ask for this, open your Chronobox and stop it.`,
           });
         }
@@ -848,7 +848,7 @@ export class Watcher {
           event: 'recovery_soon', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `Recovery wait ends soon: ${it.summary}`,
           message: `The wait of ${lowerFirst(what)} ends on ${fmtWhen(st.readyAt)}. That is in ${fmtDuration(st.readyAt - now)}. ` +
-            `Then anybody can carry it out at once${it.wallet ? ', and that wallet holds this Chronobox' : ''}.` +
+            `Then anybody can carry it out at once${it.wallet ? ', and that wallet controls this Chronobox' : ''}.` +
             '\n\nIf you did not ask for this, open your Chronobox and stop it before then.',
         });
       }
@@ -952,7 +952,7 @@ export class Watcher {
       const wait = (x: Settings) => BigInt(x.recovery?.cooldown ?? '0');
       const pOn = recoveryOn(prev), nOn = recoveryOn(next);
       if (!pOn && nOn) {
-        changes.push(`The recovery is on. The guardian can start a recovery to a new wallet that the guardian chooses. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
+        changes.push(`The recovery is on. The guardian can start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
       } else if (pOn && !nOn) {
         changes.push(`The recovery is off. The guardian cannot start a recovery any more.${opts.recoveryWaited ? ' A recovery that waited can never be carried out now.' : ''}`);
       } else if (pOn && nOn && wait(prev) !== wait(next)) {

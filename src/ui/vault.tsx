@@ -367,11 +367,11 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     : recoveryWaitingCount > 0n
       ? "A recovery waits"
       : recoveryWaiting?.kind === "set" && !recovery
-        ? "Recovery goes on soon"
+        ? "Recovery turns on soon"
         : recoveryWaiting?.kind === "remove"
-          ? "Recovery goes off soon"
+          ? "Recovery turns off soon"
           : recovery
-            ? `Can recover after ${formatDuration(recovery.wait)}`
+            ? `Recovery on, waits ${formatDuration(recovery.wait)}`
             : null;
   // A guardian that is in the line and has not started yet.
   const adding = queued.find((a): a is Extract<Action, { kind: "add-guardian" }> => a?.kind === "add-guardian") ?? null;
@@ -388,7 +388,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       // The item can leave the line while this waits: it was cancelled, or carried out from another device. Then there is nothing to wait for.
       const gone = () => !line.current.some((q) => q.nonce === item.nonce);
       try {
-        // A step that turns a recovery on needs the recovery Delay. It is made when the step is asked for. If it is still missing, it is made now.
+        // A step that turns a recovery on needs the Recovery Delay. It is made when the step is asked for. If it is still missing, it is made now.
         const step = vault && item.tx ? classify(item.tx, vault) : null;
         const needsDelay = step?.kind === "set-recovery" || (step?.kind === "add-guardian" && step.recoveryWait !== undefined);
         if (needsDelay && inspection.recoveryDelay && !inspection.recoveryDelay.deployed) {
@@ -514,8 +514,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
       {props.swap && vault && !isGuardian && inspection.guardian && !sameAddress(props.swap.to, inspection.controller) ? (
         <Notice kind="info" title="This link is for the guardian.">
-          It asks the guardian <AddressText address={inspection.guardian} /> to agree to moving this Chronobox to{" "}
-          <AddressText address={props.swap.to} />. Connect that wallet to answer it.
+          It asks the guardian <AddressText address={inspection.guardian} /> to agree to <AddressText address={props.swap.to} /> as the new wallet of this
+          Chronobox. Connect the guardian's wallet to answer it.
         </Notice>
       ) : null}
       {error ? (
@@ -590,13 +590,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {viewOnly ? (
             <p class="hint">
-              The key of this Chronobox is the wallet <AddressText address={inspection.controller!} />. Your wallet can look and add money. It cannot withdraw.
+              The wallet <AddressText address={inspection.controller!} /> controls this Chronobox. Your wallet can look and add money. It cannot withdraw.
             </p>
           ) : null}
           {isGuardian ? (
             <p class="hint">
               When a withdrawal waits here, call the owner. If you cannot reach them, or they did not ask for it, stop it. You cannot withdraw.
-              {recovery ? ' If the owner has lost the wallet, start a recovery under "Guardian".' : ""}
+              {recovery && recoveryWaitingCount === 0n ? ' If the owner has lost their wallet, start a recovery under "Guardian".' : ""}
             </p>
           ) : null}
         </div>
@@ -1060,13 +1060,13 @@ function describe(
     case "change-delay":
       return { title: `Change the delay to ${formatDuration(action.cooldown)}`, warning: null, finish: "Apply now" };
     case "change-wallet":
-      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} holds this Chronobox.`, finish: "Apply now" };
+      return { title: `Hand over to ${shortAddress(action.to)}`, warning: `After this, only the wallet ${action.to} controls this Chronobox.`, finish: "Apply now" };
     case "add-guardian":
       return action.recoveryWait === undefined
         ? { title: `Add the guardian ${shortAddress(action.guardian)}`, warning: `After this, the wallet ${action.guardian} can stop every withdrawal.`, finish: "Apply now" }
         : {
-            title: `Add the guardian ${shortAddress(action.guardian)}, with a recovery`,
-            warning: `After this, the wallet ${action.guardian} can stop every withdrawal. It can also start a recovery: after ${formatDuration(action.recoveryWait)}, a wallet that the guardian chooses holds this Chronobox, unless the owner stops it.`,
+            title: `Add the guardian ${shortAddress(action.guardian)}, with recovery`,
+            warning: `After this, the wallet ${action.guardian} can stop every withdrawal. It can also start a recovery. Unless the owner stops a recovery within ${formatDuration(action.recoveryWait)}, a wallet that the guardian chose controls this Chronobox.`,
             finish: "Apply now",
           };
     case "remove-guardian":
@@ -1085,12 +1085,12 @@ function describe(
             finish: "Apply now",
           }
         : {
-            title: `Let the guardian recover after ${formatDuration(action.wait)}`,
-            warning: `After this, the guardian can start a recovery. A recovery waits ${formatDuration(action.wait)}. Then a wallet that the guardian chooses holds this Chronobox, unless the owner stops it.`,
+            title: `Turn on the recovery, with a wait of ${formatDuration(action.wait)}`,
+            warning: `After this, the guardian can start a recovery. Unless the owner stops a recovery within ${formatDuration(action.wait)}, a wallet that the guardian chose controls this Chronobox.`,
             finish: "Apply now",
           };
     case "remove-recovery":
-      return { title: "Turn the recovery off", warning: "After this, nobody can bring this Chronobox back when its wallet is lost.", finish: "Apply now" };
+      return { title: "Turn off the recovery", warning: "After this, if the wallet of this Chronobox is lost, the money in it is lost.", finish: "Apply now" };
     case "transfer-elsewhere":
       return {
         title: `Send ${amountOf(action.token, action.amount)} to ${shortAddress(action.to)}`,
@@ -1483,9 +1483,9 @@ function WithdrawSheet(props: {
 }
 
 const DELAY_CHOICES: { label: string; seconds: bigint }[] = [
-  { label: "12 hours", seconds: 12n * 3600n },
-  { label: "1 day", seconds: 24n * 3600n },
-  { label: "1 week", seconds: 7n * 24n * 3600n },
+  { label: "24 hours", seconds: 24n * 3600n },
+  { label: "48 hours", seconds: 48n * 3600n },
+  { label: "7 days", seconds: 7n * 24n * 3600n },
   { label: "30 days", seconds: 30n * 24n * 3600n },
 ];
 

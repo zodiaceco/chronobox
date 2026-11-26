@@ -47,9 +47,10 @@ import { Mark } from "./logo.tsx";
 
 // Plain lengths, without a word on which is better: the owner knows what is right for them.
 const PRESETS: { label: string; seconds: bigint }[] = [
-  { label: "12 hours", seconds: 12n * 3600n },
-  { label: "1 day", seconds: 24n * 3600n },
-  { label: "1 week", seconds: 7n * 24n * 3600n },
+  { label: "24 hours", seconds: 24n * 3600n },
+  { label: "48 hours", seconds: 48n * 3600n },
+  { label: "7 days", seconds: 7n * 24n * 3600n },
+  { label: "30 days", seconds: 30n * 24n * 3600n },
 ];
 
 /**

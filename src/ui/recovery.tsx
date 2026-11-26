@@ -80,7 +80,7 @@ const hasCode = async (session: Session, address: Address) => {
 };
 
 /**
- * The recovery Delay must be there before a step that turns the recovery on can run. Anybody can
+ * The Recovery Delay must be there before a step that turns the recovery on can run. Anybody can
  * make it, so this is a transaction of its own, never a part of the step: then nobody can make
  * the step fail by making the Delay first. False means that the outcome is not known.
  */
@@ -89,7 +89,7 @@ export async function ensureRecoveryDelay(session: Session, chain: Chain, safe: 
   return (await send(session, chain, recoveryDelayCreateTx(safe), waiting)) !== null;
 }
 
-/** The shared Safe must be there before a recovery can run. Anybody can make it. False means that the outcome is not known. */
+/** The Council Safe must be there before a recovery can run. Anybody can make it. False means that the outcome is not known. */
 async function ensureCouncil(session: Session, chain: Chain, vault: Guarded, waiting: Waiting): Promise<boolean> {
   if (await hasCode(session, vault.council)) return true;
   return (await send(session, chain, councilCreateTx(vault.safe, vault.controller, vault.guardian, true), waiting)) !== null;
@@ -173,10 +173,10 @@ export function WaitPicker(props: {
  * watches. The same words when the guardian is added, and when the recovery is turned on later.
  */
 export function recoveryPromise(wait: bigint | null): { title: string; text: string } {
-  const time = wait === null ? "the wait" : formatDuration(wait);
+  const time = wait === null ? null : formatDuration(wait);
   return {
     title: "My guardian can take over this Chronobox.",
-    text: `If I do not stop a recovery within ${time}, the wallet that my guardian chose holds it. So I turn the alerts on, or I look at my Chronobox more often than that.`,
+    text: `If I do not stop a recovery ${time ? `within ${time}` : "in time"}, the wallet that my guardian chose can take control of this Chronobox. So I turn on the alerts, or I check my Chronobox often.`,
   };
 }
 
@@ -202,7 +202,7 @@ export function RecoverySheet(props: {
 
   if (props.waiting?.kind === "set") {
     return (
-      <Modal title={recovery ? "The wait of a recovery changes soon" : "The recovery goes on soon"} lead={`The wait has started. When it ends, apply it under "Waiting".`} onClose={props.onClose}>
+      <Modal title={recovery ? "The recovery wait changes soon" : "The recovery turns on soon"} lead={`The wait has started. When it ends, apply it under "Waiting".`} onClose={props.onClose}>
         <p>After that, a recovery waits {formatDuration(props.waiting.wait)}.</p>
         <Done onClose={props.onClose} />
       </Modal>
@@ -210,8 +210,8 @@ export function RecoverySheet(props: {
   }
   if (props.waiting?.kind === "remove") {
     return (
-      <Modal title="The recovery goes off soon" lead={`The wait has started. When it ends, apply it under "Waiting".`} onClose={props.onClose}>
-        <p>Until then your guardian can still start a recovery.</p>
+      <Modal title="The recovery turns off soon" lead={`The wait has started. When it ends, apply it under "Waiting".`} onClose={props.onClose}>
+        <p>Until then, your guardian can still start a recovery.</p>
         <Done onClose={props.onClose} />
       </Modal>
     );
@@ -263,7 +263,7 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
     return (
       <Modal
         title="The wait has started."
-        lead={current ? `In ${props.delay} you can apply the new wait.` : `In ${props.delay} you can switch the recovery on. Tell your guardian what a recovery is for.`}
+        lead={current ? `In ${props.delay} you can apply the new recovery wait under "Waiting".` : `In ${props.delay} you can apply it under "Waiting". Tell your guardian that a recovery is only for a lost wallet.`}
         onClose={props.onClose}
       >
         <Done onClose={props.onClose} />
@@ -272,14 +272,14 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
   }
   if (stage === "intro") {
     return (
-      <Modal title="Let your guardian recover" lead="A way back in when your wallet is lost." onClose={props.onClose}>
+      <Modal title="Turn on the recovery" lead="A way back in if you lose your wallet." onClose={props.onClose}>
         <ul class="plain-list">
           <li>If you lose your wallet, your guardian starts a recovery and enters the address of your new wallet.</li>
-          <li>It waits a long time. In that time you can stop it at once.</li>
-          <li>After the wait, the new wallet is the key of this Chronobox. No money moves.</li>
+          <li>The recovery waits a long time. While it waits, you can stop it at once.</li>
+          <li>After the wait, anybody can carry it out. Then the new wallet controls this Chronobox. No money moves.</li>
         </ul>
         <Notice kind="risk" title="Your guardian chooses the new wallet.">
-          If you do not stop a recovery in time, your guardian can take this Chronobox. A good guardian for this is a second device of your own, or the person who gets your money when you are gone.
+          If you do not stop a recovery in time, your guardian can take over this Chronobox. A good guardian for this is a second device of your own, or the person who gets your money when you are gone.
         </Notice>
         <div class="modal-actions">
           <Button kind="primary" onClick={() => setStage("form")}>
@@ -295,7 +295,7 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
   if (stage === "review") {
     const promise = recoveryPromise(wait);
     return (
-      <Modal title="Check it" lead={`Check the address of your guardian letter by letter. Until it starts, you and your guardian can stop it.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+      <Modal title="Check it" lead={`Check your guardian's address letter by letter. Until this change starts, you can cancel it under "Waiting". Your guardian can stop it too.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
         <dl class="wiz-summary">
           <div>
             <dt>Guardian</dt>
@@ -304,8 +304,8 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
             </dd>
           </div>
           <div>
-            <dt>{current ? "A recovery will wait" : "If you lose your wallet"}</dt>
-            <dd>{current ? formatDuration(wait!) : `Your guardian can bring it back after ${formatDuration(wait!)}`}</dd>
+            <dt>{current ? "New recovery wait" : "Recovery"}</dt>
+            <dd>{current ? formatDuration(wait!) : `On. A recovery waits ${formatDuration(wait!)}`}</dd>
           </div>
           <div>
             <dt>Starts</dt>
@@ -315,7 +315,7 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
         <div class="wiz-list">
           <Choice role="checkbox" on={promised} title={promise.title} text={promise.text} disabled={!!action.busy} onClick={() => setPromised(!promised)} />
         </div>
-        {makesDelay ? <p class="hint">Your wallet asks two times. The first makes the line that a recovery waits in.</p> : null}
+        {makesDelay ? <p class="hint">Your wallet asks you to confirm twice. The first confirmation sets up the recovery.</p> : null}
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
@@ -339,14 +339,14 @@ function SetSheet(props: { session: Session; chain: Chain; vault: Guarded; inspe
   return (
     <Modal
       title="How long a recovery waits"
-      lead={`Long enough that you notice it, also when you are away or ill. The change starts after ${props.delay}, like every change here.`}
+      lead={`The time you have to notice a recovery and stop it. This change starts after ${props.delay}, like every change.`}
       onClose={props.onClose}
     >
       <WaitPicker picked={picked} onPick={setPicked} customDays={customDays} onCustomDays={setCustomDays} cooldown={inspection.cooldown} disabled={false} />
-      {same ? <p class="field-error">That is the wait now.</p> : null}
+      {same ? <p class="field-error">A recovery waits this long now.</p> : null}
       {incompatible ? (
         <Notice kind="bad">
-          The shared Safe for a recovery with this wallet and guardian was used before with different owners. Hand over to a new wallet first, or use another guardian.
+          The Council Safe for a recovery with this wallet and guardian was used before with different owners. Hand over to a new wallet first, or use another guardian.
         </Notice>
       ) : null}
       <div class="modal-actions">
@@ -386,16 +386,16 @@ function ManageSheet(props: {
   if (stage === "change") return <SetSheet {...props} current={recovery} onBack={() => setStage("show")} />;
   if (stage === "done") {
     return (
-      <Modal title="The wait has started." lead={`In ${delay} you can apply it. Until then your guardian can still start a recovery, and can stop this.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${delay} you can apply it under "Waiting". Until then, your guardian can still start a recovery, and can stop this change.`} onClose={props.onClose}>
         <Done onClose={props.onClose} />
       </Modal>
     );
   }
   if (stage === "remove") {
     return (
-      <Modal title="Turn the recovery off?" lead={`This waits ${delay}, and your guardian can stop it in that time.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
-        <p>After it, nobody can bring this Chronobox back when you lose your wallet. Your guardian stays, and can still stop a withdrawal.</p>
-        {props.started ? <p class="hint">A recovery waits now. Stop it at the top of this page: that works at once.</p> : null}
+      <Modal title="Turn off the recovery?" lead={`This waits ${delay}, and your guardian can stop it in that time.`} busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+        <p>After that, if you lose your wallet, the money in this Chronobox is lost. Your guardian stays and can still stop a withdrawal.</p>
+        {props.started ? <p class="hint">A recovery waits now. To stop it at once, use the card at the top of this page.</p> : null}
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
@@ -417,13 +417,13 @@ function ManageSheet(props: {
     );
   }
   return (
-    <Modal title="Recovery" lead={`Your guardian can bring this Chronobox back. A recovery waits ${formatDuration(recovery.wait)}.`} onClose={props.onClose}>
+    <Modal title="Recovery" lead={`If you lose your wallet, your guardian can change the wallet of this Chronobox. A recovery waits ${formatDuration(recovery.wait)}.`} onClose={props.onClose}>
       <ul class="plain-list">
-        <li>Your guardian starts it, and chooses the new wallet.</li>
-        <li>You can stop it at once while it waits. So can your guardian.</li>
-        <li>After the wait, the new wallet is the key of this Chronobox. No money moves.</li>
+        <li>Your guardian starts it and chooses the new wallet.</li>
+        <li>While it waits, you can stop it at once. So can your guardian.</li>
+        <li>After the wait, anybody can carry it out. Then the new wallet controls this Chronobox. No money moves.</li>
       </ul>
-      {props.started ? <p class="hint">A recovery waits now. Its state is at the top of this page.</p> : null}
+      {props.started ? <p class="hint">A recovery waits now. See the card at the top of this page.</p> : null}
       <div class="modal-actions">
         <Button kind="primary" onClick={props.onClose}>
           Done
@@ -478,9 +478,9 @@ export function StartRecoverySheet(props: { session: Session; chain: Chain; vaul
       : !wallet
         ? "This is not a wallet address."
         : sameAddress(wallet, vault.controller)
-          ? "This is the wallet that the Chronobox has now. Enter the new one."
+          ? "This wallet controls the Chronobox now. Enter the new one."
           : sameAddress(wallet, vault.guardian)
-            ? "This is your own wallet, the guardian. The new wallet must be another one."
+            ? "This is your own wallet. The guardian cannot be the new wallet."
             : sameAddress(wallet, vault.safe)
               ? "This is the address of the Chronobox itself. Enter the address of the new wallet."
               : !possible
@@ -492,7 +492,7 @@ export function StartRecoverySheet(props: { session: Session; chain: Chain; vaul
       // The recovery takes out what waits in the line of the Chronobox now: the lost wallet may have asked for a withdrawal.
       const [{ queueNonce }, owners] = await Promise.all([delayNonces(session.rpc, vault.delay), councilOwnersNow(session.rpc, vault, councilMade)]);
       const step = recoveryTx(vault, owners, wallet, queueNonce);
-      if (!step) throw new Error("This wallet cannot take the Chronobox. Enter another one.");
+      if (!step) throw new Error("This wallet cannot control the Chronobox. Enter another one.");
       if (!(await ensureCouncil(session, chain, vault, waiting))) return setStage("unknown");
       setCouncilMade(true);
       const receipt = await send(session, chain, queueTx(recovery.delay, step), waiting);
@@ -513,18 +513,18 @@ export function StartRecoverySheet(props: { session: Session; chain: Chain; vaul
   }
   if (stage === "done") {
     return (
-      <Modal title="The recovery waits." lead={`In ${wait} anybody can carry it out, from this page. Until then the owner can stop it, and so can you.`} onClose={props.onClose}>
-        <p class="hint">Tell the person who holds the new wallet. After the recovery, that wallet is the key of this Chronobox.</p>
+      <Modal title="The recovery has started." lead={`It waits ${wait}. Then anybody can carry it out from this page. Until then, the owner can stop it, and so can you.`} onClose={props.onClose}>
+        <p class="hint">Tell the person who has the new wallet. After the recovery, that wallet controls this Chronobox.</p>
         <Done onClose={props.onClose} />
       </Modal>
     );
   }
   return (
-    <Modal title="Start a recovery?" lead="Only when the owner has lost the wallet of this Chronobox." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
+    <Modal title="Start a recovery?" lead="Only if the owner has lost the wallet of this Chronobox." busy={action.busy !== null && !action.slow} onClose={props.onClose}>
       <ul class="plain-list">
         <li>Talk to the owner first. If they still have their wallet, they do not need this.</li>
-        <li>Enter the address of the owner's new wallet on {chain.name}. After the recovery, that wallet is the key of this Chronobox.</li>
-        <li>It waits {wait}. The owner can stop it in that time, and so can you. No money moves.</li>
+        <li>Enter the address of the owner's new wallet on {chain.name}. After the recovery, that wallet controls this Chronobox.</li>
+        <li>The recovery waits {wait}. Until then, the owner can stop it, and so can you. No money moves.</li>
       </ul>
       <input
         class="input"
@@ -545,14 +545,14 @@ export function StartRecoverySheet(props: { session: Session; chain: Chain; vaul
         <Choice
           role="checkbox"
           on={sure}
-          title="This is the wallet of the owner, or of the person who takes over for the owner."
+          title="This is the owner's new wallet, or the wallet of the person who acts for them."
           text="I checked the address with them, letter by letter."
           disabled={!!action.busy}
           onClick={() => setSure(!sure)}
         />
       </div>
       <p class="hint">
-        Your wallet needs a little {chain.native.symbol} for the fee.{councilMade ? "" : " It asks two times. The first makes the Safe that you share with the owner."}
+        Your wallet needs a little {chain.native.symbol} for the fee.{councilMade ? "" : " It asks you to confirm twice. The first confirmation sets up the Safe that you share with the owner."}
       </p>
       <SlowNote action={action} />
       {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -587,7 +587,7 @@ function saveRecoveryReminders(nonce: bigint, status: ItemStatus, now: bigint) {
       uid: `${base}-ready@chronobox`,
       at: Number(status.readyAt),
       title: "Chronobox: a recovery is ready",
-      description: "The recovery wait has ended. Open the Chronobox to carry it out.",
+      description: "The recovery wait has ended, and anybody can carry the recovery out. Open the Chronobox to carry it out or to stop it.",
     },
   ];
   if (status.expiresAt !== null) {
@@ -596,7 +596,7 @@ function saveRecoveryReminders(nonce: bigint, status: ItemStatus, now: bigint) {
       uid: `${base}-expires@chronobox`,
       at: Number(status.expiresAt - before),
       title: "Chronobox: a recovery expires soon",
-      description: `It expires on ${formatDate(status.expiresAt)}. After that a new recovery must start and wait again.`,
+      description: `It expires on ${formatDate(status.expiresAt)}. After that, a new recovery must start and wait the full time again.`,
     });
   }
   download("chronobox-recovery-reminder.ics", calendarFile(reminders, Number(now)));
@@ -644,7 +644,7 @@ export function RecoverySection(props: {
   return (
     <div class="recovery-list">
       {items.length === 0 ? (
-        <Notice kind={role === "owner" ? "risk" : "info"} title={waitingCount === 1n ? "A recovery waits." : `${waitingCount} items wait in the line of the recovery.`}>
+        <Notice kind={role === "owner" ? "risk" : "info"} title={waitingCount === 1n ? "A recovery waits." : `${waitingCount} items wait in the recovery line.`}>
           {readState === "failed"
             ? `Its details could not be read from your wallet's network now.${canStop ? " You can still stop it at once." : ""}`
             : "Reading what waits…"}
@@ -684,7 +684,7 @@ export function RecoverySection(props: {
             />
           ))}
           {unshown > 0n ? (
-            <Notice kind="risk" title={unshown === 1n ? "1 more item waits in the line of the recovery." : `${unshown} more items wait in the line of the recovery.`}>
+            <Notice kind="risk" title={unshown === 1n ? "1 more item waits in the recovery line." : `${unshown} more items wait in the recovery line.`}>
               Only the first {items.length} are shown.{canStop ? " You can stop everything in the recovery line at once." : ""}
               {canStop ? (
                 <div class="notice-actions">
@@ -801,7 +801,7 @@ export function RecoveryCard(props: {
   const modals = (
     <>
       {confirm === "stop" ? (
-        <Modal title="Stop the recovery?" lead="Stopping removes the recovery from the line. The elapsed wait is lost, and a new recovery would wait the full time again." onClose={() => setConfirm(null)}>
+        <Modal title="Stop the recovery?" lead="This ends the recovery. The time that it has waited is lost: a new recovery waits the full time again." onClose={() => setConfirm(null)}>
           <div class="modal-actions">
             <Button kind="primary" onClick={doStop}>
               Stop the recovery
@@ -813,7 +813,7 @@ export function RecoveryCard(props: {
         </Modal>
       ) : null}
       {confirm === "finish" ? (
-        <Modal title="Carry out this recovery?" lead="This hands your Chronobox to the new wallet at once. Your current wallet can then do nothing here." onClose={() => setConfirm(null)}>
+        <Modal title="Carry out this recovery?" lead="This gives the new wallet control of your Chronobox at once. Your current wallet can then do nothing here." onClose={() => setConfirm(null)}>
           {item.wallet ? (
             <p class="big-line">
               <AddressText address={item.wallet} full />
@@ -832,14 +832,14 @@ export function RecoveryCard(props: {
       {leftover !== null ? (
         <Modal
           title="Not finished: cancel what waits."
-          lead="The new wallet holds this Chronobox now. Items that were queued after the recovery started still wait in the main line."
+          lead="The new wallet controls this Chronobox now. But items that were queued after the recovery started still wait."
           onClose={() => {
             setLeftover(null);
             props.onChanged();
           }}
         >
           <Notice kind="bad" title={leftover === 1n ? "One item still waits in the line." : `${leftover} items still wait in the line.`}>
-            Unless the new wallet queued them, they come from the old wallet and will run after the wait. Cancel them from the main page with the new wallet or the guardian.
+            Unless the new wallet queued them, they come from the old wallet, and they run after the wait. Cancel them under "Waiting", with the new wallet or as the guardian.
           </Notice>
           <div class="modal-actions">
             <Button
@@ -860,8 +860,8 @@ export function RecoveryCard(props: {
   if (status.phase === "expired") {
     return (
       <>
-        <Notice kind={moreAfter && role === "owner" ? "risk" : "info"} title="A recovery ran out.">
-          Nobody carried it out in time. It does nothing now.
+        <Notice kind={moreAfter && role === "owner" ? "risk" : "info"} title="A recovery expired.">
+          Nobody carried it out in time. It can do nothing now.
           {moreAfter ? " More items wait behind it in the recovery line." : " The guardian can start a new one after this one is cleared."}
           {first || (moreAfter && canStop) ? (
             <div class="notice-actions">
@@ -888,7 +888,7 @@ export function RecoveryCard(props: {
   if (!item.wallet || !item.tx) {
     return (
       <>
-        <Notice kind="risk" title="Something waits in the line of the recovery.">
+        <Notice kind="risk" title="Something waits in the recovery line.">
           This app cannot tell what it does. It can run from {formatDate(status.readyAt)}. {canStop ? "Stop it, unless you know what it is." : "The owner and the guardian can stop it."}
           {canStop ? (
             <div class="notice-actions">
@@ -912,21 +912,20 @@ export function RecoveryCard(props: {
   const until = ready
     ? first
       ? `Anybody can carry it out now${status.expiresAt ? `, until ${formatDate(status.expiresAt)}` : ""}.`
-      : `Ready now, waiting behind an earlier item${status.expiresAt ? ` (until ${formatDate(status.expiresAt)})` : ""}.`
-    : `Ready in ${formatDuration(status.readyAt - props.now)}, on ${formatDate(status.readyAt)}.`;
+      : `It is ready, but an earlier item in the recovery line must go first${status.expiresAt ? `. It expires on ${formatDate(status.expiresAt)}` : ""}.`
+    : `It is ready in ${formatDuration(status.readyAt - props.now)}, on ${formatDate(status.readyAt)}.`;
   const showActions = (ready && first) || canStop || waiting;
 
   return (
     <>
       <Notice kind={role === "owner" ? "risk" : "info"} title={title}>
         <span>
-          {until} Then {walletNode}
-          {role === "owner" ? ", which your guardian chose," : ""} is the key of this Chronobox.{" "}
+          {until} When it is carried out, {walletNode} controls this Chronobox.{" "}
           {role === "owner"
-            ? "If you still have your wallet, stop it."
+            ? "Your guardian chose that wallet. If you did not ask for this recovery, stop it."
             : role === "guardian"
-              ? "The owner can stop it until then, and so can you."
-              : "The owner and the guardian can stop it until then."}
+              ? "Until then, the owner can stop it, and so can you."
+              : "Until then, the owner and the guardian can stop it."}
         </span>
         {showActions ? (
           <div class="notice-actions">

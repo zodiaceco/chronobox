@@ -170,7 +170,7 @@ export function HowItWorks() {
             side: (
               <>
                 <ul class="hiw-chips">
-                  {["12 hours", "1 day", "1 week"].map((time) => (
+                  {["24 hours", "48 hours", "7 days", "30 days"].map((time) => (
                     <li key={time}>{time}</li>
                   ))}
                   <li class="hiw-chip-quiet">or your own, from 1 hour to 90 days</li>
@@ -218,13 +218,13 @@ export function HowItWorks() {
           art={<GuardianArt class="hiw-art" />}
           more={{
             lead: "A second pair of eyes. And a way back in.",
-            text: "Optional, and added later. Your second device, or a person you trust. For the way back in, your guardian chooses the new wallet, so it waits months. You can stop it at once.",
+            text: "Optional, and added later. Your second device, or a person you trust. If you lose your wallet, your guardian can choose a new one. That waits months, and you can stop it.",
             side: (
               <dl class="hiw-lanes">
                 <dt>At once</dt>
                 <dd>Stop a withdrawal. Change the wallet with you.</dd>
                 <dt class="hiw-lane-slow">After months</dt>
-                <dd>Bring your Chronobox to a new wallet, if you lose yours.</dd>
+                <dd>Change the wallet alone, if you lose yours.</dd>
                 <dt>Never</dt>
                 <dd>Withdraw.</dd>
               </dl>
