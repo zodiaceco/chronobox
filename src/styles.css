@@ -3723,3 +3723,59 @@ img.token-badge.token-icon {
   font-size: 0.9rem;
   text-align: center;
 }
+
+/* What is in a Chronobox: a table, the asset on the left, the amount on the right */
+.box-table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.box-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 16px;
+}
+
+.box-row + .box-row {
+  border-top: 1px solid var(--line);
+}
+
+.box-header {
+  min-height: 38px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.box-header > :last-child,
+.box-amount {
+  text-align: right;
+}
+
+.box-asset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.box-asset > span {
+  display: grid;
+  min-width: 0;
+}
+
+.box-amount {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

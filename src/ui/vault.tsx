@@ -49,7 +49,7 @@ import {
 } from "../lib/chronobox.ts";
 import { assertWallet, canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, TokenBadge, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { CancelBar } from "./cancel-bar.tsx";
 import { LookupSheet, useFoundTokens } from "./third-party.tsx";
@@ -547,23 +547,31 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </p>
           ) : null}
           <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
-          <ul class="balances">
+          {/* What is in the Chronobox, as a table: the asset on the left, the amount on the right, in one column. */}
+          <div class="box-table" role="table" aria-label={`In this Chronobox on ${chain.name}`}>
+            <div class="box-row box-header" role="row">
+              <span role="columnheader">Asset</span>
+              <span role="columnheader">In the Chronobox</span>
+            </div>
             {shown.map((h) => (
-              <li key={h.asset.token ?? "native"}>
-                <span class="balance-amount" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
+              <div class="box-row" role="row" key={h.asset.token ?? "native"}>
+                <span class="box-asset" role="cell">
+                  <TokenBadge asset={h.asset} />
+                  <span>
+                    {h.asset.symbol}
+                    {h.asset.found && h.asset.token ? (
+                      <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
+                        {shortAddress(h.asset.token)}
+                      </small>
+                    ) : null}
+                  </span>
+                </span>
+                <span class="box-amount" role="cell" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
                   {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
                 </span>
-                <span class="balance-symbol">
-                  {h.asset.symbol}
-                  {h.asset.found && h.asset.token ? (
-                    <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
-                      {shortAddress(h.asset.token)}
-                    </small>
-                  ) : null}
-                </span>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
           {isController && chain.indexer && !lookupAllowed() ? (
             <button type="button" class="link-button" onClick={() => setSheet("lookup")}>
               A token is missing? Find all tokens in this Chronobox
