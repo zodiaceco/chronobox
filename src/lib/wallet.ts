@@ -317,7 +317,7 @@ export async function waitForBatch(
     const receipt = status?.receipts?.[status.receipts.length - 1];
     if (partly) throw new BatchUnknown();
     if (failed || (done && receipt?.status !== undefined && BigInt(receipt.status) !== 1n)) {
-      throw new Error("The transaction failed on chain. Nothing was created and nothing was deposited.");
+      throw new Error("The transaction failed on chain. Nothing was changed.");
     }
     if (done) return { blockNumber: receipt?.blockNumber ? BigInt(receipt.blockNumber) : null };
     if (shouldStop?.()) throw new BatchUnknown();

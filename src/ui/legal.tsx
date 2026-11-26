@@ -8,7 +8,7 @@ import { DELAY_DOCS, ROLES_DOCS } from "../lib/chains.ts";
  * commit.
  */
 
-const UPDATED = "23 November 2026";
+const UPDATED = "25 November 2026";
 
 function Ext(props: { href: string; children: ComponentChildren }) {
   return (
@@ -58,8 +58,8 @@ export function PrivacyPage() {
       <header class="tech-head">
         <h1>Privacy</h1>
         <p class="lead">
-          The Chronobox app has no account, no server and no analytics. Your data stays in your browser and on the blockchain. Alerts are
-          the one exception, and you choose them.
+          The Chronobox app has no account, no server and no analytics. Your data stays in your browser and on the blockchain. Alerts and
+          optional third-party services are the exceptions, and you choose both.
         </p>
         <p class="tech-note">Last updated {UPDATED}</p>
       </header>
@@ -112,6 +112,7 @@ export function PrivacyPage() {
           <li>the tokens you added,</li>
           <li>the transactions you sent, so that the app can find them again,</li>
           <li>a new wallet that you asked your guardian to agree to,</li>
+          <li>whether you switched on third-party services,</li>
           <li>the version of the app you saw last.</li>
         </ul>
         <p>

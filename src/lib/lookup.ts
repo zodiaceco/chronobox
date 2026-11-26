@@ -7,14 +7,14 @@
  * tokens it already knows, and it has no prices.
  *
  * With the service on, the page asks a Blockscout index directly which tokens
- * an address holds and what they are worth in dollars. Blockscout sees the IP
- * address of the browser and the addresses that are asked for. Only networks
- * whose index answers a browser have this.
+ * an address holds. Blockscout sees the IP address of the browser and the
+ * addresses that are asked for. Only networks whose index answers a browser
+ * have this.
  *
  * What comes back is used for display only. The index says which tokens to
- * look at and what a price is. The balance of each token is read from the
- * chain through the wallet, and its decimals too. Nothing here decides what is
- * safe: the checks and every transaction go through the wallet.
+ * look at (and orders long lists by value). The balance of each token is read
+ * from the chain through the wallet, and its decimals too. Nothing here decides
+ * what is safe: the checks and every transaction go through the wallet.
  */
 import type { Chain } from "./chains.ts";
 import { type Address, parseAddress } from "./hex.ts";
@@ -88,14 +88,6 @@ export async function findTokens(chain: Chain, holder: Address): Promise<FoundTo
   const res = await limited(`${chain.indexer}/api/v2/addresses/${holder}/token-balances`, { headers: { Accept: "application/json" } }, 40_000);
   if (!res.ok) throw new Error(`The index answered ${res.status}`);
   return parseTokenList(await res.json());
-}
-
-/** The price of the network's coin in US dollars, as the index has it. Null when the network has no index or it has no price. */
-export async function findCoinPrice(chain: Chain): Promise<number | null> {
-  if (!chain.indexer) return null;
-  const res = await limited(`${chain.indexer}/api/v2/stats`, { headers: { Accept: "application/json" } }, 12_000);
-  if (!res.ok) return null;
-  return plainPrice(((await res.json()) as { coin_price?: unknown } | null)?.coin_price);
 }
 
 /** The host of the network's index, for the question that asks for consent. Null when the network has none. */

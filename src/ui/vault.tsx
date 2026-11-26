@@ -47,7 +47,7 @@ import {
   MIN_COOLDOWN,
   QUEUE_PAGE,
 } from "../lib/chronobox.ts";
-import { canBatch, errorText, sendBatch } from "../lib/wallet.ts";
+import { assertWallet, canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
@@ -284,10 +284,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [sheet, setSheet] = useState<Sheet>(null);
   const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
-  // Counts the times third-party services were switched: the list then reads again.
+  // Counts the times third-party services were switched or an action changed the balances.
   const [lookupRound, setLookupRound] = useState(0);
-  // Tokens in the Chronobox that only the index knows, with third-party services on. They are shown, and withdrawn, like the others.
-  const found = useFoundTokens(session, chain, safe, lookupRound + (data?.fetchedAt ?? 0));
+  const bumpFound = () => setLookupRound((r) => r + 1);
+  // Tokens in the Chronobox that only the index knows, with third-party services on.
+  // Never runs for an address with no Chronobox, and does not re-fetch on the 30-second passive poll.
+  const foundEnabled = !!data && data.inspection.state !== "missing";
+  const found = useFoundTokens(session, chain, safe, foundEnabled, lookupRound);
   // The wallet can send several calls as one. Then several assets can be withdrawn together, and collected together.
   const [batch, setBatch] = useState(false);
   useEffect(() => {
@@ -338,6 +341,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   if (!data) return <section class="page page-center muted">Opening your Chronobox…</section>;
 
   const { inspection, queue, assets, balances } = data;
+  const allAssets = [...assets, ...found.assets];
+  const allBalances = [...balances, ...found.box];
   // "unverified": one check could not be done from this device. Money can still come out, so only deposits are held back.
   const verified = inspection.state === "locked";
   const locked = verified || inspection.state === "unverified";
@@ -374,6 +379,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const close = () => {
     setSheet(null);
     refresh();
+    bumpFound();
   };
 
   // After every try the page reads the chain again: a failure often means that the line has moved.
@@ -405,13 +411,14 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         if (!(e instanceof StoppedWaiting && gone())) throw e;
       } finally {
         refresh();
+        bumpFound();
       }
     });
   const cancel = (item: QueueItem) =>
     cancelAction.run("cancel", async (waiting) => {
       try {
         const index = queue.findIndex((q) => q.nonce === item.nonce);
-        const title = describe(item.tx && vault ? classify(item.tx, vault) : null, assets, {}, Boolean(vault?.recoveryOn)).title;
+        const title = describe(item.tx && vault ? classify(item.tx, vault) : null, allAssets, {}, Boolean(vault?.recoveryOn)).title;
         const left = 1 - Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(inspection.cooldown || 1n)));
         await sendAndWait(session.rpc, session.account, cancelTx(inspection.roles!, inspection.delay!, item.nonce), { ...sending, ...waiting });
         setCancelling(null);
@@ -435,11 +442,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     });
   // All items of a group in one confirmation, in their order in the line. All of them or none.
   const collectGroup = (group: QueueItem[]) =>
-    action.run(`finish-${group[0].nonce}`, async (waiting) => {
+    action.run(`collect-${group[0].nonce}`, async (waiting) => {
       try {
+        await assertWallet(session.rpc, session.account, chain.id, chain.name);
         await sendBatch(session.wallet.provider, session.account, chain.id, collectCalls(group, inspection.delay!), undefined, waiting.shouldStop);
       } finally {
         refresh();
+        bumpFound();
       }
     });
   const askCancelAll = () => {
@@ -472,7 +481,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   };
 
   // What is inside: every asset with a balance. The first one is shown large.
-  const held = [...assets, ...found.assets].map((asset, i) => ({ asset, amount: [...balances, ...found.box][i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
+  const held = allAssets.map((asset, i) => ({ asset, amount: allBalances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
   // Until the balances are read once, a missing one is "not read yet", not "could not be read".
   const unread = data.balancesRead ? assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol) : [];
@@ -493,7 +502,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           queue={queue}
           vault={vault}
           inspection={inspection}
-          assets={assets}
+          assets={allAssets}
           now={now}
           canCancel={canCancel}
           stops={isGuardian}
@@ -544,7 +553,14 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 <span class="balance-amount" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
                   {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
                 </span>
-                <span class="balance-symbol">{h.asset.symbol}</span>
+                <span class="balance-symbol">
+                  {h.asset.symbol}
+                  {h.asset.found && h.asset.token ? (
+                    <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
+                      {shortAddress(h.asset.token)}
+                    </small>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ul>
@@ -631,11 +647,13 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                     now={now}
                     cooldown={inspection.cooldown}
                     vault={vault}
-                    assets={[...assets, ...found.assets]}
+                    assets={allAssets}
+                    rpc={session.rpc}
                     busy={action.busy}
                     onCollect={() => collectGroup(group)}
                     onCollectFirst={() => finish(group[0])}
                     onRemove={remove}
+                    onRemind={(nonce, s) => saveReminders(nonce, s, now)}
                     // A cancel takes an item and every item before it, so the last one of the group takes the group.
                     onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
                     cancelLabel={isGuardian ? "Stop all" : "Cancel all"}
@@ -652,7 +670,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 cooldown={inspection.cooldown}
                 action={item.tx ? classify(item.tx, vault) : null}
                 recoveryOn={Boolean(vault.recoveryOn)}
-                assets={[...assets, ...found.assets]}
+                assets={allAssets}
                 chain={chain}
                 safe={safe}
                 rpc={session.rpc}
@@ -702,7 +720,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           />
           {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
-          {isController && chain.indexer ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
+          {chain.indexer && (isController || lookupAllowed()) ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
@@ -711,10 +729,23 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
 
       {sheet === "withdraw" && vault && batch ? (
-        <WithdrawManySheet session={session} chain={chain} vault={vault} inspection={inspection} assets={[...assets, ...found.assets]} balances={[...balances, ...found.box]} queue={queue} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawManySheet
+          session={session}
+          chain={chain}
+          vault={vault}
+          inspection={inspection}
+          assets={allAssets}
+          balances={allBalances}
+          queue={queue}
+          partial={unshown > 0n}
+          now={now}
+          canCancel={canCancel}
+          onRemind={saveReminders}
+          onClose={close}
+        />
       ) : null}
       {sheet === "withdraw" && vault && !batch ? (
-        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={[...assets, ...found.assets]} balances={[...balances, ...found.box]} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
+        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={allAssets} balances={allBalances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>
@@ -808,7 +839,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                             {goes ? "\u00d7" : ""}
                           </span>
                           <span class="cancel-what">
-                            <strong>{describe(item.tx ? classify(item.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</strong>
+                            <strong>{describe(item.tx ? classify(item.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</strong>
                             <small>{index === cancelIndex ? "The one you chose" : goes ? (ready ? "In front of it, and ready" : "In front of it") : "Behind it: stays in line"}</small>
                           </span>
                           <span class={goes ? "cancel-tag cancel-tag-out" : "cancel-tag"}>{goes ? (isGuardian ? "Stopped" : "Cancelled") : "Stays"}</span>
@@ -827,7 +858,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 </>
               ) : (
                 <>
-                  <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
+                  <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</p>
                   <p>{isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}</p>
                 </>
               )}
@@ -891,8 +922,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         <Modal title="Carry this out?" onClose={() => setConfirming(null)}>
           {confirmItem ? (
             <>
-              <p class="big-line">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
-              <Notice kind="risk">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).warning}</Notice>
+              <p class="big-line">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</p>
+              <Notice kind="risk">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).warning}</Notice>
               <div class="modal-actions">
                 {canCancel ? (
                   <Button kind="primary" onClick={() => askCancel(confirmItem)}>
@@ -1130,7 +1161,7 @@ function ForeignAlarm(props: {
               ? "Something is waiting that this app did not create."
               : `${foreign.length} things are waiting that this app did not create.`}
         </strong>
-        <p class="foreign-alarm-what">{title}</p>
+        <p class="foreign-alarm-what">{foreign.length === 1 ? title : `${title} (+${foreign.length - 1} more)`}</p>
         <p>
           {status.phase === "ready" ? (
             <>
@@ -1151,7 +1182,13 @@ function ForeignAlarm(props: {
               {foreign.length === 1 ? `${verb} it` : `${verb} all ${foreign.length}`}
             </Button>
           ) : (
-            <p class="hint">Only the wallet {shortAddress(vault.controller)} can cancel it.</p>
+            <p class="hint">
+              {!vault.roles
+                ? "This Chronobox has no cancel switch."
+                : vault.guardian
+                  ? `Only the wallet ${shortAddress(vault.controller)} or the guardian ${shortAddress(vault.guardian)} can cancel it.`
+                  : `Only the wallet ${shortAddress(vault.controller)} can cancel it.`}
+            </p>
           )}
           <a
             class="link-button"
@@ -1161,7 +1198,7 @@ function ForeignAlarm(props: {
               document.getElementById(`item-${first.nonce}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
             }}
           >
-            Show it in the line
+            {foreign.length === 1 ? "Show it in the line" : "Show them in the line"}
           </a>
         </div>
       </div>

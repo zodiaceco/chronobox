@@ -16,6 +16,8 @@
  * The choice lives in the address of the page (?wallet=, ?account=, ?as=), which
  * the test wallet reads when the page loads. So a change loads the page again.
  */
+import "../devbar.css";
+
 const KINDS = [
   { id: "plain", label: "Plain", hint: "An account without batching: one confirmation per step" },
   { id: "batch", label: "Batching", hint: "An account that sends several calls as one (EIP-5792)" },

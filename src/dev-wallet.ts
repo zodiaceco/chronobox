@@ -138,7 +138,7 @@ async function sendTogether(from: string, calls: RawCall[]): Promise<string> {
     // A real batch lands in one block. The fork stops mining on its own, takes every call, and mines them as one block.
     await rpc("evm_setAutomine", [false]);
     try {
-      for (const c of calls) hashes.push((await rpc("eth_sendTransaction", [{ from, to: c.to, data: c.data ?? "0x", value: c.value ?? "0x0", gas: "0x1c9c380" }])) as string);
+      for (const c of calls) hashes.push((await rpc("eth_sendTransaction", [{ from, to: c.to, data: c.data ?? "0x", value: c.value ?? "0x0", gas: "0x4c4b40" }])) as string);
       await rpc("evm_mine");
     } finally {
       await rpc("evm_setAutomine", [true]);

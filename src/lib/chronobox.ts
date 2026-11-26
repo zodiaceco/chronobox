@@ -1484,7 +1484,7 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
   if (tx.operation !== 0) return { kind: "unknown", label: `Runs the code of ${tx.to} as your Chronobox` };
   if (sameAddress(tx.to, vault.delay) && tx.value === 0n && size(tx.data) === 36 && tx.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN) {
     const cooldown = toBigInt(tx.data.slice(10));
-    if (cooldown > 0n) return { kind: "change-delay", cooldown };
+    if (cooldown >= MIN_COOLDOWN && cooldown <= MAX_COOLDOWN) return { kind: "change-delay", cooldown };
   }
   if (size(tx.data) === 0) {
     return sameAddress(tx.to, vault.controller)
@@ -1492,7 +1492,12 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       : { kind: "transfer-elsewhere", token: null, to: tx.to, amount: tx.value };
   }
   const head = tx.data.slice(0, 10).toLowerCase();
-  if (sameAddress(tx.to, vault.safe) || sameAddress(tx.to, vault.delay) || sameAddress(tx.to, vault.roles)) {
+  if (
+    sameAddress(tx.to, vault.safe) ||
+    sameAddress(tx.to, vault.delay) ||
+    sameAddress(tx.to, vault.roles) ||
+    sameAddress(tx.to, vault.recoveryDelay?.delay)
+  ) {
     return { kind: "settings", label: SETTINGS[head] ?? "Changes the vault in an unknown way" };
   }
   if (head === TRANSFER && size(tx.data) === 68 && tx.value === 0n) {
@@ -2261,9 +2266,26 @@ export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: He
 const BALANCES_PER_READ = [50, 20, 8, 3] as const;
 /** How many requests of one read are on their way at the same time. A weak network refuses a crowd. */
 const READS_AT_ONCE = 4;
+/** How long a reduced chunk size is remembered before the connection tries the full size again. */
+const READ_SIZE_TTL_MS = 5 * 60_000;
 
 /** The size that worked last on a connection, so that a network with tight limits is not asked the large size every time. */
-const readSize = new WeakMap<Rpc, number>();
+const readSize = new WeakMap<Rpc, { size: number; at: number }>();
+
+function rememberedReadSize(rpc: Rpc): number | undefined {
+  const entry = readSize.get(rpc);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > READ_SIZE_TTL_MS) {
+    readSize.delete(rpc);
+    return undefined;
+  }
+  return entry.size;
+}
+
+function rememberReadSize(rpc: Rpc, per: number): void {
+  const prev = rememberedReadSize(rpc);
+  if (prev === undefined || per < prev) readSize.set(rpc, { size: per, at: Date.now() });
+}
 
 export type Balances = {
   /** One entry for each asset. Null where the balance is not known. That is never "nothing". */
@@ -2274,13 +2296,60 @@ export type Balances = {
   reduced: boolean;
 };
 
-/** Runs the jobs a few at a time, in order. */
-async function inTurns(jobs: (() => Promise<void>)[]): Promise<void> {
-  let next = 0;
-  const worker = async () => {
-    while (next < jobs.length) await jobs[next++]();
+/** Limits total concurrent work across a read, including recursive fallbacks, to at most `max` in-flight calls. */
+function createLimiter(max: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T,>(fn: () => Promise<T>): Promise<T> => {
+    if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve));
+    active++;
+    try {
+      return await fn();
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
   };
-  await Promise.all(Array.from({ length: Math.min(READS_AT_ONCE, jobs.length) }, worker));
+}
+
+/** First fallback step whose piece size actually splits `len`, or past the end when it cannot be split further. */
+function nextSplitStep(len: number, from: number): number {
+  let step = from;
+  while (step < BALANCES_PER_READ.length && BALANCES_PER_READ[step] >= len) step++;
+  return step;
+}
+
+/**
+ * Runs many read calls through Multicall3, falling back to smaller pieces on networks with tight
+ * limits. Pieces that fail at every size stay null.
+ */
+export async function readManyInPieces(rpc: Rpc, calls: readonly { to: Address; data: Hex }[]): Promise<(Hex | null)[]> {
+  const results: (Hex | null)[] = calls.map(() => null);
+  if (calls.length === 0) return results;
+  const limit = createLimiter(READS_AT_ONCE);
+  const read = async (group: number[], step: number): Promise<void> => {
+    if (step >= BALANCES_PER_READ.length) return;
+    const per = BALANCES_PER_READ[step];
+    const pieces: number[][] = [];
+    for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
+    await Promise.all(
+      pieces.map(async (piece) => {
+        try {
+          const answers = await limit(() => readMany(rpc, piece.map((i) => calls[i])));
+          piece.forEach((i, k) => {
+            results[i] = answers[k];
+          });
+          if (group.length > per && step > 0) rememberReadSize(rpc, per);
+        } catch {
+          await read(piece, nextSplitStep(piece.length, step + 1));
+        }
+      }),
+    );
+  };
+  const prev = rememberedReadSize(rpc);
+  const start = BALANCES_PER_READ.findIndex((per) => per === prev);
+  await read(calls.map((_, i) => i), start < 0 ? 0 : start);
+  return results;
 }
 
 /**
@@ -2292,13 +2361,16 @@ async function inTurns(jobs: (() => Promise<void>)[]): Promise<void> {
 export async function readBalances(rpc: Rpc, holder: Address, assets: readonly { token: Address | null; main?: boolean }[]): Promise<Balances> {
   const balances: (bigint | null)[] = assets.map(() => null);
   let complete = true;
+  const limit = createLimiter(READS_AT_ONCE);
   const combined = async (group: number[]) => {
-    const answers = await readMany(
-      rpc,
-      group.map((i) => {
-        const token = assets[i].token;
-        return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
-      }),
+    const answers = await limit(() =>
+      readMany(
+        rpc,
+        group.map((i) => {
+          const token = assets[i].token;
+          return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+        }),
+      ),
     );
     group.forEach((i, k) => {
       const answer = answers[k];
@@ -2308,36 +2380,60 @@ export async function readBalances(rpc: Rpc, holder: Address, assets: readonly {
   };
   const oneByOne = async (group: number[]) => {
     complete = false;
-    await inTurns(
+    await Promise.all(
       group
         .filter((i) => assets[i].main)
-        .map((i) => async () => {
-          const token = assets[i].token;
-          balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
-        }),
+        .map((i) =>
+          limit(async () => {
+            const token = assets[i].token;
+            balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
+          }),
+        ),
     );
   };
-  /** Reads a group at one size. What fails goes on to the next smaller size, and after the smallest to single reads. */
+  /** Reads a group at one size. What fails goes on to the next smaller size that actually splits it, and after the smallest to single reads. */
   const read = async (group: number[], step: number): Promise<void> => {
     if (step >= BALANCES_PER_READ.length) return oneByOne(group);
     const per = BALANCES_PER_READ[step];
     const pieces: number[][] = [];
     for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
-    await inTurns(
-      pieces.map((piece) => async () => {
+    await Promise.all(
+      pieces.map(async (piece) => {
         try {
           await combined(piece);
           // Only a read that was really cut to this size says something about the network.
-          if (group.length > per && step > 0) readSize.set(rpc, per);
+          if (group.length > per && step > 0) rememberReadSize(rpc, per);
         } catch {
-          await read(piece, step + 1);
+          await read(piece, nextSplitStep(piece.length, step + 1));
         }
       }),
     );
   };
-  const start = BALANCES_PER_READ.findIndex((per) => per === readSize.get(rpc));
+  const prev = rememberedReadSize(rpc);
+  const start = BALANCES_PER_READ.findIndex((per) => per === prev);
   await read(assets.map((_, i) => i), start < 0 ? 0 : start);
-  return { balances, complete, reduced: complete && readSize.has(rpc) };
+  return { balances, complete, reduced: complete && rememberedReadSize(rpc) !== undefined };
+}
+
+/**
+ * Withdrawals that were asked for together: in the same block, one after the other in the line.
+ * Only plain withdrawals to the wallet are grouped. Anything else keeps its own card.
+ */
+export function groupsOf(queue: QueueItem[], vault: VaultParts): QueueItem[][] {
+  const groups: QueueItem[][] = [];
+  for (const item of queue) {
+    const last = groups[groups.length - 1];
+    const plain = item.tx && classify(item.tx, vault).kind === "withdraw";
+    const prev = last?.[last.length - 1];
+    if (last && plain && prev?.tx && classify(prev.tx, vault).kind === "withdraw" && prev.createdAt === item.createdAt) last.push(item);
+    else groups.push([item]);
+  }
+  return groups;
+}
+
+/** The calls that carry out a group, in its order in the line. */
+export function collectCalls(items: QueueItem[], delay: Address): TxRequest[] {
+  return items.map((item) => executeTx(delay, item.tx!));
 }
 
 /** Reads symbol and decimals of a token. Returns null when the address is not an ERC-20 token. */

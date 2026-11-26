@@ -139,11 +139,19 @@ async function buildProd() {
   await clean();
   await copyStatic();
 
+  const stripDevCss = {
+    name: "strip-dev-css",
+    setup(build) {
+      build.onResolve({ filter: /devbar\.css$/ }, () => ({ path: "devbar.css", namespace: "strip-dev" }));
+      build.onLoad({ filter: /.*/, namespace: "strip-dev" }, () => ({ contents: "", loader: "css" }));
+    },
+  };
   const result = await esbuild.build({
     ...appOptions(),
     entryPoints: [{ in: "src/main.tsx", out: "app" }],
     outdir: OUT,
     entryNames: "assets/[name]-[hash]",
+    plugins: [stripDevCss],
     metafile: true,
     write: true,
   });
@@ -167,10 +175,10 @@ async function buildProd() {
   const manifest = { version: pkg.version, buildHash, files: all };
   await fs.writeFile(path.join(OUT, "build.json"), JSON.stringify(manifest, null, 2) + "\n");
 
-  // Guard: the dev wallet must never reach production.
+  // Guard: dev-only tools must never reach production.
   for (const p of await listFiles(OUT)) {
     const text = await fs.readFile(path.join(OUT, p), "latin1");
-    if (text.includes("dev-wallet")) throw new Error(`build: "dev-wallet" found in out/${p}`);
+    if (text.includes("dev-wallet") || text.includes("devbar")) throw new Error(`build: dev-only code found in out/${p}`);
   }
 
   // Report.

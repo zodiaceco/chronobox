@@ -3,10 +3,10 @@
  * (Blockscout) which other tokens the Chronobox holds. Their decimals and balances are still read
  * on the chain, through the wallet. Without the switch the page asks nobody but the wallet.
  */
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { call } from "../lib/abi.ts";
 import type { Chain } from "../lib/chains.ts";
-import { readBalances, readMany } from "../lib/chronobox.ts";
+import { readBalances, readManyInPieces } from "../lib/chronobox.ts";
 import { type Address, sameAddress } from "../lib/hex.ts";
 import { findTokens, lookupHost } from "../lib/lookup.ts";
 import { lookupAllowed, setLookupAllowed } from "../lib/store.ts";
@@ -15,30 +15,36 @@ import { type Asset, assetsOf, Button, Choice, Modal, type Session } from "./com
 export type Found = { assets: Asset[]; box: (bigint | null)[] };
 
 /** The tokens of the Chronobox that the app's own lists do not know, with their balances. Empty unless third-party services are on. */
-export function useFoundTokens(session: Session, chain: Chain, safe: Address, round = 0): Found {
+export function useFoundTokens(session: Session, chain: Chain, safe: Address, enabled: boolean, round = 0): Found {
   const [found, setFound] = useState<Found>({ assets: [], box: [] });
-  const on = lookupAllowed() && !!chain.indexer;
+  const on = enabled && lookupAllowed() && !!chain.indexer;
+  const scope = `${chain.id}:${safe.toLowerCase()}:${on ? "1" : "0"}`;
+  const lastScope = useRef(scope);
   useEffect(() => {
     let stale = false;
-    setFound({ assets: [], box: [] });
+    if (lastScope.current !== scope || !on) {
+      lastScope.current = scope;
+      setFound({ assets: [], box: [] });
+    }
     if (!on) return;
     (async () => {
       const base = assetsOf(chain);
       const listed = await findTokens(chain, safe).catch(() => []);
       const fresh = listed.filter((t, i) => listed.findIndex((o) => sameAddress(o.address, t.address)) === i && !base.some((a) => sameAddress(a.token, t.address)));
-      if (fresh.length === 0 || stale) return;
+      if (stale) return;
+      if (fresh.length === 0) return setFound({ assets: [], box: [] });
       // What the index says about a token is taken only where the chain agrees. In pieces, as the balances are read:
-      // a weak network refuses one large request. A piece that fails leaves its tokens out.
-      const decimals: (string | null)[] = [];
-      for (let i = 0; i < fresh.length; i += 20) {
-        const piece = fresh.slice(i, i + 20);
-        decimals.push(...(await readMany(session.rpc, piece.map((t) => ({ to: t.address, data: call("decimals()") }))).catch(() => piece.map(() => null))));
-        if (stale) return;
-      }
+      // a weak network refuses one large request. A piece that fails at every size leaves its tokens out.
+      const decimals = await readManyInPieces(
+        session.rpc,
+        fresh.map((t) => ({ to: t.address, data: call("decimals()") })),
+      );
+      if (stale) return;
       const good = fresh.filter((t, i) => {
         const answer = decimals[i];
-        return answer !== null && answer.length >= 66 && BigInt(answer.slice(0, 66)) === BigInt(t.decimals);
+        return answer !== null && /^0x[0-9a-fA-F]{64,}$/.test(answer) && BigInt(answer.slice(0, 66)) === BigInt(t.decimals);
       });
+      if (good.length === 0) return setFound({ assets: [], box: [] });
       const read = await readBalances(session.rpc, safe, good.map((t) => ({ token: t.address })));
       if (stale) return;
       setFound({ assets: good.map((t) => ({ token: t.address, symbol: t.symbol, decimals: t.decimals, found: true })), box: read.balances });
@@ -46,7 +52,7 @@ export function useFoundTokens(session: Session, chain: Chain, safe: Address, ro
     return () => {
       stale = true;
     };
-  }, [session.rpc, chain, safe, on, round]);
+  }, [session.rpc, chain, safe, on, scope, round]);
   return found;
 }
 
