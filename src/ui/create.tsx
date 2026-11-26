@@ -29,6 +29,7 @@ import {
   isHalfMade,
   lockTx,
   nativeBalance,
+  predictRoles,
   predictSafe,
   safeFromReceipt,
   sendAndWait,
@@ -47,9 +48,10 @@ import { Mark } from "./logo.tsx";
 
 // Plain lengths, without a word on which is better: the owner knows what is right for them.
 const PRESETS: { label: string; seconds: bigint }[] = [
-  { label: "12 hours", seconds: 12n * 3600n },
-  { label: "1 day", seconds: 24n * 3600n },
-  { label: "1 week", seconds: 7n * 24n * 3600n },
+  { label: "24 hours", seconds: 24n * 3600n },
+  { label: "48 hours", seconds: 48n * 3600n },
+  { label: "7 days", seconds: 7n * 24n * 3600n },
+  { label: "30 days", seconds: 30n * 24n * 3600n },
 ];
 
 /**
@@ -442,8 +444,10 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         asked = true;
         const id = await sendCalls(session.wallet.provider, session.account, chain.id, calls, () => stop.current);
         pending.current = { id, chainId: chain.id, wallet: session.account, safe: now.safe };
-        await waitForBatch(session.wallet.provider, id, () => setProgress("waiting"), () => stop.current);
+        const landed = await waitForBatch(session.wallet.provider, id, () => setProgress("waiting"), () => stop.current);
         pending.current = null;
+        // The history of the cancel permission starts in this block. The first check reads from here, not from the start of the chain.
+        if (landed.blockNumber !== null) blockHints(chain.id).set(predictRoles(now.safe), landed.blockNumber);
       } else {
         if (!now.created) {
           setProgress("create");
@@ -505,7 +509,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         const { parts, rides } = built;
         if (parts.from !== "none") gave = giveText;
         asked = true;
-        await sendAndWait(session.rpc, session.account, built.tx, send);
+        const switched = await sendAndWait(session.rpc, session.account, built.tx, send);
+        // The history of the cancel permission starts in this block. The first check reads from here, not from the start of the chain.
+        blockHints(chain.id).set(predictRoles(target), BigInt(switched.blockNumber));
         money.forEach((d, i) => rides(d) && inside.push(line(d, parts.stays[i])));
         later = money.filter((d) => !rides(d));
       }

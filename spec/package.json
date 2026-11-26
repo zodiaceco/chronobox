@@ -1,0 +1,13 @@
+{
+  "name": "chronobox-mechanism-spec",
+  "private": true,
+  "type": "module",
+  "description": "Formal model of the Chronobox key mechanism (simple and guardian setups), checked with Quint.",
+  "scripts": {
+    "typecheck": "quint typecheck chronobox.qnt",
+    "compare": "node compare.mjs"
+  },
+  "devDependencies": {
+    "@informalsystems/quint": "0.33.0"
+  }
+}

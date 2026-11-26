@@ -7,6 +7,7 @@ import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
 import { ALERTS, AlertsPage } from "./ui/alerts.tsx";
 import { CreatePage } from "./ui/create.tsx";
+import { DevBar } from "./ui/devbar.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
 import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
@@ -327,6 +328,7 @@ export function App() {
           {UPDATED ? " · updated since your last visit" : ""}
         </span>
       </footer>
+      {__DEV__ ? <DevBar /> : null}
       <div class="horizon" aria-hidden="true" />
 
       {connectOpen ? (

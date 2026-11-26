@@ -142,7 +142,7 @@ try {
   assert.ok(sameAddress(state.council, council));
   assert.equal(state.councilMade, false);
   assert.equal(await rpc("eth_getCode", [council, "latest"]), "0x");
-  ok("locked with a guardian. The shared Safe has its role and does not exist yet");
+  ok("locked with a guardian. The Council Safe has its role and does not exist yet");
 
   step("3. The guardian alone: cancel, and nothing else");
   const out = withdrawalTx(WALLET, null, ETH);
@@ -157,19 +157,19 @@ try {
   await reverts(GUARDIAN, queueTx(delay, withdrawalTx(GUARDIAN, null, 1n)), null, "the guardian asks for a withdrawal");
   await reverts(GUARDIAN, viaRoles(delay, call("setTxCooldown(uint256)", [0n]), CANCEL_ROLE), null, "the guardian sets the delay to zero");
   await reverts(GUARDIAN, viaRoles(delay, call("enableModule(address)", [GUARDIAN]), CANCEL_ROLE), null, "the guardian makes itself the wallet with the cancel role");
-  await reverts(GUARDIAN, viaRoles(delay, call("enableModule(address)", [GUARDIAN]), COUNCIL_ROLE), null, "the guardian alone uses the role of the shared Safe");
-  await reverts(WALLET, viaRoles(delay, call("enableModule(address)", [SECOND]), COUNCIL_ROLE), null, "the wallet alone uses the role of the shared Safe");
+  await reverts(GUARDIAN, viaRoles(delay, call("enableModule(address)", [GUARDIAN]), COUNCIL_ROLE), null, "the guardian alone uses the role of the Council Safe");
+  await reverts(WALLET, viaRoles(delay, call("enableModule(address)", [SECOND]), COUNCIL_ROLE), null, "the wallet alone uses the role of the Council Safe");
   await reverts(GUARDIAN, viaRoles(GUARDIAN, "0x", CANCEL_ROLE, 0, 1n), null, "the guardian sends ETH out");
 
   step("4. Wallet and guardian together: a new wallet at once");
-  // Anybody can make the shared Safe. The result is the same.
+  // Anybody can make the Council Safe. The result is the same.
   const made = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(safe, WALLET, GUARDIAN)))!;
   assert.ok(sameAddress(made, council));
   state = await inspect(rpc, safe);
   assert.equal(state.state, "locked");
   assert.equal(state.councilMade, true);
-  ok("a stranger made the shared Safe, it is at the expected address and the checks pass");
-  // What the shared Safe can do with its role, asked as the Safe itself.
+  ok("a stranger made the Council Safe, it is at the expected address and the checks pass");
+  // What the Council Safe can do with its role, asked as the Safe itself.
   await reverts(council, viaRoles(delay, call("setTxCooldown(uint256)", [0n]), COUNCIL_ROLE), null, "both together set the delay to zero");
   await reverts(council, viaRoles(delay, call("setTxNonce(uint256)", [9n]), COUNCIL_ROLE), null, "both together skip the line with the shared role");
   await reverts(council, viaRoles(safe, call("enableModule(address)", [council]), COUNCIL_ROLE), null, "both together add a module to the Chronobox");
@@ -222,7 +222,7 @@ try {
   assert.ok(sameAddress(state.guardian, GUARDIAN));
   assert.ok(sameAddress(state.council, council));
   assert.deepEqual((await councilOwners(rpc, council)).map((o) => o.toLowerCase()).sort(), [SECOND, GUARDIAN].map((o) => o.toLowerCase()).sort());
-  ok("the new wallet holds the Chronobox, with no wait. The shared Safe is now of the new wallet and the guardian");
+  ok("the new wallet holds the Chronobox, with no wait. The Council Safe is now of the new wallet and the guardian");
   await reverts(WALLET, queueTx(delay, withdrawalTx(WALLET, null, 1n)), null, "the old wallet asks for a withdrawal");
   await reverts(WALLET, cancelTx(roles, delay, state.txNonce), null, "the old wallet cancels");
   await reverts(WALLET, exec, null, "the old wallet runs the same change again");
@@ -255,8 +255,8 @@ try {
   assert.ok(sameAddress(state.guardian, GUARDIAN));
   assert.ok(sameAddress(state.council, predictCouncil(safe, THIRD, GUARDIAN)));
   assert.equal(state.councilMade, false);
-  await reverts(council, viaRoles(delay, call("enableModule(address)", [SECOND]), COUNCIL_ROLE), null, "the old shared Safe uses its role");
-  ok("the third wallet holds it, and a new shared Safe of that wallet and the guardian has the role");
+  await reverts(council, viaRoles(delay, call("enableModule(address)", [SECOND]), COUNCIL_ROLE), null, "the old Council Safe uses its role");
+  ok("the third wallet holds it, and a new Council Safe of that wallet and the guardian has the role");
 
   step("7. Remove the guardian, then add another: back to one member, and the history still proves it");
   await through(delay, THIRD, removeGuardianTx(parts() as any)!);
@@ -305,7 +305,7 @@ try {
   assert.equal(stateB.state, "invalid");
   assert.equal(stateB.checks.find((c) => c.id === "cancel-only")?.ok, false);
   ok("a wider permission for the shared role: invalid");
-  // The shared Safe was made, and then changed so that one owner is enough.
+  // The Council Safe was made, and then changed so that one owner is enough.
   const c = await make(WALLET, 3);
   await through(c.delay, WALLET, addGuardianTx({ ...c, controller: WALLET }, GUARDIAN)!);
   const loose = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(c.safe, WALLET, GUARDIAN)))!;
@@ -316,7 +316,7 @@ try {
   const stateC = await inspect(rpc, c.safe);
   assert.equal(stateC.state, "invalid");
   assert.equal(stateC.checks.find((check) => check.id === "council")?.ok, false);
-  ok("a shared Safe that needs only one owner: invalid");
+  ok("a Council Safe that needs only one owner: invalid");
 
   step("10. The change goes through when there is nothing left to cancel");
   const d = await make(WALLET, 4);

@@ -42,7 +42,7 @@ const delay = predictDelay(safe, DAY, EXPIRATION_SECONDS);
 const roles = predictRoles(safe);
 const recoveryDelay = predictRecoveryDelay(safe);
 
-test("the watcher finds the recovery Delay and the shared Safe at the addresses of the app", () => {
+test("the watcher finds the Recovery Delay and the Council Safe at the addresses of the app", () => {
   for (const index of [0, 1, 7]) {
     const vault = predictSafe(WALLET, index);
     assert.equal(watcherRecoveryDelay(lower(vault)), lower(predictRecoveryDelay(vault)));
@@ -202,7 +202,7 @@ test("guardWarnings catches hijacked recovery owner, guards, wrong council owner
   assert.deepEqual(guardWarnings(base, lower(safe)), []);
   assert.ok(guardWarnings({ ...base, recovery: { ...base.recovery!, owner: attacker, modules: [], target: lower(safe) } }, lower(safe)).some((w) => w.includes("controls the recovery settings")));
   assert.ok(guardWarnings({ ...base, recovery: { ...base.recovery!, guard: attacker } }, lower(safe)).some((w) => w.includes("attached to the recovery")));
-  assert.ok(guardWarnings({ ...base, councilGuard: attacker }, lower(safe)).some((w) => w.includes("attached to the shared Safe")));
+  assert.ok(guardWarnings({ ...base, councilGuard: attacker }, lower(safe)).some((w) => w.includes("attached to the Council Safe")));
   assert.ok(guardWarnings({ ...base, councilOwners: [attacker, lower(GUARDIAN)] }, lower(safe)).some((w) => w.includes("does not need both")));
   assert.ok(guardWarnings({ ...base, recovery: { ...base.recovery!, cooldown: "0" } }, lower(safe)).some((w) => w.includes("has no wait")));
   assert.ok(guardWarnings({ ...base, recovery: { ...base.recovery!, avatar: lower(safe) } }, lower(safe)).some((w) => w.includes("does not point cleanly")));

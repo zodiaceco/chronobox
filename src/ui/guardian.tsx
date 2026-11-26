@@ -221,7 +221,7 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
       (code: string) => !stale && setIsContract(typeof code === "string" && code.length > 2),
       () => undefined,
     );
-    // With a recovery the shared Safe is another one, at another address.
+    // With a recovery the Council Safe is another one, at another address.
     councilCompatible(session.rpc, vault.safe, vault.controller, guardian, recovers === true).then(
       (ok) => !stale && setIncompatible(!ok),
       () => undefined,
@@ -511,7 +511,7 @@ type Swap =
   | { state: "loading" }
   /** The 2 of 2 Safe of wallet and guardian is not made yet. The owner makes it with the first request. */
   | { state: "not-made" }
-  /** The new wallet already owns the shared Safe: the hand-over happened on chain. */
+  /** The new wallet already owns the Council Safe: the hand-over happened on chain. */
   | { state: "done" }
   /** The address cannot hold this Chronobox. */
   | { state: "bad" }
@@ -577,7 +577,7 @@ function useSwap(rpc: Rpc, vault: VaultRef, request: { to: Address; upTo: bigint
 }
 
 /**
- * The first step of the owner: make the shared Safe if nobody has yet. It is one transaction,
+ * The first step of the owner: make the Council Safe if nobody has yet. It is one transaction,
  * once. After it, asking the guardian costs the owner nothing.
  */
 export async function prepareSwap(session: Session, chain: Chain, vault: VaultRef, waiting: { onSlow: () => void; shouldStop: () => boolean }): Promise<void> {
@@ -736,7 +736,7 @@ export function AskGuardianSheet(props: { session: Session; chain: Chain; vault:
       {swap.state === "bad" ? (
         <Notice kind="bad">This wallet cannot control the Chronobox. Drop this request and start again with another address.</Notice>
       ) : swap.state === "not-made" ? (
-        <Notice kind="risk">The shared Safe with your guardian is not on chain yet. Drop this request and start it again.</Notice>
+        <Notice kind="risk">The Council Safe with your guardian is not on chain yet. Drop this request and start it again.</Notice>
       ) : swap.state === "error" ? (
         <Notice kind="bad">
           {swap.message}{" "}

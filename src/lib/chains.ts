@@ -34,8 +34,8 @@ export const CONTRACTS = {
   multicall3: "0xcA11bde05977b3631167028862bE2a173976CA11",
   /**
    * SafeModuleSetup 0.3.0, from Safe's own list of deployments. One function: enableModules.
-   * The shared Safe of a Chronobox with a recovery calls it once, in its setup, so that the
-   * recovery Delay is its module from the first moment. It is used for nothing else.
+   * The Council Safe of a Chronobox with a recovery calls it once, in its setup, so that the
+   * Recovery Delay is its module from the first moment. It is used for nothing else.
    */
   safeModuleSetup: "0x2dd68b007B46fBe91B9A7c3EDa5A7a1063cB5b47",
 } as const satisfies Record<string, Address>;
@@ -67,6 +67,11 @@ export type Chain = {
   /** Used only for wallet_addEthereumChain. The page itself never calls it. */
   publicRpc: string;
   testnet?: boolean;
+  /**
+   * The token index that third-party services ask (Blockscout), on networks that have one. Only after the
+   * person switched them on. The content security policy in index.html allows exactly these hosts.
+   */
+  indexer?: string;
   /**
    * Chainlink price feed of the network's coin in US dollars (8 decimals).
    * Null means the coin is worth one dollar (xDAI). The app reads it through
@@ -152,6 +157,7 @@ export const CHAINS: Chain[] = [
     name: "Ethereum",
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://etherscan.io",
+    indexer: "https://eth.blockscout.com",
     publicRpc: "https://ethereum-rpc.publicnode.com",
     usdFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
     keep: 5_000_000_000_000_000n,
@@ -236,6 +242,7 @@ export const CHAINS: Chain[] = [
     name: "Sepolia",
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://sepolia.etherscan.io",
+    indexer: "https://eth-sepolia.blockscout.com",
     publicRpc: "https://ethereum-sepolia-rpc.publicnode.com",
     testnet: true,
     usdFeed: "0x694AA1769357215DE4FAC081bf1f309aDC325306",

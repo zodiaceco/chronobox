@@ -6,12 +6,12 @@
  *   - a Safe 1.4.1 that holds the funds. Its only owner is a burn address.
  *   - a Zodiac Delay modifier. Every transaction that goes through it waits
  *     the delay. It is the only way to move funds or change the vault.
- *   - the setup wallet, the only module of the Delay. It is the control unit:
+ *   - the hot wallet, the only module of the Delay. It is the control unit:
  *     it can queue any transaction.
  * One thing does not wait: cancel. The Delay lets only its owner (the Safe)
  * remove a queued transaction, and the owner can also set the delay to zero.
  * So a Zodiac Roles modifier sits beside the Delay with exactly one
- * permission: the setup wallet can make the Safe call setTxNonce on the
+ * permission: the hot wallet can make the Safe call setTxNonce on the
  * Delay. It cannot move funds and it cannot change anything else.
  * Nothing here is custom contract code.
  */
@@ -47,7 +47,7 @@ export type TxRequest = { to: Address; data: Hex; value?: bigint };
 export const SAFE_PROXY_INIT_CODE_HASH: Hex = "0xe298282cefe913ab5d282047161268a8222e4bd4ed106300c547894bbefd31ee";
 /** keccak256 of the runtime code of a SafeProxy 1.4.1. */
 export const SAFE_PROXY_CODE_HASH: Hex = "0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c";
-/** keccak256 of the code of SafeModuleSetup 0.3.0, the helper that the shared Safe of a recovery calls in its setup. The fork test checks it. */
+/** keccak256 of the code of SafeModuleSetup 0.3.0, the helper that the Council Safe of a recovery calls in its setup. The fork test checks it. */
 export const SAFE_MODULE_SETUP_CODE_HASH: Hex = "0xaf2d170bb766d2773c3fa88717f5b3599827478074d3767d1dee55e5c2f3fbcb";
 
 const MINIMAL_PROXY_PREFIX = "363d3d373d3d3d363d73";
@@ -108,12 +108,12 @@ export const MAX_COOLDOWN = 90n * 24n * 3600n;
 
 /** A recovery that is ready stays executable this long. Longer than a withdrawal: the people involved may be slow. */
 export const RECOVERY_EXPIRATION = 30n * 24n * 3600n;
-/** How long a recovery waits, unless the owner chooses another time: six months. The recovery Delay is made with it. */
+/** How long a recovery waits, unless the owner chooses another time: six months. The Recovery Delay is made with it. */
 export const DEFAULT_RECOVERY_WAIT = 180n * 24n * 3600n;
 /** The guardian chooses the wallet that a recovery brings the Chronobox to. A short wait would make that too easy. */
 export const MIN_RECOVERY_WAIT = 30n * 24n * 3600n;
 export const MAX_RECOVERY_WAIT = 730n * 24n * 3600n;
-/** The recovery Delay has its own salt, so it can never be at the address of the Delay for withdrawals. */
+/** The Recovery Delay has its own salt, so it can never be at the address of the Delay for withdrawals. */
 const SALT_RECOVERY = SALT_BASE + 1n;
 
 // ---------------------------------------------------------------------------
@@ -171,14 +171,14 @@ function recoveryInitializer(safe: Address): Hex {
  * The second Delay of a Chronobox with a recovery: the line that a recovery waits in. Its
  * address depends only on the Chronobox, so there is one for each Chronobox, for ever. The
  * Chronobox owns it. It is never a module of the Chronobox: with a recovery on, it acts on the
- * shared Safe of wallet and guardian, and the guardian is the one who can put something into
+ * Council Safe of wallet and guardian, and the guardian is the one who can put something into
  * its line. Anybody can make it. As made, it points at the Chronobox, where it can do nothing.
  */
 export function predictRecoveryDelay(safe: Address): Address {
   return minimalProxyAddress(CONTRACTS.delayMastercopy, recoveryInitializer(safe), SALT_RECOVERY);
 }
 
-/** Makes the recovery Delay. Anybody can send this, and the result is the same. Nobody can use it until the Chronobox says so. */
+/** Makes the Recovery Delay. Anybody can send this, and the result is the same. Nobody can use it until the Chronobox says so. */
 export function recoveryDelayCreateTx(safe: Address): TxRequest {
   return {
     to: CONTRACTS.moduleProxyFactory,
@@ -198,7 +198,7 @@ export function predictRoles(safe: Address): Address {
 /**
  * The 2 of 2 Safe of the wallet and the guardian. It holds nothing. No guard, no handler.
  * Without a recovery it has no module. With a recovery it has one module from its first moment:
- * the recovery Delay of this Chronobox. Safe's own helper contract enables it during the setup.
+ * the Recovery Delay of this Chronobox. Safe's own helper contract enables it during the setup.
  */
 export function councilInitializer(wallet: Address, guardian: Address, recoveryDelay: Address | null = null): Hex {
   const to = recoveryDelay ? CONTRACTS.safeModuleSetup : ZERO;
@@ -575,7 +575,7 @@ export type Inspection = {
   delay: Address | null;
   /** The Roles modifier that allows cancelling. Null for a vault without cancel. */
   roles: Address | null;
-  /** The setup wallet: the one address that can queue transactions, and cancel them. */
+  /** The hot wallet: the one address that can queue transactions, and cancel them. */
   controller: Address | null;
   /** The guardian, if there is one: a second address that can cancel, and nothing else alone. */
   guardian: Address | null;
@@ -583,11 +583,11 @@ export type Inspection = {
   council: Address | null;
   /** False while nobody has made that Safe yet. It is made the first time it is needed. */
   councilMade: boolean;
-  /** True when that Safe has, or will have, the recovery Delay as its one module. */
+  /** True when that Safe has, or will have, the Recovery Delay as its one module. */
   councilRecovery: boolean;
   /** The members of the Roles modifier in the order of the contract's list, newest first. */
   members: Address[];
-  /** The recovery Delay of this Chronobox, as it is on chain now. It may not be made yet. */
+  /** The Recovery Delay of this Chronobox, as it is on chain now. It may not be made yet. */
   recoveryDelay: RecoveryParts | null;
   /** The recovery, when it is on: the guardian alone can bring the Chronobox to a new wallet, after `wait`. */
   recovery: Recovery | null;
@@ -597,14 +597,14 @@ export type Inspection = {
   queueNonce: bigint;
 };
 
-/** The recovery Delay as it is on chain. Every builder that touches the recovery needs it. */
+/** The Recovery Delay as it is on chain. Every builder that touches the recovery needs it. */
 export type RecoveryParts = {
   delay: Address;
   /** The contract exists at its address. */
   deployed: boolean;
   /** The Chronobox owns it, and nothing guards it. */
   sound: boolean;
-  /** The account that it acts on. As made: the Chronobox, where it can do nothing. With a recovery on: the shared Safe. */
+  /** The account that it acts on. As made: the Chronobox, where it can do nothing. With a recovery on: the Council Safe. */
   avatar: Address | null;
   target: Address | null;
   /** Who can put something into its line, newest first. With a recovery on: the guardian, and nobody else. */
@@ -708,7 +708,7 @@ export type Guard = { guardian: Address; council: Address };
  * cannot show that there is no second, wider permission. The events can:
  * every function that grants or changes something emits one. The history
  * must hold only what a Chronobox sets up:
- *   - "cancel": setTxNonce on this Delay. Members: the setup wallet, and the
+ *   - "cancel": setTxNonce on this Delay. Members: the hot wallet, and the
  *     guardian if there is one.
  *   - "council", only after a guardian was added: enableModule and
  *     disableModule on this Delay (a new wallet), assignRoles and
@@ -716,16 +716,16 @@ export type Guard = { guardian: Address; council: Address };
  *     Member: the 2 of 2 Safe of wallet and guardian, and nobody else.
  *
  * One more thing may be there, after a recovery was turned on: "cancel" also covers setTxNonce
- * on the recovery Delay of this Chronobox, so the wallet and the guardian can stop a recovery.
+ * on the Recovery Delay of this Chronobox, so the wallet and the guardian can stop a recovery.
  * A recovery needs no role of its own: the guardian puts it into the line of the recovery
- * Delay, and that Delay acts on the shared Safe, with the role that the shared Safe has.
+ * Delay, and that Delay acts on the Council Safe, with the role that the Council Safe has.
  *
  * Returns null when the RPC cannot provide the history.
  */
 export type History = {
   ok: boolean;
   detail: string;
-  /** True when "cancel" covers the line of the recovery Delay. */
+  /** True when "cancel" covers the line of the Recovery Delay. */
   stopsRecovery?: boolean;
 };
 
@@ -782,7 +782,7 @@ export async function verifyCancelPermission(
     } else if (kind === ROLES_TOPIC.allowFunction) {
       const [key, target, fn, options] = decode(["bytes32", "address", "bytes4", "uint8"], log.data) as [Hex, Address, Hex, bigint];
       const wanted = (allowedFor[key] ?? []).find((entry) => entry.toLowerCase() === `${target}:${fn}`.toLowerCase());
-      // Cancel may also cover the line of the recovery Delay: that is how a recovery is stopped.
+      // Cancel may also cover the line of the Recovery Delay: that is how a recovery is stopped.
       const stops = key === CANCEL_ROLE && recovery !== null && sameAddress(target, recovery) && fn.toLowerCase() === SET_TX_NONCE;
       // Execution option 0 only: a plain call with no value, never a delegatecall.
       if ((!wanted && !stops) || options !== 0n) return bad(`A permission that a Chronobox does not have exists: ${fn} on ${target}`);
@@ -847,10 +847,10 @@ async function singletonOf(rpc: Rpc, safe: Address): Promise<Address> {
 
 /**
  * Is `council` the 2 of 2 Safe of this wallet and this guardian?
- *   A form: yes. It says whether the Safe is made, and whether the recovery Delay is its module.
+ *   A form: yes. It says whether the Safe is made, and whether the Recovery Delay is its module.
  *   null: no, and it does not look like one.   A text: it should be, and something is wrong with it.
  *
- * A Safe that is not made yet has one of two addresses: without the recovery Delay, or with it.
+ * A Safe that is not made yet has one of two addresses: without the Recovery Delay, or with it.
  * Only that one Safe can ever exist at each of them.
  */
 type CouncilForm = { made: boolean; recovery: boolean };
@@ -872,10 +872,10 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
     storageAt(rpc, council, FALLBACK_SLOT),
   ]);
   const both = owners.length === 2 && owners.some((o) => sameAddress(o, wallet)) && owners.some((o) => sameAddress(o, guardian));
-  // A Safe with other owners is not the shared Safe of this pair. The other order of the pair may fit.
+  // A Safe with other owners is not the Council Safe of this pair. The other order of the pair may fit.
   if (!both) return predicted ? `The owners of the Safe ${council} are not the wallet and the guardian` : null;
   if (threshold !== 2n) return `The Safe ${council} does not need both owners`;
-  // No module, or one: the recovery Delay of this Chronobox.
+  // No module, or one: the Recovery Delay of this Chronobox.
   const attached = modules !== null && modules.length === 1 && sameAddress(modules[0], predictRecoveryDelay(safe));
   if (modules === null || (modules.length > 0 && !attached) || toBigInt(guard) !== 0n || toBigInt(handler) !== 0n) {
     return `Something extra is attached to the Safe ${council}`;
@@ -884,7 +884,7 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
 }
 
 /**
- * Can `predictCouncil(safe, wallet, guardian)` serve as the shared 2 of 2 Safe for this pair?
+ * Can `predictCouncil(safe, wallet, guardian)` serve as the Council Safe for this pair?
  * True when nothing is deployed there yet, or when a clean 2 of 2 Safe of exactly these two exists there.
  * False when an existing Safe at that address has other owners (e.g. after an earlier rotation).
  */
@@ -1010,10 +1010,10 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     "wiring",
     sameAddress(owner, safe) && sameAddress(avatar, safe) && sameAddress(target, safe),
     "Only the Chronobox itself can change the time lock",
-    "Owner, avatar and target of the Delay are the Safe",
+    "Owner, avatar and target of the Vault Delay are the Safe",
   );
   // The Delay asks its guard before it executes anything. A guard could refuse every withdrawal for ever.
-  const guardOk = add("delay-guard", sameAddress(delayGuard, ZERO), "Nothing can block a withdrawal", `Guard of the Delay: ${sameAddress(delayGuard, ZERO) ? "none" : delayGuard}`);
+  const guardOk = add("delay-guard", sameAddress(delayGuard, ZERO), "Nothing can block a withdrawal", `Guard of the Vault Delay: ${sameAddress(delayGuard, ZERO) ? "none" : delayGuard}`);
   const controllerOk = add(
     "controller",
     controllers !== null && controllers.length === 1,
@@ -1023,7 +1023,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   if (controllerOk && controllers) result.controller = controllers[0];
   const cooldownOk = add("cooldown", cooldown > 0n, "Every withdrawal has to wait", `${cooldown} seconds`);
 
-  // The recovery Delay is at one address. It is never a module of the Chronobox, so by itself it can do nothing.
+  // The Recovery Delay is at one address. It is never a module of the Chronobox, so by itself it can do nothing.
   const parts = await recoveryParts(rpc, safe);
   result.recoveryDelay = parts;
   let recoveryOk = true;
@@ -1085,12 +1085,12 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
         (result.councilMade
           ? `The Safe ${guard.council} has these two owners and needs both`
           : `Only a Safe of these two, which needs both, can exist at ${guard.council}. It is not made yet.`) +
-          (result.councilRecovery ? " Its one module is the recovery Delay." : ""),
+          (result.councilRecovery ? " Its one module is the Recovery Delay." : ""),
       );
     } else if (councilProblem) {
       add("council", false, "A wallet change without the wait needs the wallet and the guardian together", councilProblem);
     }
-    // When the shared Safe has the recovery Delay as its module and that Delay exists, any tampering
+    // When the Council Safe has the Recovery Delay as its module and that Delay exists, any tampering
     // (wrong owner, guard, >10 modules) or active wiring must pass every recovery check — never
     // silently appear "off".
     const armed =
@@ -1107,21 +1107,21 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
         sameAddress(parts.modules[0], guard.guardian) &&
         parts.cooldown > 0n;
       const wiringDetail = wiringGood
-        ? `The recovery Delay ${parts.delay}: the Chronobox owns it, it acts on the shared Safe, and only the guardian can use it. It waits ${parts.cooldown} seconds.`
+        ? `The Recovery Delay ${parts.delay}: the Chronobox owns it, it acts on the Council Safe, and only the guardian can use it. It waits ${parts.cooldown} seconds.`
         : !parts.sound
-          ? `The recovery Delay ${parts.delay} is not cleanly owned by this Chronobox, has a guard, or has more than ten modules`
+          ? `The Recovery Delay ${parts.delay} is not cleanly owned by this Chronobox, has a guard, or has more than ten modules`
           : !sameAddress(parts.avatar, guard.council) || !sameAddress(parts.target, guard.council)
-            ? `The recovery Delay ${parts.delay} does not point cleanly at the shared Safe ${guard.council}`
+            ? `The Recovery Delay ${parts.delay} does not point cleanly at the Council Safe ${guard.council}`
             : parts.modules.length !== 1 || !sameAddress(parts.modules[0], guard.guardian)
-              ? `Modules of the recovery Delay ${parts.delay}: ${parts.modules.join(", ") || "none"}`
-              : `The recovery Delay ${parts.delay} has no wait (${parts.cooldown} seconds)`;
+              ? `Modules of the Recovery Delay ${parts.delay}: ${parts.modules.join(", ") || "none"}`
+              : `The Recovery Delay ${parts.delay} has no wait (${parts.cooldown} seconds)`;
       recoveryOk = add("recovery-wiring", wiringGood, "Only the guardian can start a recovery, and it waits", wiringDetail);
     }
     cancelOk = wiredOk && rolesGuardOk && memberOk;
     if (cancelOk) {
       // A history that passed is good until the network, members, txNonce, or council nonce change:
-      // a permission can change only through the Delay (moving txNonce), through the shared 2 of 2
-      // Safe (moving its nonce), or through the recovery Delay, which acts on that Safe (moving its
+      // a permission can change only through the Vault Delay (moving txNonce), through the Council
+      // Safe (moving its nonce), or through the Recovery Delay, which acts on that Safe (moving its
       // own txNonce). Only a pass is kept, and only in memory when the chainId is known.
       //
       // That holds only for a Chronobox that passed every other check: above all, one that no person
@@ -1160,7 +1160,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
             "recovery-stop",
             history.stopsRecovery === true,
             "The wallet and the guardian can stop a recovery at once",
-            history.stopsRecovery ? "The right to cancel covers the line of the recovery Delay" : "The right to cancel does not cover the line of the recovery Delay",
+            history.stopsRecovery ? "The right to cancel covers the line of the Recovery Delay" : "The right to cancel does not cover the line of the Recovery Delay",
           );
           if (recoveryOk) result.recovery = { delay: parts.delay, wait: parts.cooldown, expiration: parts.expiration, txNonce: parts.txNonce, queueNonce: parts.queueNonce };
         }
@@ -1174,7 +1174,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
   return result;
 }
 
-/** The recovery Delay of a Chronobox as it is right after it is made: it points at the Chronobox, and nobody can use it. */
+/** The Recovery Delay of a Chronobox as it is right after it is made: it points at the Chronobox, and nobody can use it. */
 function freshRecoveryParts(safe: Address): RecoveryParts {
   return {
     delay: predictRecoveryDelay(safe),
@@ -1190,7 +1190,7 @@ function freshRecoveryParts(safe: Address): RecoveryParts {
   };
 }
 
-/** Reads the recovery Delay of a Chronobox. It is at one address, and it may not be made yet. */
+/** Reads the Recovery Delay of a Chronobox. It is at one address, and it may not be made yet. */
 export async function recoveryParts(rpc: Rpc, safe: Address): Promise<RecoveryParts> {
   const address = predictRecoveryDelay(safe);
   const code = await getCode(rpc, address);
@@ -1409,7 +1409,16 @@ export type Action =
   | { kind: "remove-recovery" }
   | { kind: "transfer-elsewhere"; token: Address | null; to: Address; amount: bigint }
   | { kind: "settings"; label: string }
-  | { kind: "unknown" };
+  | { kind: "unknown"; label?: string };
+
+/**
+ * Something that this app does not make: a change of the rules, a payment to another address, or a call
+ * it cannot read. Only the wallet of the Chronobox can put an item into the line, so an item like this
+ * means that wallet signed it, here or somewhere else.
+ */
+export function isForeign(action: Action | null): boolean {
+  return action !== null && (action.kind === "settings" || action.kind === "unknown" || action.kind === "transfer-elsewhere");
+}
 
 const TRANSFER = selector("transfer(address,uint256)");
 
@@ -1421,15 +1430,17 @@ const SETTINGS: Record<string, string> = Object.fromEntries(
       ["setTxNonce(uint256)", "Skips queued transactions"],
       ["enableModule(address)", "Gives another address control"],
       ["disableModule(address,address)", "Removes a controller"],
-      ["transferOwnership(address)", "Changes who can configure the Delay"],
-      ["setAvatar(address)", "Points the Delay at another account"],
-      ["setTarget(address)", "Points the Delay at another account"],
+      ["transferOwnership(address)", "Changes who can configure the Vault Delay"],
+      ["setAvatar(address)", "Points the Vault Delay at another account"],
+      ["setTarget(address)", "Points the Vault Delay at another account"],
       ["swapOwner(address,address,address)", "Gives the Safe a new owner"],
       ["addOwnerWithThreshold(address,uint256)", "Gives the Safe a new owner"],
       ["removeOwner(address,address,uint256)", "Removes a Safe owner"],
       ["changeThreshold(uint256)", "Changes the Safe threshold"],
       ["setGuard(address)", "Adds a guard to the Safe"],
       ["setFallbackHandler(address)", "Adds a fallback handler to the Safe"],
+      ["changeMasterCopy(address)", "Replaces the code of the Safe"],
+      ["setModuleGuard(address)", "Adds a module guard to the Safe"],
     ] as const
   ).map(([signature, label]) => [selector(signature), label]),
 );
@@ -1468,10 +1479,12 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       }
     }
   }
-  if (tx.operation !== 0) return { kind: "unknown" };
+  // A delegate call runs the code of another contract as the Safe itself: with it, anything can change,
+  // the code of the Safe included.
+  if (tx.operation !== 0) return { kind: "unknown", label: `Runs the code of ${tx.to} as your Chronobox` };
   if (sameAddress(tx.to, vault.delay) && tx.value === 0n && size(tx.data) === 36 && tx.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN) {
     const cooldown = toBigInt(tx.data.slice(10));
-    if (cooldown > 0n) return { kind: "change-delay", cooldown };
+    if (cooldown >= MIN_COOLDOWN && cooldown <= MAX_COOLDOWN) return { kind: "change-delay", cooldown };
   }
   if (size(tx.data) === 0) {
     return sameAddress(tx.to, vault.controller)
@@ -1479,7 +1492,12 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       : { kind: "transfer-elsewhere", token: null, to: tx.to, amount: tx.value };
   }
   const head = tx.data.slice(0, 10).toLowerCase();
-  if (sameAddress(tx.to, vault.safe) || sameAddress(tx.to, vault.delay) || sameAddress(tx.to, vault.roles)) {
+  if (
+    sameAddress(tx.to, vault.safe) ||
+    sameAddress(tx.to, vault.delay) ||
+    sameAddress(tx.to, vault.roles) ||
+    sameAddress(tx.to, vault.recoveryDelay?.delay)
+  ) {
     return { kind: "settings", label: SETTINGS[head] ?? "Changes the vault in an unknown way" };
   }
   if (head === TRANSFER && size(tx.data) === 68 && tx.value === 0n) {
@@ -1492,8 +1510,15 @@ export function classify(tx: DelayTx, vault: VaultParts): Action {
       return { kind: "unknown" };
     }
   }
+  if (head === APPROVE || head === INCREASE_ALLOWANCE || head === SET_APPROVAL_FOR_ALL) {
+    return { kind: "settings", label: "Lets another address take tokens out of your Chronobox" };
+  }
   return { kind: "unknown" };
 }
+
+const APPROVE = selector("approve(address,uint256)");
+const INCREASE_ALLOWANCE = selector("increaseAllowance(address,uint256)");
+const SET_APPROVAL_FOR_ALL = selector("setApprovalForAll(address,bool)");
 
 // ---------------------------------------------------------------------------
 // Withdraw, execute, skip, deposit
@@ -1536,7 +1561,7 @@ export function changeDelayTx(delay: Address, cooldown: bigint): DelayTx {
   return { to: delay, value: 0n, data: call("setTxCooldown(uint256)", [cooldown]), operation: 0 };
 }
 
-/** The parts of a Chronobox that the builders below need. With a guardian: who it is, the shared Safe, and the member list. */
+/** The parts of a Chronobox that the builders below need. With a guardian: who it is, the Council Safe, and the member list. */
 export type VaultParts = {
   safe: Address;
   delay: Address;
@@ -1545,11 +1570,11 @@ export type VaultParts = {
   guardian?: Address | null;
   council?: Address | null;
   members?: Address[];
-  /** The recovery Delay as it is now. Needed for everything about a recovery. */
+  /** The Recovery Delay as it is now. Needed for everything about a recovery. */
   recoveryDelay?: RecoveryParts | null;
   /** True while a recovery is on. */
   recoveryOn?: boolean;
-  /** True when the shared Safe has, or will have, the recovery Delay as its module. */
+  /** True when the Council Safe has, or will have, the Recovery Delay as its module. */
   councilRecovery?: boolean;
 };
 type Guarded = {
@@ -1602,12 +1627,12 @@ const assign = (member: Address, role: Hex, on: boolean) => call("assignRoles(ad
  * and disables the old one, and it moves the right to cancel the same way.
  * After it executes, only the new wallet can queue and cancel.
  *
- * With a guardian, the shared 2 of 2 Safe changes too: its role goes to the
+ * With a guardian, the Council Safe changes too: its role goes to the
  * Safe of the new wallet and the same guardian. The guardian can cancel this
  * while it waits, like everything else.
  *
- * With a recovery on (`recovery` is its Delay), the recovery stays on: the new shared Safe
- * has the recovery Delay as its module, and that Delay now acts on the new shared Safe.
+ * With a recovery on (`recovery` is its Delay), the recovery stays on: the new Council Safe
+ * has the Recovery Delay as its module, and that Delay now acts on the new Council Safe.
  */
 export function changeWalletTx(
   delay: Address,
@@ -1713,7 +1738,7 @@ function batchCalls(tx: DelayTx): { to: Address; data: Hex }[] | null {
 }
 
 /**
- * Takes the guardian out again: the right to cancel, and the role of the shared Safe. It waits
+ * Takes the guardian out again: the right to cancel, and the role of the Council Safe. It waits
  * the delay, and the guardian can cancel it. That is what a guardian is for.
  */
 export function removeGuardianTx(vault: {
@@ -1745,24 +1770,24 @@ export function removeGuardianTx(vault: {
 // ---------------------------------------------------------------------------
 //
 // The parts:
-//   - The recovery Delay. The Chronobox owns it. It acts on the shared Safe of wallet and
+//   - The Recovery Delay. The Chronobox owns it. It acts on the Council Safe of wallet and
 //     guardian. The guardian is its one module, so only the guardian can put something into
 //     its line. What is in the line can run after the wait, and anybody can send that.
-//   - The shared Safe has the recovery Delay as its one module, from its first moment.
+//   - The Council Safe has the Recovery Delay as its one module, from its first moment.
 // So after the wait the guardian can do alone what wallet and guardian can do together at
-// once: change the wallet. The shared Safe has no right to move money, and so the guardian
+// once: change the wallet. The Council Safe has no right to move money, and so the guardian
 // has none either. The wallet and the guardian can empty the line at once: that stops it.
 
 const nonceCall = (nonce: bigint) => call("setTxNonce(uint256)", [nonce]);
 
-/** The two calls that make the recovery Delay act on this account. */
+/** The two calls that make the Recovery Delay act on this account. */
 function pointRecoveryAt(recoveryDelay: Address, account: Address): string[] {
   return [batchItem(recoveryDelay, call("setAvatar(address)", [account])), batchItem(recoveryDelay, call("setTarget(address)", [account]))];
 }
 
 /**
- * The calls that turn the recovery on, for a recovery Delay that nobody can use now.
- * `council` is the shared Safe that it will act on. That Safe must have, or get, the recovery
+ * The calls that turn the recovery on, for a Recovery Delay that nobody can use now.
+ * `council` is the Council Safe that it will act on. That Safe must have, or get, the recovery
  * Delay as its module, or the recovery can never run.
  */
 function recoveryOnItems(safe: Address, roles: Address, guardian: Address, council: Address, read: RecoveryParts, wait: bigint): string[] | null {
@@ -1793,7 +1818,7 @@ function recoveryOnItems(safe: Address, roles: Address, guardian: Address, counc
  * Turns the recovery on, or changes how long a recovery waits. One step in the line, so it
  * waits the delay and the guardian can cancel it.
  *
- * To turn it on, the shared Safe must be the one that has the recovery Delay as its module.
+ * To turn it on, the Council Safe must be the one that has the Recovery Delay as its module.
  * If it is the other one, its role moves to that Safe in the same step. Then the recovery
  * Delay acts on that Safe, and the guardian becomes the one who can use it. The recovery
  * Delay must be made before this step runs: see `recoveryDelayCreateTx`.
@@ -1819,7 +1844,7 @@ export function setRecoveryTx(vault: Guarded, wait: bigint): DelayTx | null {
   return on ? batchTx([...items, ...on]) : null;
 }
 
-/** The wait that a step names for the recovery. Without one in it: the wait that the recovery Delay has, or is made with. */
+/** The wait that a step names for the recovery. Without one in it: the wait that the Recovery Delay has, or is made with. */
 function recoveryWaitIn(tx: DelayTx, parts: RecoveryParts): bigint {
   const calls = tx.operation === 0 && tx.value === 0n ? [{ to: tx.to, data: tx.data }] : (batchCalls(tx) ?? []);
   const cooldown = calls.find((c) => sameAddress(c.to, parts.delay) && c.data.slice(0, 10).toLowerCase() === SET_TX_COOLDOWN && size(c.data) === 36);
@@ -1827,7 +1852,7 @@ function recoveryWaitIn(tx: DelayTx, parts: RecoveryParts): bigint {
 }
 
 /**
- * The calls that turn a recovery off. The guardian can no longer use the recovery Delay, and
+ * The calls that turn a recovery off. The guardian can no longer use the Recovery Delay, and
  * the Delay points back at the Chronobox, where it can do nothing. So a recovery that waits
  * in its line when this runs can never be carried out.
  */
@@ -1848,7 +1873,7 @@ export function removeRecoveryTx(vault: Guarded): DelayTx | null {
   return items ? batchTx(items) : null;
 }
 
-/** The owners of the shared Safe, in the contract's order. For a Safe that is not made yet: the order it will be made with. */
+/** The owners of the Council Safe, in the contract's order. For a Safe that is not made yet: the order it will be made with. */
 export async function councilOwnersNow(rpc: Rpc, vault: { council: Address; controller: Address; guardian: Address }, made: boolean): Promise<Address[]> {
   return made ? councilOwners(rpc, vault.council) : [vault.controller, vault.guardian];
 }
@@ -1856,8 +1881,8 @@ export async function councilOwnersNow(rpc: Rpc, vault: { council: Address; cont
 /**
  * What a recovery is: the same step that wallet and guardian sign together to change the wallet
  * at once (see `councilSwapTx`), to the wallet that the guardian chooses. The guardian puts it
- * into the line of the recovery Delay (`queueTx` on that Delay). After the wait anybody can
- * carry it out (`executeTx` on that Delay), and the shared Safe must be made by then.
+ * into the line of the Recovery Delay (`queueTx` on that Delay). After the wait anybody can
+ * carry it out (`executeTx` on that Delay), and the Council Safe must be made by then.
  * Null without a recovery, and for a wallet that cannot take a Chronobox.
  */
 export function recoveryTx(vault: Guarded, owners: readonly Address[], to: Address | null, cancelUpTo: bigint): CouncilTx | null {
@@ -1865,7 +1890,7 @@ export function recoveryTx(vault: Guarded, owners: readonly Address[], to: Addre
   return councilSwapTx(vault, owners, to, cancelUpTo);
 }
 
-/** The new wallet and the point of the line that a wallet change of the shared Safe names. Null for anything else. */
+/** The new wallet and the point of the line that a wallet change of the Council Safe names. Null for anything else. */
 function swapRequestIn(tx: DelayTx, roles: Address): SwapRequest | null {
   const calls = batchCalls(tx);
   if (!calls || calls.length < 4) return null;
@@ -1907,7 +1932,7 @@ export type ReadRecoveryOptions = {
 };
 
 /**
- * What waits in the line of the recovery Delay, oldest first. Usually nothing, or one recovery.
+ * What waits in the line of the Recovery Delay, oldest first. Usually nothing, or one recovery.
  * Each item is read back and compared with the recovery that this app builds for the same
  * wallet, for the Chronobox as it is now. Only an exact match is called a recovery.
  */
@@ -1964,21 +1989,21 @@ export async function readRecoveryLine(
 // Wallet and guardian together: a new wallet at once
 // ---------------------------------------------------------------------------
 
-/** A transaction of the shared 2 of 2 Safe. */
+/** A transaction of the Council Safe. */
 export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: number };
 
 /** What the owner asks the guardian to agree to: the new wallet, and the point of the line that the change cancels up to. */
 export type SwapRequest = { to: Address; upTo: bigint };
 
 /**
- * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The shared
- * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
+ * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The Council
+ * Safe uses its role to enable the new wallet on the Vault Delay and disable the old one, moves the
  * right to cancel, and replaces the old wallet with the new one among its own two owners.
- * `owners` is the owner list of the shared Safe, in the contract's order.
+ * `owners` is the owner list of the Council Safe, in the contract's order.
  *
  * The same step empties the line: a lost wallet may have queued withdrawals before the owner
  * noticed, and those would still run after the wait. Once the old wallet is disabled it cannot
- * queue anything more, so in the same transaction the shared Safe gives itself the cancel role,
+ * queue anything more, so in the same transaction the Council Safe gives itself the cancel role,
  * sets the Delay's txNonce to `cancelUpTo` (the queueNonce when the request was read), and gives
  * the role back. That call may fail without stopping the change (the line may have moved since
  * the signatures), so a caller must still read the line afterwards: see `delayNonces`.
@@ -2016,7 +2041,7 @@ export function councilSwapTx(vault: Guarded, owners: readonly Address[], to: Ad
 /**
  * What a swap request does to the line as it stands now. The guardian checks this before agreeing.
  * The point of the line comes from a link, and the old wallet can make that link: it is one of
- * the two owners of the shared Safe, so it can also carry out whatever the guardian agrees to.
+ * the two owners of the Council Safe, so it can also carry out whatever the guardian agrees to.
  *   - "impossible": the point is past the end of the line. No real request names it.
  *   - "uncovered": `left` items wait that the change would not cancel, and the first of them has
  *     waited too long already: it could run soon after the change. Cancel them first.
@@ -2089,7 +2114,7 @@ export async function councilOwners(rpc: Rpc, council: Address): Promise<Address
   return (await read(rpc, council, "getOwners()", [], ["address[]"]))[0] as Address[];
 }
 
-/** The hash that both owners agree to. The shared Safe computes it, so it holds for this Safe, this network and its next transaction only. */
+/** The hash that both owners agree to. The Council Safe computes it, so it holds for this Safe, this network and its next transaction only. */
 export async function councilHash(rpc: Rpc, council: Address, tx: CouncilTx): Promise<Hex> {
   const [nonce] = (await read(rpc, council, "nonce()", [], ["uint256"])) as [bigint];
   const [hash] = await read(
@@ -2124,7 +2149,7 @@ export function councilExecTx(council: Address, tx: CouncilTx, owners: readonly 
 
 /**
  * Cancels the queue item with this nonce and every item before it. Nothing
- * moves. Only the setup wallet can send this: the Roles modifier makes the
+ * moves. Only the hot wallet can send this: the Roles modifier makes the
  * Safe call setTxNonce on the Delay.
  */
 export function cancelTx(roles: Address, delay: Address, nonce: bigint): TxRequest {
@@ -2231,55 +2256,184 @@ export async function readMany(rpc: Rpc, calls: readonly { to: Address; data: He
   });
 }
 
-/** How many balances go into one request. Small enough for the read limits of the networks that wallets use. */
-const BALANCES_PER_READ = 100;
+/**
+ * How many balances go into one request, largest first. The reads go through the wallet's own
+ * network, and free networks differ in what they accept: in the gas of one call, in the size of a
+ * request and of an answer, in how many requests they take at once. Fifty balances are about
+ * 1.5 million gas and 11 kB, which the usual free networks take. Where that fails, the same
+ * balances are asked for in smaller and smaller pieces, down to three.
+ */
+const BALANCES_PER_READ = [50, 20, 8, 3] as const;
+/** How many requests of one read are on their way at the same time. A weak network refuses a crowd. */
+const READS_AT_ONCE = 4;
+/** How long a reduced chunk size is remembered before the connection tries the full size again. */
+const READ_SIZE_TTL_MS = 5 * 60_000;
+
+/** The size that worked last on a connection, so that a network with tight limits is not asked the large size every time. */
+const readSize = new WeakMap<Rpc, { size: number; at: number }>();
+
+function rememberedReadSize(rpc: Rpc): number | undefined {
+  const entry = readSize.get(rpc);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > READ_SIZE_TTL_MS) {
+    readSize.delete(rpc);
+    return undefined;
+  }
+  return entry.size;
+}
+
+function rememberReadSize(rpc: Rpc, per: number): void {
+  const prev = rememberedReadSize(rpc);
+  if (prev === undefined || per < prev) readSize.set(rpc, { size: per, at: Date.now() });
+}
 
 export type Balances = {
   /** One entry for each asset. Null where the balance is not known. That is never "nothing". */
   balances: (bigint | null)[];
-  /** False when a combined read failed and only the main assets were read one by one. */
+  /** False when combined reads failed at every size and only the main assets were read one by one. */
   complete: boolean;
+  /** True when the network refused the usual size and smaller pieces had to be used. Everything was read, but slowly. */
+  reduced: boolean;
 };
+
+/** Limits total concurrent work across a read, including recursive fallbacks, to at most `max` in-flight calls. */
+function createLimiter(max: number) {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T,>(fn: () => Promise<T>): Promise<T> => {
+    if (active >= max) await new Promise<void>((resolve) => waiting.push(resolve));
+    active++;
+    try {
+      return await fn();
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
+  };
+}
+
+/** First fallback step whose piece size actually splits `len`, or past the end when it cannot be split further. */
+function nextSplitStep(len: number, from: number): number {
+  let step = from;
+  while (step < BALANCES_PER_READ.length && BALANCES_PER_READ[step] >= len) step++;
+  return step;
+}
+
+/**
+ * Runs many read calls through Multicall3, falling back to smaller pieces on networks with tight
+ * limits. Pieces that fail at every size stay null.
+ */
+export async function readManyInPieces(rpc: Rpc, calls: readonly { to: Address; data: Hex }[]): Promise<(Hex | null)[]> {
+  const results: (Hex | null)[] = calls.map(() => null);
+  if (calls.length === 0) return results;
+  const limit = createLimiter(READS_AT_ONCE);
+  const read = async (group: number[], step: number): Promise<void> => {
+    if (step >= BALANCES_PER_READ.length) return;
+    const per = BALANCES_PER_READ[step];
+    const pieces: number[][] = [];
+    for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
+    await Promise.all(
+      pieces.map(async (piece) => {
+        try {
+          const answers = await limit(() => readMany(rpc, piece.map((i) => calls[i])));
+          piece.forEach((i, k) => {
+            results[i] = answers[k];
+          });
+          if (group.length > per && step > 0) rememberReadSize(rpc, per);
+        } catch {
+          await read(piece, nextSplitStep(piece.length, step + 1));
+        }
+      }),
+    );
+  };
+  const prev = rememberedReadSize(rpc);
+  const start = BALANCES_PER_READ.findIndex((per) => per === prev);
+  await read(calls.map((_, i) => i), start < 0 ? 0 : start);
+  return results;
+}
 
 /**
  * The balances of one address for a long list of assets, in a few requests.
- * When a combined read fails, the main assets are read one by one, and the
+ * A combined read that fails is tried again in smaller pieces. Where the
+ * smallest piece fails too, the main assets are read one by one, and the
  * others stay "not known".
  */
 export async function readBalances(rpc: Rpc, holder: Address, assets: readonly { token: Address | null; main?: boolean }[]): Promise<Balances> {
   const balances: (bigint | null)[] = assets.map(() => null);
   let complete = true;
-  const groups: number[][] = [];
-  for (let i = 0; i < assets.length; i += BALANCES_PER_READ) groups.push(assets.slice(i, i + BALANCES_PER_READ).map((_, k) => i + k));
-  await Promise.all(
-    groups.map(async (group) => {
-      try {
-        const answers = await readMany(
-          rpc,
-          group.map((i) => {
+  const limit = createLimiter(READS_AT_ONCE);
+  const combined = async (group: number[]) => {
+    const answers = await limit(() =>
+      readMany(
+        rpc,
+        group.map((i) => {
+          const token = assets[i].token;
+          return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+        }),
+      ),
+    );
+    group.forEach((i, k) => {
+      const answer = answers[k];
+      // An address with no token behind it answers with nothing. That is not a balance of zero.
+      balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
+    });
+  };
+  const oneByOne = async (group: number[]) => {
+    complete = false;
+    await Promise.all(
+      group
+        .filter((i) => assets[i].main)
+        .map((i) =>
+          limit(async () => {
             const token = assets[i].token;
-            return token ? { to: token, data: call("balanceOf(address)", [holder]) } : { to: CONTRACTS.multicall3, data: call("getEthBalance(address)", [holder]) };
+            balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
           }),
-        );
-        group.forEach((i, k) => {
-          const answer = answers[k];
-          // An address with no token behind it answers with nothing. That is not a balance of zero.
-          balances[i] = answer !== null && size(answer) >= 32 ? toBigInt(strip(answer).slice(0, 64)) : null;
-        });
-      } catch {
-        complete = false;
-        await Promise.all(
-          group
-            .filter((i) => assets[i].main)
-            .map(async (i) => {
-              const token = assets[i].token;
-              balances[i] = await (token ? tokenBalance(rpc, token, holder) : nativeBalance(rpc, holder)).catch(() => null);
-            }),
-        );
-      }
-    }),
-  );
-  return { balances, complete };
+        ),
+    );
+  };
+  /** Reads a group at one size. What fails goes on to the next smaller size that actually splits it, and after the smallest to single reads. */
+  const read = async (group: number[], step: number): Promise<void> => {
+    if (step >= BALANCES_PER_READ.length) return oneByOne(group);
+    const per = BALANCES_PER_READ[step];
+    const pieces: number[][] = [];
+    for (let i = 0; i < group.length; i += per) pieces.push(group.slice(i, i + per));
+    await Promise.all(
+      pieces.map(async (piece) => {
+        try {
+          await combined(piece);
+          // Only a read that was really cut to this size says something about the network.
+          if (group.length > per && step > 0) rememberReadSize(rpc, per);
+        } catch {
+          await read(piece, nextSplitStep(piece.length, step + 1));
+        }
+      }),
+    );
+  };
+  const prev = rememberedReadSize(rpc);
+  const start = BALANCES_PER_READ.findIndex((per) => per === prev);
+  await read(assets.map((_, i) => i), start < 0 ? 0 : start);
+  return { balances, complete, reduced: complete && rememberedReadSize(rpc) !== undefined };
+}
+
+/**
+ * Withdrawals that were asked for together: in the same block, one after the other in the line.
+ * Only plain withdrawals to the wallet are grouped. Anything else keeps its own card.
+ */
+export function groupsOf(queue: QueueItem[], vault: VaultParts): QueueItem[][] {
+  const groups: QueueItem[][] = [];
+  for (const item of queue) {
+    const last = groups[groups.length - 1];
+    const plain = item.tx && classify(item.tx, vault).kind === "withdraw";
+    const prev = last?.[last.length - 1];
+    if (last && plain && prev?.tx && classify(prev.tx, vault).kind === "withdraw" && prev.createdAt === item.createdAt) last.push(item);
+    else groups.push([item]);
+  }
+  return groups;
+}
+
+/** The calls that carry out a group, in its order in the line. */
+export function collectCalls(items: QueueItem[], delay: Address): TxRequest[] {
+  return items.map((item) => executeTx(delay, item.tx!));
 }
 
 /** Reads symbol and decimals of a token. Returns null when the address is not an ERC-20 token. */

@@ -31,15 +31,28 @@ async function chainIdOfFork(url: string): Promise<string | null> {
   }
 }
 
-// ?safe=1 makes the wallet act as a 1 of 1 Safe that the anvil account owns.
-// It then answers the EIP-5792 methods, like a smart contract wallet does.
-const SAFE_MODE = new URLSearchParams(location.search).get("safe") === "1";
+// ?wallet= says what kind of wallet this is. The dev bar of the app sets it.
+//   plain: an account without batching (the default).
+//   batch: an account that answers the EIP-5792 methods and sends several calls as one.
+//   safe:  a 1 of 1 Safe that the anvil account owns. It answers the EIP-5792 methods too.
+// ?safe=1 is the older way to say "safe".
+const QUERY = new URLSearchParams(location.search);
+const KIND: "plain" | "batch" | "safe" = QUERY.get("wallet") === "safe" || QUERY.get("safe") === "1" ? "safe" : QUERY.get("wallet") === "batch" ? "batch" : "plain";
+const SAFE_MODE = KIND === "safe";
+const BATCHES = KIND !== "plain";
 const SAFE_INDEX = 900;
 
 const ANVIL_ACCOUNTS = [
   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
   "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+  "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+  "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+  "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+  "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
+  "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
+  "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
+  "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720",
 ] as const;
 
 const ICON =
@@ -112,6 +125,38 @@ async function sendAsSafe(owner: string, safe: string, calls: RawCall[]): Promis
     calls.map((c) => ({ to: c.to as `0x${string}`, data: (c.data ?? "0x") as `0x${string}`, value: BigInt(c.value ?? "0x0") })),
   );
   return (await rpc("eth_sendTransaction", [{ from: owner, to: tx.to, data: tx.data }])) as string;
+}
+
+/**
+ * Sends calls from a plain account as one: all of them or none. Anvil has no account that batches,
+ * so the calls go out one after the other, and the fork is put back to where it was when one fails.
+ */
+async function sendTogether(from: string, calls: RawCall[]): Promise<string> {
+  const before = await rpc("evm_snapshot");
+  const hashes: string[] = [];
+  try {
+    // A real batch lands in one block. The fork stops mining on its own, takes every call, and mines them as one block.
+    await rpc("evm_setAutomine", [false]);
+    try {
+      for (const c of calls) hashes.push((await rpc("eth_sendTransaction", [{ from, to: c.to, data: c.data ?? "0x", value: c.value ?? "0x0", gas: "0x4c4b40" }])) as string);
+      await rpc("evm_mine");
+    } finally {
+      await rpc("evm_setAutomine", [true]);
+    }
+    for (const hash of hashes) {
+      // The receipt can be a moment behind the block.
+      let receipt: { status: string } | null = null;
+      for (let tries = 0; tries < 40 && !receipt; tries++) {
+        receipt = (await rpc("eth_getTransactionReceipt", [hash])) as { status: string } | null;
+        if (!receipt) await new Promise((r) => setTimeout(r, 100));
+      }
+      if (!receipt || BigInt(receipt.status) !== 1n) throw new ProviderRpcError(3, "execution reverted: a call of the batch failed");
+    }
+  } catch (error) {
+    await rpc("evm_revert", [before]);
+    throw error;
+  }
+  return hashes[hashes.length - 1] ?? "";
 }
 
 let recent: number[] = [];
@@ -196,18 +241,18 @@ function createProvider(account: string, owner: string) {
           return rpc(method, [{ ...tx, from: account }, ...list.slice(1)]);
         }
         case "wallet_getCapabilities": {
-          if (!SAFE_MODE) throw new ProviderRpcError(-32601, "Method not found");
+          if (!BATCHES) throw new ProviderRpcError(-32601, "Method not found");
           return { [(await rpc("eth_chainId")) as string]: { atomic: { status: "supported" } } };
         }
         case "wallet_sendCalls": {
-          if (!SAFE_MODE) throw new ProviderRpcError(-32601, "Method not found");
+          if (!BATCHES) throw new ProviderRpcError(-32601, "Method not found");
           const request = list[0] as { calls: RawCall[]; atomicRequired?: unknown };
           // As strict as MetaMask, so that a request it would refuse fails here too.
           if (typeof request.atomicRequired !== "boolean") throw new ProviderRpcError(-32602, "Invalid params: atomicRequired must be a boolean");
           request.calls.forEach((c, i) => {
             if (c.data !== undefined && !/^0x[0-9a-f]+$/.test(c.data)) throw new ProviderRpcError(-32602, `Invalid params: calls > ${i} > data must be hex with at least one byte`);
           });
-          return { id: await sendAsSafe(owner, account, request.calls) };
+          return { id: SAFE_MODE ? await sendAsSafe(owner, account, request.calls) : await sendTogether(account, request.calls) };
         }
         case "wallet_getCallsStatus": {
           const receipt = (await rpc("eth_getTransactionReceipt", [list[0]])) as { status: string } | null;
@@ -267,7 +312,7 @@ else rpc("anvil_impersonateAccount", [owner]).catch((err) => console.warn("dev-w
 const detail = Object.freeze({
   info: Object.freeze({
     uuid: crypto.randomUUID(),
-    name: SAFE_MODE ? "Anvil test Safe" : "Anvil test wallet",
+    name: SAFE_MODE ? "Anvil test Safe" : BATCHES ? "Anvil test wallet (batching)" : "Anvil test wallet",
     icon: ICON,
     rdns: "dev.anvil",
   }),

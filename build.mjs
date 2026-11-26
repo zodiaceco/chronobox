@@ -45,8 +45,9 @@ const SOURCEMAP = DEV || args.has("--sourcemap");
 
 const pkg = JSON.parse(await fs.readFile(path.join(ROOT, "package.json"), "utf8"));
 
-const PROD_CONNECT = "connect-src 'none'";
-const DEV_CONNECT = "connect-src 'self' http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546";
+// The page talks to nobody but the token index of third-party services, and only after they are switched on.
+const PROD_CONNECT = "connect-src https://eth.blockscout.com https://eth-sepolia.blockscout.com";
+const DEV_CONNECT = `${PROD_CONNECT} 'self' http://127.0.0.1:8545 http://localhost:8545 http://127.0.0.1:8546`;
 const HASH_PLACEHOLDER = "__BUILD_HASH__";
 
 /** Shared esbuild options for app code. */
@@ -138,11 +139,19 @@ async function buildProd() {
   await clean();
   await copyStatic();
 
+  const stripDevCss = {
+    name: "strip-dev-css",
+    setup(build) {
+      build.onResolve({ filter: /devbar\.css$/ }, () => ({ path: "devbar.css", namespace: "strip-dev" }));
+      build.onLoad({ filter: /.*/, namespace: "strip-dev" }, () => ({ contents: "", loader: "css" }));
+    },
+  };
   const result = await esbuild.build({
     ...appOptions(),
     entryPoints: [{ in: "src/main.tsx", out: "app" }],
     outdir: OUT,
     entryNames: "assets/[name]-[hash]",
+    plugins: [stripDevCss],
     metafile: true,
     write: true,
   });
@@ -166,10 +175,10 @@ async function buildProd() {
   const manifest = { version: pkg.version, buildHash, files: all };
   await fs.writeFile(path.join(OUT, "build.json"), JSON.stringify(manifest, null, 2) + "\n");
 
-  // Guard: the dev wallet must never reach production.
+  // Guard: dev-only tools must never reach production.
   for (const p of await listFiles(OUT)) {
     const text = await fs.readFile(path.join(OUT, p), "latin1");
-    if (text.includes("dev-wallet")) throw new Error(`build: "dev-wallet" found in out/${p}`);
+    if (text.includes("dev-wallet") || text.includes("devbar")) throw new Error(`build: dev-only code found in out/${p}`);
   }
 
   // Report.

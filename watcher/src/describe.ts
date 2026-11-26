@@ -14,7 +14,7 @@ export type DescribeCtx = {
   roles?: string;
   /** The delay of the vault now, in seconds. */
   cooldown?: bigint;
-  /** The recovery Delay of the vault, and how long a recovery waits now. Only known with CHRONOBOX. */
+  /** The Recovery Delay of the vault, and how long a recovery waits now. Only known with CHRONOBOX. */
   recoveryDelay?: string;
   recoveryWait?: bigint;
   tokenMeta?: TokenMeta;

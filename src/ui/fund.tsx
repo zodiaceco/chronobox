@@ -7,7 +7,7 @@
 import { useRef, useState } from "preact/hooks";
 import { SLIDER_FULL, SLIDER_STOPS, amountAt, formatUsd, partOf, snapPart, usdValue } from "../lib/deposit.ts";
 import { formatAmount, formatUnits, parseUnits } from "../lib/format.ts";
-import type { Asset } from "./common.tsx";
+import { type Asset, TokenBadge } from "./common.tsx";
 
 /** How many rows show at first, and how many more each "See more" adds. */
 const FIRST_ROWS = 5;
@@ -65,9 +65,7 @@ function FundRow(props: RowProps) {
   return (
     <li class={`fund-row${typed ? " is-on" : ""}${props.active ? " is-active" : ""}`} onPointerDown={props.onTouch} onFocusCapture={props.onTouch}>
       <div class="fund-head">
-        <span class="token-badge" aria-hidden="true">
-          {asset.symbol.slice(0, 1)}
-        </span>
+        <TokenBadge asset={asset} />
         <span class="fund-name">
           <strong>
             {asset.symbol}

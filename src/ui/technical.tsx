@@ -173,7 +173,7 @@ export function TechnicalPage() {
         <p class="tech-note">
           Built from the same contracts: a second rule in the cancel switch (<Ext href={ROLES_DOCS}>Zodiac Roles 2.1.1</Ext>), a Safe 1.4.1
           that needs your wallet and your guardian together, and (when recovery is on) a second <Ext href={DELAY_DOCS}>Zodiac Delay</Ext>{" "}
-          owned by the Chronobox that acts on that shared Safe. The app checks all of them every time you open the Chronobox.
+          owned by the Chronobox that acts on that Council Safe. The app checks all of them every time you open the Chronobox.
         </p>
       </div>
 
@@ -316,7 +316,8 @@ export function TechnicalPage() {
         </ul>
         <p class="tech-note">
           Alerts are the exception, and you choose them. Our alert service must know who follows a Chronobox to send an alert, and we can see that.
-          You can also run the alert service yourself.
+          You can also run the alert service yourself. Third-party services are the other one, also off until you switch them on: Blockscout is
+          then asked which tokens your Chronobox holds, and sees your IP address with its address.
         </p>
       </div>
 
@@ -343,29 +344,29 @@ export function TechnicalPage() {
         <details class="tech-more">
           <summary>For developers</summary>
           <p>
-            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Delay</Ext> and the{" "}
+            Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Vault Delay</Ext> and the{" "}
             <Ext href={ROLES_DOCS}>Roles modifier</Ext>, wires them, and replaces the owner with <span class="tech-mono">0x…dEaD</span>. A wallet that can batch
             (EIP-5792), such as a Safe or an EIP-7702 account, creates the Chronobox, switches on the time delay and makes the deposits as one atomic transaction.
           </p>
           <p>
-            A change of the delay is <code>setTxCooldown</code> on the Delay. A hand-over enables the new wallet on the Delay and the Roles
-            modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Delay, called by the Safe through
+            A change of the delay is <code>setTxCooldown</code> on the Vault Delay. A hand-over enables the new wallet on the Vault Delay and the Roles
+            modifier and disables the old one, in one batch. Cancel is <code>setTxNonce</code> on the Vault Delay, called by the Safe through
             the Roles modifier. The app proves that this is the only permission from the full event history of the Roles contract.
           </p>
           <p>
-            A guardian is one batch through the Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
+            A guardian is one batch through the Vault Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
             address of a 2 of 2 Safe of wallet and guardian. That role can call <code>enableModule</code> and <code>disableModule</code> on the
-            Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
+            Vault Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
             A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
           <p>
             The recovery is a second Delay, at an address that depends only on the Chronobox. The Safe owns it, and it is never a module of the
             Safe. Turned on, it points at the 2 of 2 Safe (<code>setAvatar</code>, <code>setTarget</code>), and the guardian is its one module.
             That 2 of 2 Safe is then made in a second form: its setup calls <code>enableModules</code> of SafeModuleSetup 0.3.0, so the
-            recovery Delay is its one module from its first moment. A recovery is the same batch as a hand-over by both. The guardian queues it
-            on the recovery Delay, and after the wait anybody calls <code>executeNextTx</code>. The role "cancel" also covers{" "}
-            <code>setTxNonce</code> on the recovery Delay: that is how the wallet and the guardian stop it. Turning it off takes the guardian off
-            the recovery Delay and points it back at the Safe, where it can do nothing.
+            Recovery Delay is its one module from its first moment. A recovery is the same batch as a hand-over by both. The guardian queues it
+            on the Recovery Delay, and after the wait anybody calls <code>executeNextTx</code>. The role "cancel" also covers{" "}
+            <code>setTxNonce</code> on the Recovery Delay: that is how the wallet and the guardian stop it. Turning it off takes the guardian off
+            the Recovery Delay and points it back at the Safe, where it can do nothing.
           </p>
           <ul class="tech-addresses">
             {(
