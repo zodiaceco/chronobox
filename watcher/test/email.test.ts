@@ -137,13 +137,13 @@ test('Email: a person signs up, confirms, and then gets the alerts of the vault'
   const first = mails[0];
   assert.equal(first.to, MAIL_ANNA);
   assert.equal(first.from, 'Chronobox alerts <alerts@chrono.example>');
-  assert.equal(first.subject, 'Confirm the alerts for your Chronobox');
-  assert.match(first.text, new RegExp(`^Somebody asked for alerts for the Chronobox ${SAFE} on Ethereum to this address\\.\\n\\nWas it you\\? Then open this link and confirm:\\n${PUBLIC}${EMAIL_PATH}\\?confirm=`));
+  assert.equal(first.subject, 'Confirm the alerts for the Chronobox');
+  assert.match(first.text, new RegExp(`^You asked for the alerts of the Chronobox ${SAFE} on Ethereum at this address\\. Open this link to confirm it, and they start:\\n${PUBLIC}${EMAIL_PATH}\\?confirm=`));
   assert.match(first.text, new RegExp(`If it was not you, do nothing: we delete this request after one day\\.\\n\\nNot you\\? Cancel this request, and every other one to this address, now:\\n${PUBLIC}${EMAIL_PATH}\\?cancel=[\\w-]+$`));
   assert.equal(first.agent, 'chronobox-watcher');
   // The HTML part, from react-email: the same words, a button to the same link, and nothing else to click.
   assert.match(first.html, /^<!DOCTYPE html/);
-  assert.match(first.html, new RegExp(`Somebody asked for alerts for the Chronobox ${SAFE} on Ethereum to this address\\.`));
+  assert.match(first.html, new RegExp(`You asked for the alerts of the Chronobox ${SAFE} on Ethereum at this address\\. Confirm it, and they start:`));
   const cancelLink = new RegExp(`https://\\S+\\?cancel=[\\w-]+`).exec(first.text)![0];
   assert.deepEqual([...first.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), [linkIn(first, 'confirm'), cancelLink]);
   assert.match(first.html, />Confirm the alerts<\/span>/);
@@ -171,17 +171,20 @@ test('Email: a person signs up, confirms, and then gets the alerts of the vault'
   await w.poll();
   assert.equal(mails.length, 2);
   const alert = mails[1];
-  assert.equal(alert.subject, '⚠️ New request: Send 1.5 ETH to 0xbaba…baba');
-  assert.match(alert.text, /^Somebody asked this Chronobox to send 1\.5 ETH to 0xbaba…baba\./);
-  assert.match(alert.text, new RegExp(`\\n\\nChronobox 0x5a5a…5a5a on Ethereum\\n\\nTo stop these alerts, open this link:\\n${PUBLIC}${EMAIL_PATH}\\?stop=[\\w-]+$`));
+  assert.equal(alert.subject, 'New request: Send 1.5 ETH to 0xbaba…baba', 'the subject is the title, with no mark');
+  assert.match(alert.text, /^A request to send 1\.5 ETH to 0xbaba…baba has started\./);
+  const open = `https://www.chrono.box/#/v/eth:${SAFE}`;
+  assert.ok(alert.text.includes(`\n\nOpen the Chronobox:\n${open}\n\nChronobox 0x5a5a…5a5a on Ethereum\n\nTo stop these alerts, open this link:\n`), 'the link to the Chronobox is above the foot');
+  assert.match(alert.text, new RegExp(`\\n\\nTo stop these alerts, open this link:\\n${PUBLIC}${EMAIL_PATH}\\?stop=[\\w-]+$`));
   const stop = linkIn(alert, 'stop');
   assert.notEqual(tokenOf(stop), tokenOf(link), 'the link of the confirmation stops nothing');
   assert.deepEqual(alert.headers, { 'List-Unsubscribe': `<${stop}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' });
-  assert.equal((alert.text.match(/https?:\/\//g) ?? []).length, 1, 'the stop link is the only link in an alert');
+  assert.equal((alert.text.match(/https?:\/\//g) ?? []).length, 2, 'an alert has two links: the Chronobox in the app, and the stop link');
   // In the HTML too, and the text is escaped, with its paragraphs and lines.
-  assert.deepEqual([...alert.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), [stop]);
+  assert.deepEqual([...alert.html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]), [open, stop]);
+  assert.match(alert.html, />Open the Chronobox</);
   assert.match(alert.html, /<h1[^>]*>New request: Send 1\.5 ETH to 0xbaba…baba<\/h1>/);
-  assert.match(alert.html, />Somebody asked this Chronobox to send 1\.5 ETH to 0xbaba…baba\./);
+  assert.match(alert.html, />A request to send 1\.5 ETH to 0xbaba…baba has started\./);
   assert.match(alert.html, />Chronobox 0x5a5a…5a5a on Ethereum<\/p>/);
   assert.match(alert.html, />Stop these alerts<\/a>/);
   assert.ok((alert.html.match(/<p /g) ?? []).length >= 3, 'one paragraph per block of the message');
@@ -243,8 +246,8 @@ test('Email: stop from the page or from the mail program; the others are told, b
   assert.match(done.html, /<h1>Done<\/h1><p>No more alerts of the Chronobox 0x5a5a…5a5a on Ethereum to this address\. We deleted it from our list\.<\/p>/);
   assert.deepEqual(email.subscribers(1, SAFE).map((e) => e.email), [MAIL_BEN]);
   // Alerts do not go off in silence: Ben and the chat are told.
-  assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_BEN, 'Somebody stopped the alerts of your Chronobox']]);
-  assert.match(mails[0].text, /^An email address that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them\. You still get them\.\n\nChronobox/);
+  assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_BEN, 'Somebody stopped the alerts of a Chronobox']]);
+  assert.match(mails[0].text, /^An email address that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them\. You still get them\.\n\nOpen the Chronobox:\n\S+\n\nChronobox/);
   assert.deepEqual(saidTo(CARL), ['An email address that got the alerts of the Chronobox 0x5a5a…5a5a on Ethereum has stopped them. You still get them here.']);
   assert.equal((await post({ stop: tokenOf(annaStop) })).status, 410);
 
@@ -392,7 +395,7 @@ test('Email: a stranger who fills the requests of an address does not block it: 
 
   // Now Anna's own request goes out at once.
   await post({ c: `1-${SAFE}`, email: MAIL_ANNA }, '203.0.113.200');
-  assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_ANNA, 'Confirm the alerts for your Chronobox']]);
+  assert.deepEqual(mails.map((m) => [m.to, m.subject]), [[MAIL_ANNA, 'Confirm the alerts for the Chronobox']]);
   assert.match(logs.join('\n'), /email: an address cancelled its requests/);
   assert.doesNotMatch(logs.join('\n'), /anna/);
 });

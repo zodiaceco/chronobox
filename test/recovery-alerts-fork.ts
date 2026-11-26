@@ -184,7 +184,7 @@ try {
   assert.match(got[0].title, /^Recovery started: Recovery to 0x2361…1E8f$/i);
   assert.match(got[0].message, new RegExp(`When it is carried out, the wallet ${NEW.toLowerCase()} controls this Chronobox`));
   assert.match(got[0].message, /\(in 90 days\)/);
-  assert.match(got[0].message, /If you did not ask for this, open your Chronobox and stop it\.$/);
+  assert.match(got[0].message, /If the owner did not ask for this, open the Chronobox and stop it\.$/);
   ok("the guardian started a recovery: the alert names the new wallet and the end of the wait");
 
   step("3. The wallet stops it");
@@ -210,7 +210,7 @@ try {
   got = heard();
   assert.deepEqual(events(got), ["recovery_soon"]);
   assert.match(got[0].title, /^Recovery wait ends soon: Recovery to 0x2361…1e8f$/i);
-  assert.match(got[0].message, /That is in 6 days 23 hours\. Then anybody can carry it out at once, and that wallet controls this Chronobox\.\n\nIf you did not ask for this, open your Chronobox and stop it before then\.$/);
+  assert.match(got[0].message, /That is in 6 days 23 hours\. Then anybody can carry it out at once, and that wallet controls this Chronobox\.\n\nIf the owner did not ask for this, open the Chronobox and stop it before then\.$/);
   await poll();
   assert.deepEqual(events(heard()), []);
   await warp(6n * DAY);

@@ -142,10 +142,12 @@ test('a queued native withdrawal produces one Queued alert, then Ready once', as
   assert.equal(h.event, 'queued');
   assert.equal(h.nonce, 0);
   assert.equal(h.title, 'New request: Withdraw 1.5 ETH');
-  assert.ok(h.message.startsWith(`Somebody asked this Chronobox to withdraw 1.5 ETH. The money goes to the wallet of this Chronobox, ${OWNER_WALLET}.`));
-  assert.ok(h.message.includes(`\n\nThe wait ends on ${fmtWhen(q.createdAt + chain.cooldown)} (in 1 day 23 hours).\n\nWas it you?`));
+  assert.ok(h.message.startsWith(`A request to withdraw 1.5 ETH has started. The money goes to the wallet of this Chronobox, ${OWNER_WALLET}.`));
+  assert.ok(h.message.includes(`\n\nThe wait ends on ${fmtWhen(q.createdAt + chain.cooldown)} (in 1 day 23 hours).\n\nIf the owner did not ask for this, `));
   // This vault has no cancel, so the alert does not say "cancel it".
-  assert.ok(h.message.endsWith('Was it you? Then you need to do nothing. If not, look at your Chronobox now. It cannot cancel a request. Somebody else may have your wallet.'));
+  assert.ok(h.message.endsWith('\n\nIf the owner did not ask for this, look at the Chronobox now. It cannot cancel a request.'));
+  // The normal case is the norm: the alert does not ask who it was, and it names no thief.
+  assert.doesNotMatch(h.message, /Somebody|Was it you|thief|stolen/);
   // No word of the contracts in what a person reads.
   assert.doesNotMatch(`${h.title} ${h.message}`, /queue|transaction|execute|vault|module|Delay|Roles|#\d/);
   assert.equal(fmtWhen(1_800_000_000n), '15 Jan 2027, 08:00 UTC');
@@ -164,7 +166,7 @@ test('a queued native withdrawal produces one Queued alert, then Ready once', as
   await w.poll();
   assert.deepEqual(hooks().map((h) => h.json.event), ['ready']);
   assert.equal(hooks()[0].json.title, 'Wait over: Withdraw 1.5 ETH');
-  assert.match(hooks()[0].json.message, /^The wait is over for the request to withdraw 1\.5 ETH\. Anybody can finish it now, and it does only what the request says\. It must be finished before /);
+  assert.match(hooks()[0].json.message, /^The request to withdraw 1\.5 ETH is ready\. Open the Chronobox to finish it\. It must be finished before /);
   sent = [];
   await w.poll();
   assert.equal(sent.length, 0, 'Ready only once');
@@ -179,7 +181,7 @@ test('a non-withdrawal call is flagged with the highest priority', async () => {
   const n = hooks()[0];
   assert.equal(n.json.priority, 5);
   assert.equal(n.json.title, 'New request: Remove the delay');
-  assert.match(n.json.message, /^Somebody asked this Chronobox to remove the delay\. After this, a withdrawal does not wait at all\. A person who has your wallet can take the money at once\./);
+  assert.match(n.json.message, /^A request to remove the delay has started\. After this, a withdrawal does not wait at all, and nobody has time to cancel one\. The Chronobox app does not make such a request\./);
 
   // A call that the app does not make: one plain sentence, and the call itself for a person who can read it.
   sent = [];
@@ -205,9 +207,15 @@ test('a change of the delay says what it is now, and what the change means', asy
   chain.enqueue(DELAY, 0n, '0xebb2b4a2' + u(30n * DAY)); // longer
   await w.poll();
   assert.equal(hooks()[0].json.title, 'New request: Change the delay to 1 hour');
-  assert.match(hooks()[0].json.message, /After this, every withdrawal waits 1 hour\. It is 2 days now\. A shorter delay gives you less time to stop a thief\./);
-  assert.match(hooks()[1].json.message, /After this, every withdrawal waits 30 days\. It is 2 days now\. A longer delay makes every withdrawal wait longer\./);
+  assert.match(hooks()[0].json.message, /After this, every withdrawal waits 1 hour\. It is 2 days now\. With a shorter delay there is less time to cancel a withdrawal\./);
+  assert.match(hooks()[1].json.message, /After this, every withdrawal waits 30 days\. It is 2 days now\.\n\n/);
   assert.deepEqual(hooks().map((m) => m.json.priority), [5, 5]);
+  // A shorter delay than the app offers: the alert says that the app does not make it.
+  sent = [];
+  chain.enqueue(DELAY, 0n, '0xebb2b4a2' + u(60)); // 1 minute
+  await w.poll();
+  assert.equal(hooks()[0].json.priority, 5);
+  assert.match(hooks()[0].json.message, /The Chronobox app does not make such a request\./);
 });
 
 // What the Chronobox app puts in a batch: MultiSend, as a delegate call from the Safe.
@@ -254,18 +262,16 @@ test('the changes that the app makes in one step are named: a new wallet, a guar
   await w.poll();
   const [h, a, r, x] = hooks();
   assert.equal(h.json.title, 'New request: Hand over to 0xa1a1…a1a1');
-  assert.ok(h.json.message.includes(`After this, the wallet ${NEW_WALLET} holds this Chronobox, and the wallet of today does not. It can withdraw all the money. Open your Chronobox to check that the request is what it looks like.`));
+  assert.ok(h.json.message.includes(`After this, the wallet ${NEW_WALLET} controls this Chronobox, and the wallet of today does not. Open the Chronobox to see the request in full.`));
   assert.equal(a.json.title, 'New request: Add the guardian 0x6a6a…6a6a');
   assert.ok(a.json.message.includes(`After this, ${GUARDIAN} can stop every withdrawal. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once.`));
   assert.equal(r.json.title, 'New request: Remove the guardian');
   assert.ok(r.json.message.includes(`After this, ${GUARDIAN} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.`));
   assert.equal(x.json.title, 'New request: Change this Chronobox in a way that the app does not know');
   assert.match(x.json.message, /It makes 2 changes in one step\. The Chronobox app does not make such a request\. Technical detail: a batch of calls to 0x7e7e\w+, 0x7070\w+\./);
-  // Every change is the loudest kind, also when it looks like one that the app makes.
-  for (const m of [h, a, r, x]) {
-    assert.equal(m.json.priority, 5);
-    assert.match(m.json.message, /If not, open your Chronobox and cancel it\.$/);
-  }
+  // For the webhook, every change has the highest priority, also when it looks like one that the app makes.
+  assert.deepEqual([h, a, r, x].map((m) => m.json.priority), [5, 5, 5, 5]);
+  for (const m of [h, a, r, x]) assert.match(m.json.message, /\n\nIf the owner did not ask for this, open the Chronobox and cancel it\.$/);
   assert.deepEqual(Object.values(w.state.items).map((i) => i.kind), ['handover', 'guardian_add', 'guardian_remove', 'call']);
 });
 
@@ -281,11 +287,11 @@ test('transfers to other addresses are unusual, ERC-20 withdrawals are decoded',
   assert.equal(msgs.length, 3);
   assert.equal(msgs[0].json.priority, 4);
   assert.equal(msgs[0].json.title, 'New request: Send 1 ETH to 0xbaba…baba');
-  assert.ok(msgs[0].json.message.startsWith(`Somebody asked this Chronobox to send 1 ETH to 0xbaba…baba. The money goes to ${STRANGER}. That is not the wallet of this Chronobox. The Chronobox app does not make such a request.`));
+  assert.ok(msgs[0].json.message.startsWith(`A request to send 1 ETH to 0xbaba…baba has started. The money goes to ${STRANGER}. That is not the wallet of this Chronobox. The Chronobox app does not make such a request.`));
   assert.equal(msgs[1].json.priority, 3);
-  assert.match(msgs[1].json.message, /^Somebody asked this Chronobox to withdraw 2\.5 USDC\. /);
+  assert.match(msgs[1].json.message, /^A request to withdraw 2\.5 USDC has started\. /);
   assert.equal(msgs[2].json.priority, 4);
-  assert.match(msgs[2].json.message, /^Somebody asked this Chronobox to send 1 USDC to 0xbaba…baba\. /);
+  assert.match(msgs[2].json.message, /^A request to send 1 USDC to 0xbaba…baba has started\. /);
 });
 
 test('a token made to fail cannot hold back alerts: its request goes out without symbol, and so does the next', async () => {
@@ -384,7 +390,7 @@ test('closed, expires soon, settings changed and heartbeat', async () => {
   const ev = hooks().map((h) => h.json.event);
   assert.deepEqual(ev, ['settings_changed', 'closed']);
   assert.equal(hooks()[0].json.title, 'This Chronobox changed');
-  assert.equal(hooks()[0].json.message, `The delay changed from 2 days to 3 days.\nThe wallets that can withdraw changed. Before: ${OWNER_WALLET}. Now: ${OWNER_WALLET}, ${STRANGER}.\n\nIf you did not want this, look at your Chronobox now.`);
+  assert.equal(hooks()[0].json.message, `The delay changed from 2 days to 3 days.\nThe wallets that can withdraw changed. Before: ${OWNER_WALLET}. Now: ${OWNER_WALLET}, ${STRANGER}.\n\nIf the owner did not ask for this, open the Chronobox.`);
   assert.equal(hooks()[1].json.nonce, 0);
 });
 
@@ -448,7 +454,7 @@ test('a cancel is reported as Cancelled, once', async () => {
   chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
   sent = [];
   await watcher().poll();
-  assert.match(hooks()[0].json.message, /If not, open your Chronobox and cancel it\. Somebody else may have your wallet\.$/);
+  assert.match(hooks()[0].json.message, /\n\nIf the owner did not ask for this, open the Chronobox and cancel it\.$/);
   sent = [];
   chain.cancel(1);
   await watcher().poll();
@@ -488,7 +494,7 @@ test('an execution followed by a cancel in the same poll interval is told apart'
   chain.cancel(3); // #1 and #2 cancelled
   await w.poll();
   assert.deepEqual(hooks().map((h) => `${h.json.event}:${h.json.nonce}`), ['closed:0', 'cancelled:1', 'cancelled:2']);
-  assert.match(hooks()[0].json.message, /was carried out\. The money left this Chronobox\.$/);
+  assert.match(hooks()[0].json.message, /was carried out\. The money went to the wallet of this Chronobox\.$/);
 
   // The case of the finding: in ONE block, a request that is ready is carried out, and the one after it is
   // cancelled. The state of the block before says nothing about that. The logs of the Safe do.
@@ -674,7 +680,7 @@ test('an execution is reported as executed, an expired item as expired and remov
   await w.poll();
   assert.deepEqual(hooks().map((h) => h.json.event), ['closed']);
   assert.equal(hooks()[0].json.title, 'Done: Withdraw 1.5 ETH');
-  assert.equal(hooks()[0].json.message, 'The request to withdraw 1.5 ETH was carried out. The money left this Chronobox.');
+  assert.equal(hooks()[0].json.message, 'The request to withdraw 1.5 ETH was carried out. The money went to the wallet of this Chronobox.');
 
   chain.enqueue(OWNER_WALLET, 1n);
   await w.poll();
@@ -697,7 +703,7 @@ test('a new canceller and a call on the Roles modifier get the highest priority'
   await w.poll();
   assert.deepEqual(hooks().map((h) => h.json.event), ['settings_changed']);
   assert.equal(hooks()[0].json.priority, 5);
-  assert.equal(hooks()[0].json.message, `${STRANGER} can now cancel a request.\n\nIf you did not want this, look at your Chronobox now.`);
+  assert.equal(hooks()[0].json.message, `${STRANGER} can now cancel a request.\n\nIf the owner did not ask for this, open the Chronobox.`);
   sent = [];
   await w.poll();
   assert.equal(sent.length, 0);
@@ -1082,7 +1088,7 @@ test('Telegram: Start subscribes a chat, and the alerts of the vault go to it', 
   assert.match(saidTo(ANNA)[0], /^You now get the alerts of the Chronobox 0x5a5a…5a5a on Ethereum\./);
   assert.match(saidTo(ANNA)[0], /Nothing waits there right now\./);
   assert.match(saidTo(ANNA)[0], /I keep the number of this chat, the address of the Chronobox, and since when this chat follows it\. I keep nothing else\./);
-  assert.match(saidTo(ANNA)[0], /I never send links/);
+  assert.match(saidTo(ANNA)[0], /The only link that I send leads to the Chronobox at www\.chrono\.box\./);
   assert.doesNotMatch(saidTo(ANNA)[0], /https?:/);
   // The bot keeps the number of the chat and the vault, and nothing about the person.
   assert.deepEqual(bot.state.chats, { [ANNA]: [`1-${SAFE}`] });
@@ -1109,15 +1115,17 @@ test('Telegram: Start subscribes a chat, and the alerts of the vault go to it', 
   assert.equal(said.length, 1);
   assert.equal(said[0].chat, ANNA);
   assert.equal(said[0].silent, false);
-  assert.match(said[0].text, /^New request: Withdraw 1\.5 ETH\n\nSomebody asked this Chronobox to withdraw 1\.5 ETH\./);
-  assert.match(said[0].text, /If not, open your Chronobox and cancel it\./);
-  assert.match(said[0].text, /Chronobox 0x5a5a…5a5a on Ethereum$/);
+  assert.match(said[0].text, /^New request: Withdraw 1\.5 ETH\n\nA request to withdraw 1\.5 ETH has started\./);
+  assert.match(said[0].text, /If the owner did not ask for this, open the Chronobox and cancel it\./);
+  assert.ok(said[0].text.endsWith(`\n\nChronobox 0x5a5a…5a5a on Ethereum\nhttps://www.chrono.box/#/v/eth:${SAFE}`), 'the alert ends with the one link: the Chronobox in the app');
   assert.match(hooks().at(-1)!.json.title, /^New request/, 'the webhook gets the same alert');
 
-  // A stranger as the receiver is marked, because Telegram cannot ring louder.
+  // No alert has a mark for how grave it is. The words say that the money goes to a stranger.
   chain.enqueue(STRANGER, ONE_HALF_ETH);
   await w.poll();
-  assert.match(said[1].text, /^\u26A0\uFE0F New request: Send 1\.5 ETH to 0xbaba…baba\n/);
+  assert.match(said[1].text, /^New request: Send 1\.5 ETH to 0xbaba…baba\n/);
+  assert.match(said[1].text, /That is not the wallet of this Chronobox\./);
+  for (const m of said) assert.doesNotMatch(m.text, /\u26A0|\u{1F6A8}/u);
 
   // A restart sends nothing twice and keeps the chat.
   const again = withBot();
@@ -1163,7 +1171,7 @@ test('Telegram: an address that is not a Chronobox, another network, a broken li
   const got = saidTo(ANNA);
   assert.match(got[0], new RegExp(`^${STRANGER} is not a Chronobox on Ethereum\\.`));
   assert.equal(got[1], 'I do not watch Polygon.');
-  for (const help of got.slice(2)) assert.match(help, /^To get alerts, open your Chronobox, tap "Get told" and then "Telegram"\./);
+  for (const help of got.slice(2)) assert.match(help, /^To get alerts, open the Chronobox, tap "Get told" and then "Telegram"\./);
   assert.equal(got.length, 5);
   assert.equal(saidTo(-500).length, 0, 'in a group the bot answers commands only');
   assert.deepEqual(bot.state.chats, {});

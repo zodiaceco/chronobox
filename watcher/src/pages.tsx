@@ -63,7 +63,7 @@ function Button({ name, value, label }: { name: string; value: string; label: st
 /** What waits in the Chronobox right now, one paragraph per request. */
 function Waits({ waits }: { waits: string[] | null }) {
   // Not read yet is not "nothing": the page must not reassure where it does not know.
-  if (waits === null) return <p>We could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive by email.</p>;
+  if (waits === null) return <p>We could not read yet what waits there. Open the Chronobox to see it. Alerts for what comes next arrive by email.</p>;
   if (waits.length === 0) return <p>Nothing waits there right now.</p>;
   return (
     <>
@@ -133,14 +133,14 @@ export const stopped = (box: string) => page(200, 'Done', <p>No more alerts of {
 
 // --- What can go wrong
 
-export const incomplete = () => page(400, 'This link is not complete', <p>Open it again from your Chronobox: "Get told", then "Email".</p>);
-export const gone = () => page(410, 'This link does not work any more', <p>It was used already, or it is too old. Start again from your Chronobox.</p>);
+export const incomplete = () => page(400, 'This link is not complete', <p>Open it again from the Chronobox: "Get told", then "Email".</p>);
+export const gone = () => page(410, 'This link does not work any more', <p>It was used already, or it is too old. Start again from the Chronobox.</p>);
 export const later = () => page(503, 'Try again in a few minutes', <p>We cannot read the network right now.</p>);
 export const notWatched = (network: string) => page(404, 'Not a network that we watch', <p>Our alert service does not watch {network}.</p>);
 export const notChronobox = (vault: string, network: string) =>
-  page(404, 'This is not a Chronobox', <p>{vault} is not a Chronobox on {network}. Open the link again from your Chronobox.</p>);
+  page(404, 'This is not a Chronobox', <p>{vault} is not a Chronobox on {network}. Open the link again from the Chronobox.</p>);
 export const tooMany = () => page(429, 'Too many requests', <p>Try again in an hour.</p>);
 export const notSent = () => page(502, 'That did not work', <p>We could not send the email right now. Try again in a few minutes.</p>);
-export const tooLong = () => page(413, 'That is too long', <p>Open the link again from your Chronobox.</p>);
-export const nothingHere = (status = 404) => page(status, 'Nothing here', <p>Open the link again from your Chronobox or from an email.</p>);
+export const tooLong = () => page(413, 'That is too long', <p>Open the link again from the Chronobox.</p>);
+export const nothingHere = (status = 404) => page(status, 'Nothing here', <p>Open the link again from the Chronobox or from an email.</p>);
 export const broken = () => page(500, 'Something went wrong', <p>Try again in a few minutes.</p>);

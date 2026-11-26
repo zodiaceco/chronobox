@@ -69,13 +69,12 @@ function Frame({ preview, title, children, foot }: FrameProps) {
   );
 }
 
-/** The one email before the confirmation. Its button is the only way on: an alert never has one. */
+/** The one email before the confirmation. Its button is the only way on. */
 export function confirmHtml(o: { vault: string; network: string; link: string; cancel: string }): Promise<string> {
   return render(
-    <Frame preview="Was it you? Confirm the alerts for your Chronobox." title="Confirm the alerts">
+    <Frame preview="Confirm the alerts for the Chronobox." title="Confirm the alerts">
       {/* One string: React puts a comment between text parts. */}
-      <Text style={styles.p}>{`Somebody asked for alerts for the Chronobox ${o.vault} on ${o.network} to this address.`}</Text>
-      <Text style={styles.p}>Was it you? Then confirm:</Text>
+      <Text style={styles.p}>{`You asked for the alerts of the Chronobox ${o.vault} on ${o.network} at this address. Confirm it, and they start:`}</Text>
       <Section style={{ margin: '6px 0 20px' }}>
         <Button href={o.link} style={styles.button}>Confirm the alerts</Button>
       </Section>
@@ -88,11 +87,19 @@ export function confirmHtml(o: { vault: string; network: string; link: string; c
   );
 }
 
-/** An alert, or a notice that somebody stopped: the text as it is, and the foot with the stop link. */
-export function alertHtml(o: { title: string; message: string; box: string; stop: string }): Promise<string> {
+/**
+ * An alert, or a notice that somebody stopped: the text as it is, one button that opens the Chronobox in the app, and
+ * the foot with the stop link.
+ */
+export function alertHtml(o: { title: string; message: string; box: string; stop: string; open?: string | null }): Promise<string> {
   return render(
     <Frame preview={o.message.split('\n')[0].slice(0, 140)} title={o.title} foot={{ box: o.box, stop: o.stop }}>
       <Paragraphs text={o.message} />
+      {o.open ? (
+        <Section style={{ margin: '6px 0 0' }}>
+          <Button href={o.open} style={styles.button}>Open the Chronobox</Button>
+        </Section>
+      ) : null}
     </Frame>,
     { pretty: false },
   );

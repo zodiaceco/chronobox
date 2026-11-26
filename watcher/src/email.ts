@@ -15,7 +15,7 @@
 import * as crypto from 'node:crypto';
 import * as http from 'node:http';
 import type { Config } from './config.ts';
-import { networkName, shortAddr } from './format.ts';
+import { boxLink, networkName, shortAddr } from './format.ts';
 import { alertHtml, confirmHtml } from './mail.tsx';
 import * as pages from './pages.tsx';
 import { EMAIL_PATH, type Page } from './pages.tsx';
@@ -146,6 +146,7 @@ export class Email implements Peer {
   private api: string;
   private from: string;
   private pages: string;
+  private app: string;
   private expected: number;
   private fetchFn: FetchFn;
   private log: Log;
@@ -161,6 +162,7 @@ export class Email implements Peer {
     this.api = cfg.resendApi;
     this.from = cfg.emailFrom;
     this.pages = `${cfg.publicUrl}${EMAIL_PATH}`;
+    this.app = cfg.appUrl;
     this.secret = cfg.alertsKey;
     this.key = sealKey(cfg.alertsKey);
     this.deliveryKey = crypto.createHmac('sha256', cfg.alertsKey).update(DELIVERY_LABEL).digest();
@@ -297,14 +299,21 @@ export class Email implements Peer {
     return `Chronobox ${shortAddr(vault)} on ${networkName(Number(id))}`;
   }
 
-  /** The same lines under every email that goes to an address on the list. */
-  private foot(e: EmailEntry): string {
-    return `\n\n${this.boxLine(e)}\n\nTo stop these alerts, open this link:\n${this.stopLink(e)}`;
+  /** The page of the Chronobox in the app. Null on a network that the app does not have. */
+  private openLink(e: EmailEntry): string | null {
+    const [id, vault] = e.box.split('-');
+    return boxLink(this.app, Number(id), vault);
   }
 
-  /** An email to an address on the list: the text, and the same as HTML, both with the stop link. */
+  /** The same lines under every email that goes to an address on the list. */
+  private foot(e: EmailEntry): string {
+    const open = this.openLink(e);
+    return `${open ? `\n\nOpen the Chronobox:\n${open}` : ''}\n\n${this.boxLine(e)}\n\nTo stop these alerts, open this link:\n${this.stopLink(e)}`;
+  }
+
+  /** An email to an address on the list: the text, and the same as HTML, both with the link to the Chronobox and the stop link. */
   private async sendTo(e: EmailEntry, subject: string, title: string, message: string, idem?: string): Promise<void> {
-    const html = await alertHtml({ title, message, box: this.boxLine(e), stop: this.stopLink(e) });
+    const html = await alertHtml({ title, message, box: this.boxLine(e), stop: this.stopLink(e), open: this.openLink(e) });
     await this.send(e.email, subject, `${message}${this.foot(e)}`, html, { stop: this.stopLink(e), idem });
   }
 
@@ -325,13 +334,12 @@ export class Email implements Peer {
     // No "Watching", and no "All quiet": an inbox is not the place for a message every day.
     if (a.event === 'watching' || a.priority <= 2) return;
     await this.ready();
-    const mark = a.priority >= 5 ? '\u{1F6A8} ' : a.priority >= 4 ? '⚠️ ' : '';
     let failed: string | null = null;
     for (const e of this.subscribers(chainId, vault)) {
       const done = this.deliveryTag(a, chainId, vault, e.email);
       if (a.done.includes(done)) continue;
       try {
-        await this.sendTo(e, `${mark}${a.title}`, a.title, a.message, done);
+        await this.sendTo(e, a.title, a.title, a.message, done);
         a.done.push(done);
       } catch (err) {
         if (err instanceof ResendError && (err.code === 400 || err.code === 422)) {
@@ -371,7 +379,7 @@ export class Email implements Peer {
     for (const [key, n] of claimed) {
       const text = stopText(key, n, '');
       for (const e of this.state.entries.filter((x) => x.box === key)) {
-        await this.sendTo(e, 'Somebody stopped the alerts of your Chronobox', 'Somebody stopped the alerts', text)
+        await this.sendTo(e, 'Somebody stopped the alerts of a Chronobox', 'Somebody stopped the alerts', text)
           .catch((err) => this.log(`email: could not tell an address that another one stopped: ${errText(err)}`));
       }
     }
@@ -439,9 +447,8 @@ export class Email implements Peer {
       // The same token cancels: only who reads this mailbox has it. So a stranger who asks for alerts to somebody
       // else's address cannot hold its requests (EMAIL_PENDING_PER_ADDRESS) for a day.
       const cancel = `${this.pages}?cancel=${entry.token}`;
-      await this.send(email, 'Confirm the alerts for your Chronobox',
-        `Somebody asked for alerts for the Chronobox ${vault} on ${networkName(chainId)} to this address.\n\n` +
-        `Was it you? Then open this link and confirm:\n${link}\n\n` +
+      await this.send(email, 'Confirm the alerts for the Chronobox',
+        `You asked for the alerts of the Chronobox ${vault} on ${networkName(chainId)} at this address. Open this link to confirm it, and they start:\n${link}\n\n` +
         'If it was not you, do nothing: we delete this request after one day.\n\n' +
         `Not you? Cancel this request, and every other one to this address, now:\n${cancel}`,
         await confirmHtml({ vault, network: networkName(chainId), link, cancel }),

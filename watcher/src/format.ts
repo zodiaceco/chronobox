@@ -5,6 +5,16 @@ const NETWORK_NAMES: Record<number, string> = {
 };
 export const networkName = (chainId: number) => NETWORK_NAMES[chainId] ?? `network ${chainId}`;
 
+/** The names of the networks in the links of the app. The same list is in src/lib/chains.ts (`short`). */
+const NETWORK_SHORT: Record<number, string> = { 1: 'eth', 100: 'gno', 8453: 'base', 42161: 'arb1', 11155111: 'sep' };
+/** The Chronobox app. Its page of a Chronobox is the one link in an alert. */
+export const APP_URL = 'https://www.chrono.box';
+/** The page of a Chronobox in the app (#/v/<network>:<address>). Null on a network that the app does not have. */
+export function boxLink(app: string, chainId: number, vault: string): string | null {
+  const short = NETWORK_SHORT[chainId];
+  return short ? `${app}/#/v/${short}:${vault}` : null;
+}
+
 
 export function fmtTime(sec: bigint | number): string {
   const s = BigInt(sec);

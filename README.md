@@ -160,7 +160,7 @@ Each queued withdrawal has an **Add to calendar** link: one reminder when it bec
 
 Alerts have two parts. The app has one button. The alert service is a project of its own, in `watcher/`. It is not part of the website: it is deployed as a second Vercel project, with Vercel Cron, a Telegram webhook and Upstash Redis, and the website stays a static site. It can also run on a machine that stays on. Without it, the button leads to a bot that does not answer.
 
-The alert service watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, when a guardian starts a recovery, and when the Chronobox itself changes: a new wallet, a guardian, the recovery on or off. The messages use the words of this app and hold no links. See `watcher/README.md`.
+The alert service watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, when a guardian starts a recovery, and when the Chronobox itself changes: a new wallet, a guardian, the recovery on or off. The messages use the words of this app. They speak to nobody as "you": the owner, the guardian and anybody else who follows a Chronobox get the same text. Each one ends with one link, to the page of that Chronobox in this app. See `watcher/README.md`.
 
 `ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, "Get told" has the way "Telegram", with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
@@ -172,7 +172,7 @@ What this gives and what it does not:
 - The alert service keeps, per chat, the number of the Telegram chat, the address of the Chronobox, and since when the chat follows it. It keeps no name, no username, no phone number and no message. `/stop` deletes all of it. This pair is personal data: it links a reachable account to a Chronobox. On disk the list is encrypted with a key that is not stored with it, so a copy of the file alone shows nothing. A person who controls the running service can still read it.
 - Telegram knows the phone number of the account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 - A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat that followed for a day or more stops, every other chat that follows the same Chronobox is told, once an hour at most. A stranger who follows and stops again cannot ring the phones of the others.
-- The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
+- The bot sends one link only, to the page of the Chronobox in this app, and asks for nothing. It says so when a chat starts, so a message with another link, or one that asks for a key, a password or money, stands out as fake. The link to the real bot is in the app, so nobody has to search for it.
 
 ### The choice, and what our alert service costs in privacy
 

@@ -1,5 +1,6 @@
 // The settings of the CLI, from flags and environment variables.
 import { isIP } from 'node:net';
+import { APP_URL } from './format.ts';
 import { ConfigError } from './util.ts';
 
 export type Config = {
@@ -36,6 +37,8 @@ export type Config = {
   emailFrom?: string;
   // Where this watcher is on the web (no path). The links in the emails start with it.
   publicUrl?: string;
+  // The Chronobox app (no path). An alert ends with a link to the page of its Chronobox there.
+  appUrl: string;
   // The CLI: where the sign-up page listens, and which peers may name the visitor in X-Forwarded-For.
   port: number;
   bindAddress: string;
@@ -81,6 +84,8 @@ With --all (instead of CHRONOBOX, DELAY and STATE_FILE):
   EMAIL_FROM       --email-from       the sender, for example "Chronobox alerts <alerts@example.org>", on a domain that Resend verified
   PUBLIC_URL       --public-url       where this watcher is on the web, for example https://alerts.example.org. The links in the
                                       emails start with it. Required with RESEND_KEY
+  APP_URL          --app-url          the Chronobox app (default https://www.chrono.box). An alert in Telegram or by email
+                                      ends with a link to the page of its Chronobox there
   PORT             --port             the port of the sign-up page (default 8787). Put a proxy with TLS in front of it
   BIND_ADDRESS     --bind-address     where the sign-up page listens (default 127.0.0.1: the proxy is on this machine)
   TRUSTED_PROXIES  --trusted-proxies  the addresses of the proxies, with commas, whose X-Forwarded-For names the visitor
@@ -125,7 +130,7 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
   const cfg: Config = {
     rpcUrls: [], pollSeconds: 60, heartbeatHours: 24, stateFile: './chronobox-watch-state.json',
     failPolls: 3, logChunk: 2000, maxScanBlocks: 50000, stateDir: './chronobox-watch-state', networks: [], telegramApi: 'https://api.telegram.org', rpcServiceHost: 'rpc.zodiac.eco',
-    resendApi: 'https://api.resend.com', port: 8787, bindAddress: '127.0.0.1', trustedProxies: ['127.0.0.1', '::1'], ...bools,
+    resendApi: 'https://api.resend.com', appUrl: APP_URL, port: 8787, bindAddress: '127.0.0.1', trustedProxies: ['127.0.0.1', '::1'], ...bools,
   };
   if (bools.help) return cfg;
 
@@ -168,6 +173,8 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
       if (!/^https?:\/\//i.test(cfg.resendApi)) throw new ConfigError('RESEND_API must start with http:// or https://.');
     }
     cfg.telegramApi = str('TELEGRAM_API')?.replace(/\/+$/, '') ?? cfg.telegramApi;
+    cfg.appUrl = str('APP_URL')?.replace(/\/+$/, '') ?? cfg.appUrl;
+    if (!/^https?:\/\/[^/]+$/i.test(cfg.appUrl)) throw new ConfigError('APP_URL must be where the Chronobox app is, with http:// or https:// and no path, for example https://www.chrono.box.');
     if (!/^https?:\/\//i.test(cfg.telegramApi)) throw new ConfigError('TELEGRAM_API must start with http:// or https://.');
     for (const k of ['CHRONOBOX', 'DELAY', 'STATE_FILE']) {
       if (str(k)) throw new ConfigError(`${k} does not work with --all. --all watches every Chronobox and uses STATE_DIR.`);
@@ -220,6 +227,6 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
 const KNOWN_KEYS = [
   'RPC_URL', 'CHRONOBOX', 'DELAY', 'WEBHOOK_URL', 'POLL_SECONDS',
   'HEARTBEAT_HOURS', 'STATE_FILE', 'FAIL_POLLS', 'LOG_CHUNK', 'STATE_DIR', 'START_BLOCK', 'MAX_SCAN_BLOCKS',
-  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'ALERTS_KEY', 'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'PUBLIC_URL', 'PORT', 'BIND_ADDRESS', 'TRUSTED_PROXIES',
+  'TELEGRAM_TOKEN', 'TELEGRAM_API', 'TELEGRAM_KEY', 'ALERTS_KEY', 'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'PUBLIC_URL', 'APP_URL', 'PORT', 'BIND_ADDRESS', 'TRUSTED_PROXIES',
   'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];
