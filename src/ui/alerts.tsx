@@ -13,17 +13,20 @@
  * an alert it must know who follows a Chronobox, and we can see that. A person
  * who does not want that runs the alert service on their own.
  *
+ * The owner sends their guardian a page of its own, #/alerts/<network>:<address> (AlertsPage). It
+ * shows the same choice, and it needs no wallet: the guardian does not have to open the Chronobox.
+ *
  * Every way works the same: the app only builds a link, and the registration
  * happens somewhere else (in Telegram, on a page of the alert service, on the
  * person's own machine). The app sends nothing, and it never sees an email
  * address.
  */
-import type { ComponentChildren } from "preact";
+import { type ComponentChildren, Fragment } from "preact";
 import { useState } from "preact/hooks";
 import { telegramLink, telegramStart } from "../lib/alerts.ts";
 import { ALERTS_EMAIL, ALERTS_EMAIL_SOON, ALERTS_GUIDE, ALERTS_TELEGRAM, type Chain } from "../lib/chains.ts";
 import type { Address } from "../lib/hex.ts";
-import { Button, Modal, Notice } from "./common.tsx";
+import { AddressText, Button, Modal, More } from "./common.tsx";
 
 /** The dev server shows the sheet with a bot name that is only a stand-in. Put the name of your test bot in ALERTS_TELEGRAM. */
 export const BOT: string | null = ALERTS_TELEGRAM ?? (__DEV__ ? "chronobox_alerts_dev_bot" : null);
@@ -45,7 +48,18 @@ export const ALERTS = WAYS.length > 0;
 export const ALERTS_ROW = CHOICE ? "Alerts" : { telegram: "Alerts in Telegram", email: "Alerts by email", own: "Your own alerts", choose: "" }[WAYS[0]];
 
 type Screen = { title: string; lead?: string; body: ComponentChildren };
-type Ctx = { chain: Chain; safe: Address; go: (stage: Stage) => void };
+type Ctx = { chain: Chain; safe: Address; go: (stage: Stage) => void; why: string };
+
+/** Why alerts matter, for the person who looks. The guardian stops what the owner cannot. */
+const WHY = {
+  owner: "The wait protects you only if you hear about a withdrawal in time.",
+  guardian: "As the guardian of this Chronobox, you can stop a withdrawal only if you hear about it in time.",
+};
+
+/** The page for the guardian. The owner sends its link. It needs no wallet. */
+export function alertsLink(chain: Chain, safe: Address): string {
+  return `${location.origin}${location.pathname}#/alerts/${chain.short}:${safe}`;
+}
 
 function Chevron() {
   return (
@@ -88,12 +102,12 @@ function Back(props: { go: (stage: Stage) => void }) {
 }
 
 function screenOf(stage: Stage, ctx: Ctx): Screen {
-  const { chain, safe, go } = ctx;
+  const { chain, safe, go, why } = ctx;
   switch (stage) {
     case "choose":
       return {
         title: "Get told",
-        lead: "The wait protects you only if you hear about a withdrawal in time.",
+        lead: why,
         body: (
           <>
             <strong>How do you want to hear about it?</strong>
@@ -104,10 +118,11 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
               {OWN ? <Pick title="Your own alert service" text="You run it on a server. We learn nothing about you." onClick={() => go("own")} /> : null}
             </ul>
             {BOT || EMAIL ? (
-              <Notice kind="info" title="Our alert service is not private">
-                To send you an alert, it must know who follows this Chronobox. We can see that.
+              <More kind="info" title="We can see who follows this Chronobox">
+                Our alert service must know where to send your alerts. So we know that your Telegram chat or your email address follows this
+                Chronobox.
                 {OWN ? " If you do not want that and you can run a server, run your own alert service." : null}
-              </Notice>
+              </More>
             ) : null}
           </>
         ),
@@ -115,7 +130,7 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
     case "telegram":
       return {
         title: CHOICE ? "Alerts in Telegram" : "Get told",
-        lead: CHOICE ? "Telegram opens. Press Start there, and you are done." : "The wait protects you only if you hear about a withdrawal in time.",
+        lead: CHOICE ? "Telegram opens. Press Start there, and you are done." : why,
         body: (
           <>
             <div class="modal-actions">
@@ -124,11 +139,11 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
               </a>
               <Back go={go} />
             </div>
-            <p class="deposit-note">
-              {CHOICE ? null : "Telegram opens. Press Start there. "}
-              Our alert service keeps the number of your Telegram chat, the address of this Chronobox, and since when you follow it. So we
-              can see that your Telegram account follows this Chronobox, and Telegram can see it too. To end the alerts, send /stop there.
-            </p>
+            {CHOICE ? null : <p class="deposit-note">Telegram opens. Press Start there.</p>}
+            <More title="What our alert service keeps">
+              The number of your Telegram chat, the address of this Chronobox, and since when you follow it. So we can see that your Telegram
+              account follows this Chronobox, and Telegram can see it too. To end the alerts, send /stop there.
+            </More>
           </>
         ),
       };
@@ -144,10 +159,10 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
               </a>
               <Back go={go} />
             </div>
-            <p class="deposit-note">
-              Our alert service keeps your email address, the address of this Chronobox, and since when you follow it. So we can see that
-              your email address follows this Chronobox. Every alert ends with a link that stops them.
-            </p>
+            <More title="What our alert service keeps">
+              Your email address, the address of this Chronobox, and since when you follow it. So we can see that your email address follows
+              this Chronobox. Every alert ends with a link that stops them.
+            </More>
           </>
         ),
       };
@@ -170,14 +185,42 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
   }
 }
 
-export function AlertsSheet(props: { chain: Chain; safe: Address; onClose: () => void }) {
+export function AlertsSheet(props: { chain: Chain; safe: Address; forGuardian?: boolean; onClose: () => void }) {
   // With one way and nothing coming, the sheet opens on that way.
   const [stage, setStage] = useState<Stage>(CHOICE ? "choose" : WAYS[0]);
   if (!ALERTS) return null;
-  const screen = screenOf(stage, { chain: props.chain, safe: props.safe, go: setStage });
+  const screen = screenOf(stage, { chain: props.chain, safe: props.safe, go: setStage, why: props.forGuardian ? WHY.guardian : WHY.owner });
   return (
     <Modal title={screen.title} lead={screen.lead} onClose={props.onClose}>
-      {screen.body}
+      {/* A new screen starts new: a text that was open on the last one is not open here. */}
+      <Fragment key={stage}>{screen.body}</Fragment>
     </Modal>
+  );
+}
+
+/**
+ * The guardian's page: the same choice as the sheet, on a page that needs no wallet. The page also
+ * keeps the way to the Chronobox: an alert says what happened, and the guardian stops it there.
+ */
+export function AlertsPage(props: { chain: Chain; safe: Address }) {
+  const [stage, setStage] = useState<Stage>(CHOICE ? "choose" : WAYS[0]);
+  const screen = screenOf(stage, { chain: props.chain, safe: props.safe, go: setStage, why: WHY.guardian });
+  return (
+    <section class="page alerts-page">
+      <p class="eyebrow">
+        A Chronobox on {props.chain.name} · <AddressText address={props.safe} />
+      </p>
+      <h1>{screen.title}</h1>
+      {screen.lead ? <p class="lead">{screen.lead}</p> : null}
+      <div class="alerts-page-body" key={stage}>
+        {screen.body}
+      </div>
+      <div class="alerts-page-keep">
+        <p class="hint">Keep this link. To stop a withdrawal, open the Chronobox with your guardian wallet.</p>
+        <a class="button button-plain" href={`#/v/${props.chain.short}:${props.safe}`}>
+          Open the Chronobox
+        </a>
+      </div>
+    </section>
   );
 }

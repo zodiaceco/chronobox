@@ -89,7 +89,7 @@ export function Button(props: {
   );
 }
 
-const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), details > summary:first-of-type, [tabindex]:not([tabindex="-1"])';
 
 /**
  * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing
@@ -185,6 +185,19 @@ export function Notice(props: { kind: "risk" | "bad" | "info" | "good"; title?: 
       {props.title ? <strong>{props.title}</strong> : null}
       {props.children ? <div>{props.children}</div> : null}
     </div>
+  );
+}
+
+/**
+ * Text that is one tap away: the line says what it is about, and a tap shows the rest. For text that
+ * most people do not need on the way through. `kind="info"` looks like the blue notice.
+ */
+export function More(props: { title: string; kind?: "info"; children: ComponentChildren }) {
+  return (
+    <details class={props.kind === "info" ? "more more-info" : "more"}>
+      <summary>{props.title}</summary>
+      <div>{props.children}</div>
+    </details>
   );
 }
 

@@ -172,7 +172,7 @@ export function PrivacyPage() {
       <Block title="Alerts">
         <p>
           Alerts are optional. They do not come from this page. They come from an alert service that we run, and you start them yourself,
-          in Telegram or by email. This service is not private: to send you an alert, it must know who follows a Chronobox, and we can see that.
+          in Telegram or by email. To send you an alert, this service must know who follows a Chronobox, and we can see that.
         </p>
         <h3>In Telegram</h3>
         <p>When you press Start in Telegram, the alert service keeps:</p>

@@ -5,6 +5,7 @@ import { type Address, parseAddress, sameAddress } from "./lib/hex.ts";
 import { buildChanged, lastWallet, setLastAccount, setLastWallet } from "./lib/store.ts";
 import { type WalletOption, accountsOf, chainIdOf, errorText, isRejection, rpcOf, switchChain, watchWallets } from "./lib/wallet.ts";
 import { AddressText, Button, Experimental, Modal, Notice, type Session } from "./ui/common.tsx";
+import { ALERTS, AlertsPage } from "./ui/alerts.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { DevBar } from "./ui/devbar.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
@@ -18,6 +19,8 @@ import { VaultPage } from "./ui/vault.tsx";
  * `swap`: a link from the owner of a Chronobox to its guardian, with the new wallet that the owner
  * asks for and the point of the line the change cancels up to. `upTo` is null in links of an older
  * version: they cannot be agreed to any more.
+ * `alerts`: the page that the owner sends to their guardian. The guardian sets up alerts there,
+ * without a wallet.
  */
 type Route =
   | { page: "start" }
@@ -28,6 +31,7 @@ type Route =
   | { page: "terms" }
   | { page: "imprint" }
   | { page: "vault"; chain: Chain; safe: Address; swap: { to: Address; upTo: bigint | null } | null }
+  | { page: "alerts"; chain: Chain; safe: Address }
   | { page: "unknown" };
 
 /** The first 8 characters of the build hash, from index.html. "dev" in the dev server. */
@@ -44,6 +48,13 @@ function parseRoute(hash: string): Route {
   if (path === "/imprint") return { page: "imprint" };
   // Every state of the vault page, from `npm run scenarios`. Only in the dev server.
   if (__DEV__ && path === "/states") return { page: "states" };
+  const alerts = /^\/alerts\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
+  if (alerts) {
+    const chain = chainByShort(alerts[1]);
+    const safe = parseAddress(alerts[2]);
+    // Without a way to get alerts, the link leads to the Chronobox itself.
+    if (chain && safe) return ALERTS ? { page: "alerts", chain, safe } : { page: "vault", chain, safe, swap: null };
+  }
   const match = /^\/v\/([a-z0-9]+):(0x[0-9a-fA-F]{40})(?:\?to=(0x[0-9a-fA-F]{40})(?:&upTo=(\d{1,78}))?)?$/.exec(path);
   if (match) {
     const chain = chainByShort(match[1]);
@@ -203,6 +214,8 @@ export function App() {
   } else if (route.page === "states") {
     // Only the dev server has this route; the production build leaves the page out.
     body = __DEV__ ? <StatesPage /> : null;
+  } else if (route.page === "alerts") {
+    body = <AlertsPage key={`${route.chain.id}:${route.safe}`} chain={route.chain} safe={route.safe} />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">
@@ -291,7 +304,7 @@ export function App() {
         ) : route.page === "start" ? (
           // The landing page has its own button to connect. This corner says that the app is new.
           <Experimental />
-        ) : (
+        ) : route.page === "alerts" ? null : ( // The guardian's alert page needs no wallet, so it does not ask for one.
           // The welcome screen has its own button. Everywhere else this is the way in.
           <Button small onClick={() => setConnectOpen(true)}>
             Connect wallet

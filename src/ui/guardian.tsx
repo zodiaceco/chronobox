@@ -32,14 +32,32 @@ import {
   sendAndWait,
 } from "../lib/chronobox.ts";
 import { errorText } from "../lib/wallet.ts";
-import { AddressText, Button, Choice, Modal, Notice, type Session, SlowNote, copyText, useAction } from "./common.tsx";
+import { AddressText, Button, Choice, Modal, More, Notice, type Session, SlowNote, copyText, useAction } from "./common.tsx";
+import { ALERTS, alertsLink } from "./alerts.tsx";
 import { QrCode } from "./deposit.tsx";
 import { UnknownSheet, type VaultRef, queueItem } from "./queue.tsx";
 import { RecoverySheet, type RecoveryWaiting, StartRecoverySheet, type WaitPick, WaitPicker, defaultCustomDays, ensureRecoveryDelay, pickedWait, recoveryPromise } from "./recovery.tsx";
 
-/** The page of this Chronobox, as a link for another person. `request`: with a request for a new wallet. */
+/**
+ * The link for the guardian. With alerts: the guardian's alert page, which needs no wallet and leads on
+ * to the Chronobox. Without: the page of this Chronobox. `request`: the page of this Chronobox with a
+ * request for a new wallet.
+ */
 export function guardianLink(chain: Chain, safe: Address, request?: SwapRequest): string {
+  if (!request && ALERTS) return alertsLink(chain, safe);
   return `${location.origin}${location.pathname}#/v/${chain.short}:${safe}${request ? `?to=${request.to}&upTo=${request.upTo}` : ""}`;
+}
+
+/** What the guardian link does, after "Send your guardian this link now." */
+const LINK_DOES = ALERTS ? "They set up their alerts there." : "It opens your Chronobox for them.";
+
+/**
+ * The guardian can be a second wallet of the owner. Alerts are for a Chronobox, not for a wallet, so
+ * that person has them already: the same Telegram chat or email address follows a Chronobox one time only.
+ */
+function SamePerson() {
+  if (!ALERTS) return null;
+  return <More title="Is the guardian wallet yours too?">Then you need no second alerts. Alerts are for the Chronobox, not for a wallet.</More>;
 }
 
 /** A line of text that is copied with one tap. */
@@ -121,8 +139,9 @@ export function GuardianSheet(props: {
           Guardian: <AddressText address={props.waiting} full />
         </p>
         {props.waitingRecovery !== null ? <p>With recovery: if you lose your wallet, your guardian can change the wallet of this Chronobox. A recovery waits {formatDuration(props.waitingRecovery)}.</p> : null}
-        <p class="hint">Send your guardian this link now. It opens your Chronobox for them.</p>
+        <p class="hint">Send your guardian this link now. {LINK_DOES}</p>
         <CopyLine text={link} />
+        <SamePerson />
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>
             Done
@@ -238,8 +257,9 @@ function AddSheet(props: { session: Session; chain: Chain; vault: VaultRef; insp
   if (stage === "unknown") return <UnknownSheet onClose={props.onClose} />;
   if (stage === "done") {
     return (
-      <Modal title="The wait has started." lead={`In ${wait} you can apply it under "Waiting". Send your guardian this link now. It opens your Chronobox for them.`} onClose={props.onClose}>
+      <Modal title="The wait has started." lead={`In ${wait} you can apply it under "Waiting". Send your guardian this link now. ${LINK_DOES}`} onClose={props.onClose}>
         <CopyLine text={props.link} />
+        <SamePerson />
         <div class="modal-actions">
           <Button kind="primary" onClick={props.onClose}>
             Done
@@ -465,8 +485,9 @@ function ManageSheet(props: {
         </li>
         <li>{recovery ? "Cannot withdraw. Only the wallet that controls this Chronobox can." : "Cannot withdraw."}</li>
       </ul>
-      <p class="hint">The link for your guardian. It opens this Chronobox for them.</p>
+      <p class="hint">The link for your guardian. {ALERTS ? "They set up their alerts there." : "It opens this Chronobox for them."}</p>
       <CopyLine text={props.link} />
+      <SamePerson />
       <div class="modal-actions">
         <Button kind="primary" onClick={props.onClose}>
           Done

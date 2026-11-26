@@ -17,7 +17,7 @@
 
 import * as crypto from 'node:crypto';
 import { ADDRESS_RE, type Config } from './config.ts';
-import { networkName, shortAddr } from './format.ts';
+import { APP_URL, boxLink, networkName, shortAddr } from './format.ts';
 import { type Notice, type Peer, type StopKind, NOTICE_MIN_FOLLOW_MS, addStop, claimNotices, noticeDue, stopText } from './notices.ts';
 import { FileStore, type Store } from './store.ts';
 import type { Alert } from './types.ts';
@@ -57,6 +57,8 @@ type TelegramState = {
   since: Record<string, number>;
   /** Stops that the other followers of a Chronobox are still to be told of, and when they were told last (ms). */
   notices: Record<string, Notice>;
+  /** The pinned "All quiet" message of each follow, by "<chat> <chain id>-<address>". The bot edits it, it does not send a new one. */
+  status: Record<string, number>;
 };
 /** What is stored: the list of chats as one sealed block (base64 of nonce, tag and ciphertext). The offset is no secret. */
 type TelegramFile = { version: 3; offset?: number; sealed: string };
@@ -67,9 +69,11 @@ export const TELEGRAM_MAX_PER_CHAT = 20;
 /** Starts with an address that one chat may send in an hour. Each one can make the watcher read the chain. */
 export const TELEGRAM_STARTS_PER_HOUR = 30;
 
-const TG_HOW = 'To get alerts, open your Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
+const TG_HOW = 'To get alerts, open the Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
 const TG_HELP = `${TG_HOW}\n\n/list shows what this chat follows.\n/stop ends the alerts.\n/privacy says what I keep.`;
-const TG_NEVER = 'I never send links, and I never ask for a key, a password or money. A message that does is not from me.';
+/** The one link that the bot sends is the page of the Chronobox in the app. The bot says so, so that any other link stands out. */
+const tgNever = (app: string) =>
+  `The only link that I send leads to the Chronobox at ${new URL(app).host}. I never ask for a key, a password or money. A message that does is not from me.`;
 const TG_KEEP = 'I keep the number of this chat, the address of the Chronobox, and since when this chat follows it. I keep nothing else. /stop deletes it.';
 const TG_PRIVACY =
   'I keep the number of this chat, the addresses of the Chronoboxes that it follows, and since when it follows each one. ' +
@@ -78,11 +82,16 @@ const TG_PRIVACY =
   'Telegram can read the messages that I send you. What they say is public on the blockchain. That this chat follows a Chronobox is not.';
 const TG_LATER = 'I cannot read the network right now. Try again in a few minutes.';
 
-/** An alert as a Telegram message: plain text, no links. */
-export function telegramText(a: Alert, chainId: number, vault: string): string {
-  const mark = a.priority >= 5 ? '\u{1F6A8} ' : a.priority >= 4 ? '⚠️ ' : '';
-  const text = `${mark}${a.title}\n\n${a.message}\n\nChronobox ${shortAddr(vault)} on ${networkName(chainId)}`;
-  return text.length > 4000 ? `${text.slice(0, 3990)}…` : text;
+/**
+ * An alert as a Telegram message: plain text, no mark for how grave it is (the words say it), and at the end the one
+ * link: the page of the Chronobox in the app. A long alert is cut before the link, never in it.
+ */
+export function telegramText(a: Alert, chainId: number, vault: string, app: string = APP_URL): string {
+  const link = boxLink(app, chainId, vault);
+  const foot = `\n\nChronobox ${shortAddr(vault)} on ${networkName(chainId)}${link ? `\n${link}` : ''}`;
+  const text = `${a.title}\n\n${a.message}`;
+  const room = 4000 - foot.length;
+  return `${text.length > room ? `${text.slice(0, room - 1)}…` : text}${foot}`;
 }
 
 /** The derived key, per secret. scrypt is slow on purpose, and a warm function needs it one time only. */
@@ -117,13 +126,14 @@ export class Telegram implements Peer {
   /** The other ways to get alerts. They are told too when a chat stops (see notices.ts). */
   peers: Peer[] = [];
   /** The list of chats as last read or written. A change reads the stored list again first (`edit`). */
-  state: TelegramState = { chats: {}, since: {}, notices: {} };
+  state: TelegramState = { chats: {}, since: {}, notices: {}, status: {} };
   private token: string;
   private secret: string;
   private key: Buffer;
   private deliveryKey: Buffer;
   private startsKey: Buffer;
   private api: string;
+  private app: string;
   private expected: number;
   private fetchFn: FetchFn;
   private log: Log;
@@ -141,6 +151,7 @@ export class Telegram implements Peer {
     this.deliveryKey = crypto.createHmac('sha256', cfg.alertsKey).update(DELIVERY_LABEL).digest();
     this.startsKey = crypto.createHmac('sha256', cfg.alertsKey).update(STARTS_LABEL).digest();
     this.api = cfg.telegramApi;
+    this.app = cfg.appUrl;
     this.expected = cfg.networks.length;
     this.fetchFn = opts.fetch ?? fetch;
     const out = opts.log ?? defaultLog;
@@ -198,13 +209,13 @@ export class Telegram implements Peer {
   private async load(): Promise<TelegramState> {
     const text = await this.store.get('telegram');
     let f: any;
-    if (text === null) return { chats: {}, since: {}, notices: {} };
+    if (text === null) return { chats: {}, since: {}, notices: {}, status: {} };
     try { f = JSON.parse(text); } catch (e) {
       throw new ConfigError(`The stored list of Telegram chats is not valid (${errText(e)}). Fix or remove it; removing it ends every subscription.`);
     }
     if (f?.version === 1 && typeof f.chats === 'object' && f.chats !== null) {
       // A list from before the encryption. It is written again, sealed, right now.
-      const state: TelegramState = { offset: f.offset, chats: f.chats, since: {}, notices: {} };
+      const state: TelegramState = { offset: f.offset, chats: f.chats, since: {}, notices: {}, status: {} };
       await this.save(state);
       this.log('telegram: the list of chats was in plain form and is encrypted now');
       return state;
@@ -215,9 +226,9 @@ export class Telegram implements Peer {
     try {
       const content = this.open(f.sealed);
       // Version 2 sealed the chats alone. Their follows are older than this, so they count as a day or more.
-      if (f.version === 2) return { offset: f.offset, chats: content, since: {}, notices: {} };
+      if (f.version === 2) return { offset: f.offset, chats: content, since: {}, notices: {}, status: {} };
       if (typeof content.chats !== 'object' || content.chats === null) throw new Error('unknown format');
-      return { offset: f.offset, chats: content.chats, since: content.since ?? {}, notices: content.notices ?? {} };
+      return { offset: f.offset, chats: content.chats, since: content.since ?? {}, notices: content.notices ?? {}, status: content.status ?? {} };
     } catch {
       throw new ConfigError(
         'ALERTS_KEY does not open the stored list of Telegram chats. Use the key that the list was written with. ' +
@@ -227,7 +238,7 @@ export class Telegram implements Peer {
   }
 
   private async save(state: TelegramState): Promise<void> {
-    const out: TelegramFile = { version: 3, offset: state.offset, sealed: this.seal({ chats: state.chats, since: state.since, notices: state.notices }) };
+    const out: TelegramFile = { version: 3, offset: state.offset, sealed: this.seal({ chats: state.chats, since: state.since, notices: state.notices, status: state.status }) };
     await this.store.set('telegram', JSON.stringify(out) + '\n');
   }
 
@@ -269,8 +280,35 @@ export class Telegram implements Peer {
     return j.result;
   }
 
-  private say(chat: string | number, text: string, silent = false): Promise<unknown> {
+  private say(chat: string | number, text: string, silent = false): Promise<any> {
     return this.call('sendMessage', { chat_id: Number(chat), text, disable_notification: silent, link_preview_options: { is_disabled: true } });
+  }
+
+  /**
+   * "All quiet" as one pinned message that the bot edits. A new message every day would teach people to mute the
+   * chat, and then they would not hear the real alerts either. An edit makes no sound and no unread mark, and the
+   * pinned message still shows when the alert service looked last: if that date gets old, the service has stopped.
+   */
+  private async status(chat: string, key: string, text: string): Promise<void> {
+    const id = this.state.status[`${chat} ${key}`];
+    if (id !== undefined) {
+      try {
+        await this.call('editMessageText', { chat_id: Number(chat), message_id: id, text, link_preview_options: { is_disabled: true } });
+        return;
+      } catch (e) {
+        if (!(e instanceof TelegramError) || e.code !== 400) throw e;
+        if (/not modified/i.test(e.message)) return;
+        // The person deleted the message, or Telegram does not let the bot edit it any more: a new one is sent.
+        if (!/not found|can't be edited|MESSAGE_ID_INVALID/i.test(e.message)) throw e;
+      }
+    }
+    const sent = await this.say(chat, text, true);
+    const mid = Number(sent?.message_id);
+    if (!Number.isInteger(mid)) return;
+    await this.edit((s) => { if (!(s.chats[chat] ?? []).includes(key)) return false; s.status[`${chat} ${key}`] = mid; });
+    // In a group the bot may not pin. The message is still edited then, it is only not at the top.
+    await this.call('pinChatMessage', { chat_id: Number(chat), message_id: mid, disable_notification: true })
+      .catch((e) => this.log(`telegram: could not pin "All quiet": ${errText(e)}`));
   }
 
   /** Checks the token, learns the name of the bot and sets its list of commands. A token that Telegram does not accept is a configuration error. */
@@ -324,7 +362,7 @@ export class Telegram implements Peer {
     // "Watching" is for the person who runs the watcher. A chat gets the state of the vault when it subscribes.
     if (a.event === 'watching') return;
     await this.ready();
-    const text = telegramText(a, chainId, vault);
+    const text = telegramText(a, chainId, vault, this.app);
     let failed: string | null = null;
     // Marks from before the tags held the number of the chat: they count, and become tags now.
     a.done = a.done.map((m) => (/^tg:-?\d+$/.test(m) ? this.deliveryTag(a, chainId, vault, m.slice(3)) : m));
@@ -332,7 +370,8 @@ export class Telegram implements Peer {
       const mark = this.deliveryTag(a, chainId, vault, chat);
       if (a.done.includes(mark)) continue;
       try {
-        await this.say(chat, text, a.priority <= 2);
+        if (a.event === 'heartbeat') await this.status(chat, telegramStart(chainId, vault), text);
+        else await this.say(chat, text, a.priority <= 2);
         a.done.push(mark);
       } catch (e) {
         if (!(e instanceof TelegramError)) { failed = errText(e); continue; }
@@ -346,6 +385,8 @@ export class Telegram implements Peer {
               const since = s.since[`${chat} ${key}`];
               if (since !== undefined) s.since[`${to} ${key}`] ??= since;
               delete s.since[`${chat} ${key}`];
+              // The old number cannot be edited any more: the new group gets its own pinned message.
+              delete s.status[`${chat} ${key}`];
             }
             delete s.chats[chat];
           });
@@ -393,7 +434,7 @@ export class Telegram implements Peer {
   private async forget(chat: string): Promise<void> {
     const removed = await this.edit((s) => {
       if (!(chat in s.chats)) return false;
-      for (const key of s.chats[chat]) delete s.since[`${chat} ${key}`];
+      for (const key of s.chats[chat]) { delete s.since[`${chat} ${key}`]; delete s.status[`${chat} ${key}`]; }
       delete s.chats[chat];
     });
     if (removed) this.log('telegram: a chat was removed');
@@ -514,10 +555,10 @@ export class Telegram implements Peer {
     if (limit) { await this.say(chat, LIMIT); return; }
     if (added) this.log(`telegram: a chat follows ${vault} on chain ${chainId}`);
     const waits = await net.pending(vault);
-    const now = waits === null ? 'I could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive here.'
+    const now = waits === null ? 'I could not read yet what waits there. Open the Chronobox to see it. Alerts for what comes next arrive here.'
       : waits.length === 0 ? 'Nothing waits there right now.'
       : `Right now ${waits.length === 1 ? 'one request waits' : `${waits.length} requests wait`} there:\n${waits.join('\n')}`;
-    await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${TG_NEVER}`);
+    await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${tgNever(this.app)}`);
   }
 
   private async unsubscribe(chat: number, arg: string): Promise<void> {
@@ -525,8 +566,10 @@ export class Telegram implements Peer {
     let mine: string[] = [];
     let left: string[] = [];
     let counted: string[] = [];
+    let pinned: number[] = [];
     const changed = await this.edit((s) => {
       counted = [];
+      pinned = [];
       mine = s.chats[chat] ?? [];
       left = one ? mine.filter((key) => !key.endsWith(`-${one}`)) : [];
       if (left.length === mine.length) return false;
@@ -535,6 +578,9 @@ export class Telegram implements Peer {
       for (const key of mine.filter((k) => !left.includes(k))) {
         const since = s.since[`${chat} ${key}`];
         delete s.since[`${chat} ${key}`];
+        const pin = s.status[`${chat} ${key}`];
+        if (pin !== undefined) pinned.push(pin);
+        delete s.status[`${chat} ${key}`];
         // A follow of less than a day tells nobody: else anybody could ring the phones of all followers.
         if (since !== undefined && now - since < NOTICE_MIN_FOLLOW_MS) continue;
         addStop(s.notices, key, 'chat', now);
@@ -546,6 +592,10 @@ export class Telegram implements Peer {
       return;
     }
     this.log('telegram: a chat stopped');
+    // A pinned "All quiet" that is no longer edited would look like a service that stopped.
+    for (const id of pinned) {
+      await this.call('unpinChatMessage', { chat_id: chat, message_id: id }).catch((e) => this.log(`telegram: could not unpin "All quiet": ${errText(e)}`));
+    }
     // Alerts must not go off in silence: a person who is forced to stop them has others who still listen.
     for (const p of this.peers) {
       if (counted.length) await p.noteStops(counted, 'chat').catch((e) => this.log(`telegram: could not note a stop for email: ${errText(e)}`));

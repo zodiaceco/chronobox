@@ -31,7 +31,7 @@ export type Deps = { fetch?: FetchFn; log?: Log };
 /** Settings that the service passes on to the watcher. RPC_URL and START_BLOCK are per network. */
 const PASSED = [
   'WEBHOOK_URL', 'HEARTBEAT_HOURS', 'FAIL_POLLS', 'LOG_CHUNK', 'MAX_SCAN_BLOCKS', 'TELEGRAM_TOKEN', 'TELEGRAM_KEY', 'ALERTS_KEY', 'TELEGRAM_API',
-  'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
+  'RESEND_KEY', 'RESEND_API', 'EMAIL_FROM', 'APP_URL', 'RPC_SERVICE_KEY', 'RPC_SERVICE_HOST',
 ];
 
 /** Where the chain id goes in RPC_URL. The RPC of Zodiac takes it as the path. */

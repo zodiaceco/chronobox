@@ -802,7 +802,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           </p>
         </Modal>
       ) : null}
-      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
+      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} forGuardian={isGuardian} onClose={close} /> : null}
       {cancelled ? (
         <Modal title={isGuardian ? "Stopped." : "Cancelled."} onClose={() => setCancelled(null)}>
           <p class="big-line">{cancelled.count > 1 ? `${cancelled.title}, and ${cancelled.count - 1} before it` : cancelled.title}</p>
