@@ -162,12 +162,12 @@ export function TechnicalPage() {
             <Tick on />A person who has your wallet gains nothing by keeping you from cancelling. Your guardian cancels.
           </li>
           <li>
-            <Tick on />A leaked key is no standoff. You and your guardian move the Chronobox to a new wallet.
+            <Tick on />A leaked key is no standoff. You and your guardian change the wallet of the Chronobox.
           </li>
         </ul>
         <p class="tech-note">
           The price: your guardian can cancel every withdrawal, and you can remove your guardian only when your guardian lets it happen. By
-          default a guardian is not a backup: a move by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding,
+          default a guardian is not a backup: a wallet change by both of you needs your wallet. For a lost wallet, turn on the recovery below. Adding,
           changing or removing a guardian or a recovery waits in the time lock, like every change.
         </p>
         <p class="tech-note">
@@ -187,8 +187,8 @@ export function TechnicalPage() {
           </div>
         </div>
         <p class="tech-optional-lead">
-          A way back in when your wallet is lost. Your guardian starts it and enters the new wallet. Then it waits a long time, and you can stop it at
-          once. You turn it on with the guardian, or later, on the page of your Chronobox.
+          A way back in if you lose your wallet. Your guardian starts it and chooses the new wallet. Then it waits a long time, and you can stop it at
+          once. You turn it on when you add the guardian, or later, on the page of your Chronobox.
         </p>
         <ul class="tech-rows">
           <li>
@@ -223,12 +223,12 @@ export function TechnicalPage() {
           </li>
           <li>
             <span>When it is carried out</span>
-            <span class="tech-value">The new wallet holds the Chronobox</span>
+            <span class="tech-value">The new wallet controls the Chronobox</span>
           </li>
         </ul>
         <p class="tech-note">
           The price: your guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, your guardian
-          can take the Chronobox. The long wait and the alerts protect you: an alert tells you when a recovery starts. After a recovery, every
+          can take over the Chronobox. The long wait and the alerts protect you: an alert tells you when a recovery starts. After a recovery, every
           withdrawal still waits your delay. A recovery is for a lost wallet. A person who has your wallet can stop it too.
         </p>
         <p class="tech-note">
@@ -287,13 +287,13 @@ export function TechnicalPage() {
             <strong>It cannot bring a lost wallet back on its own.</strong>
             <p>
               If you can no longer sign with your wallet and the recovery is off, the money in the Chronobox is lost. A guardian alone cannot help.
-              With the recovery on, your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself still
+              With the recovery on, your guardian can change the wallet of the Chronobox after a long wait. The recovery of your wallet itself still
               works too. Zodiac cannot recover it for you.
             </p>
           </li>
           <li>
             <strong>It cannot stop a thief from blocking you.</strong>
-            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone. A guardian can help you move to a new wallet.</p>
+            <p>A person who has your wallet can also cancel your withdrawals. Then the money is stuck, not gone. A guardian can help you change the wallet.</p>
           </li>
         </ul>
         <p class="tech-note">

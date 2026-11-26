@@ -99,7 +99,7 @@ The address of your nth vault depends only on your wallet address and n. The app
 After setup, the wallet can add a guardian: a second wallet, on another device or held by a person you trust. Adding it waits the full delay, like every change. The app checks the result every time you open the vault.
 
 - The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Vault Delay and nothing else.
-- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Vault Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
+- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Vault Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can change the wallet of the vault without the wait. Neither can do it alone.
 - The guardian cannot withdraw. It can cancel every withdrawal, and the wallet can remove the guardian only through the queue, where the guardian can cancel that too.
 - A guardian alone is not a backup. A wallet change by both needs the wallet. For a lost wallet, turn the recovery on.
 
@@ -111,7 +111,7 @@ With a guardian, the wallet can turn a recovery on: a way back in when the walle
 - A recovery waits a long time. The owner chooses how long: 90, 180 or 365 days, or an own length from 30 to 730 days, and never shorter than the delay. 180 days unless they choose another time.
 - The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out for 30 days, and the new wallet is the wallet of the Chronobox. After those 30 days it is void. No money moves.
 - The alert service tells everybody who follows the Chronobox when a recovery starts, 7 days and 1 day before its wait ends, when its wait is over, and when it is stopped or carried out. When the wait ends, anybody can carry the recovery out at once, so stop it before then.
-- The cost: if the owner does not stop a recovery in time, the guardian can take the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
+- The cost: if the owner does not stop a recovery in time, the guardian can take over the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
 
 How it is built:
 
@@ -133,11 +133,11 @@ How it is built:
 Read these. They are the honest edge of what a delay can do.
 
 - **Your wallet controls it.** The app does not know what kind of wallet that is: one key, a Safe with several signers, or a smart account. Whatever protects your wallet also protects your Chronobox.
-- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can move the Chronobox to a new wallet at once.
-- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian move the Chronobox to a new wallet at once. Frozen funds are better than lost funds.
+- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can change the wallet of the Chronobox at once.
+- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian change the wallet of the Chronobox at once. Frozen funds are better than lost funds.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Vault Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
-- **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
-- **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet holds your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
+- **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can change the wallet of the Chronobox after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
+- **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet controls your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
 - **A recovery does not end a standoff.** A person who has your wallet can stop every recovery, as they can cancel every withdrawal. The recovery is for a lost key, not for a stolen one.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
 - **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own, and a Telegram account. Without them, use the calendar file, and look at your Chronobox regularly.
