@@ -51,7 +51,7 @@ import { canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
-import { Ring } from "./ring.tsx";
+import { CancelBar } from "./cancel-bar.tsx";
 import { LookupSheet, useFoundTokens } from "./third-party.tsx";
 import { GroupCard, WithdrawManySheet, collectCalls, groupsOf } from "./batch.tsx";
 import { lookupAllowed } from "../lib/store.ts";
@@ -774,10 +774,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
       {cancelled ? (
         <Modal title={isGuardian ? "Stopped." : "Cancelled."} onClose={() => setCancelled(null)}>
-          <div class="cancel-ring">
-            <Ring size={96} left={cancelled.left} play="cancel" />
-          </div>
           <p class="big-line">{cancelled.count > 1 ? `${cancelled.title}, and ${cancelled.count - 1} before it` : cancelled.title}</p>
+          <CancelBar passed={1 - cancelled.left} />
           <p>Nothing moved. The money stays in the Chronobox.</p>
           <div class="modal-actions">
             <Button kind="primary" onClick={() => setCancelled(null)}>

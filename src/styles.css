@@ -3366,27 +3366,23 @@ button.row-strong:hover .row-hint {
   border-color: #c94536;
 }
 
-/* The ring of a wait: a light track, and the blue part that is still ahead */
-.ring {
-  flex: none;
+/* After a cancel: the bar of the wait flashes red and runs back to empty */
+.cancel-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
 }
 
-.ring-track {
-  stroke: var(--line);
+.cancel-bar-track {
+  fill: var(--panel);
 }
 
-.ring-arc {
-  stroke: var(--blue);
+.cancel-bar-was {
+  fill: var(--blue);
 }
 
-.ring-arc-cancel {
-  stroke: var(--alarm);
-}
-
-.cancel-ring {
-  display: grid;
-  place-items: center;
-  padding: 8px 0 4px;
+.cancel-bar-out {
+  fill: var(--alarm);
 }
 
 .queue-head {
