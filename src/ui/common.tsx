@@ -163,6 +163,19 @@ export function Notice(props: { kind: "risk" | "bad" | "info" | "good"; title?: 
   );
 }
 
+/**
+ * Text that is one tap away: the line says what it is about, and a tap shows the rest. For text that
+ * most people do not need on the way through. `kind="info"` looks like the blue notice.
+ */
+export function More(props: { title: string; kind?: "info"; children: ComponentChildren }) {
+  return (
+    <details class={props.kind === "info" ? "more more-info" : "more"}>
+      <summary>{props.title}</summary>
+      <div>{props.children}</div>
+    </details>
+  );
+}
+
 /** The app is new. This says so, and where feedback goes. It sits at the top right of the landing page. */
 export function Experimental() {
   return (

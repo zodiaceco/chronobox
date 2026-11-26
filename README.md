@@ -182,7 +182,7 @@ What this gives and what it does not:
 - **Email**: an email from our alert service (`ALERTS_EMAIL`). The row opens the page of the alert service where a person gives an email address. While `ALERTS_EMAIL_SOON` is true and `ALERTS_EMAIL` is `null`, the list shows email as "Coming soon", and it cannot be chosen.
 - **Your own alert service**: one button that opens the guide "Run it yourself" in `watcher/README.md` (`ALERTS_GUIDE`).
 
-Under the list, the sheet says it in plain words: our alert service is not private. To send an alert it must know who follows a Chronobox, and we can see that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
+Under the list, the sheet says it in plain words: we can see who follows a Chronobox. To send an alert, our alert service must know that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
 
 A way whose setting is `null` is not in the list. With one way left and `ALERTS_EMAIL_SOON` false, "Get told" opens on that way, without the question.
 
