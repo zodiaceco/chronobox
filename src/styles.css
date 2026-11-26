@@ -3330,3 +3330,270 @@ button.row-strong:hover .row-hint {
   display: grid;
   gap: 10px;
 }
+
+/* The sky behind the foot of the page: no planet, a soft blue light on the page's own colour. */
+.horizon {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 300px;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: radial-gradient(120% 100% at 50% 118%, rgb(70 156 237 / 0.55) 0%, rgb(70 156 237 / 0.36) 30%, rgb(70 156 237 / 0.17) 55%, rgb(70 156 237 / 0.06) 78%, rgb(70 156 237 / 0) 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .horizon {
+    box-shadow: none;
+    background: radial-gradient(120% 100% at 50% 118%, rgb(70 156 237 / 0.9) 0%, rgb(70 156 237 / 0.66) 30%, rgb(70 156 237 / 0.36) 55%, rgb(70 156 237 / 0.12) 78%, rgb(70 156 237 / 0) 100%);
+  }
+}
+
+/* Red: what a red button, a cancel and an alarm share */
+:root {
+  --alarm: #e25647;
+}
+
+.button-danger {
+  background: var(--alarm);
+  border-color: var(--alarm);
+  color: #fff;
+}
+
+.button-danger:hover:not(:disabled) {
+  background: #c94536;
+  border-color: #c94536;
+}
+
+/* After a cancel: the bar of the wait flashes red and runs back to empty */
+.cancel-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+}
+
+.cancel-bar-track {
+  fill: var(--panel);
+}
+
+.cancel-bar-was {
+  fill: var(--blue);
+}
+
+.cancel-bar-out {
+  fill: var(--alarm);
+}
+
+.queue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Something in the line that this app did not make: red, on the card and at the top of the page */
+.queue-alarm {
+  border-color: var(--alarm);
+  box-shadow: 0 0 0 1px var(--alarm);
+  background: var(--bad-bg);
+}
+
+.queue-alarm .queue-flag {
+  background: var(--bg);
+  color: var(--bad-fg);
+  font-weight: 500;
+}
+
+.queue-alarm .queue-title {
+  overflow-wrap: anywhere;
+}
+
+.queue-alarm-icon,
+.foreign-alarm-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--alarm);
+  color: #fff;
+}
+
+.foreign-alarm {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  padding: 18px;
+  border: 2px solid var(--alarm);
+  border-radius: 18px;
+  background: var(--bad-bg);
+  color: var(--bad-fg);
+  text-align: left;
+}
+
+.foreign-alarm-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.foreign-alarm-body {
+  display: grid;
+  gap: 6px;
+}
+
+.foreign-alarm-body strong {
+  font-size: 1.05rem;
+}
+
+.foreign-alarm-body p {
+  margin: 0;
+}
+
+.foreign-alarm-what {
+  font-family: var(--mono);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.foreign-alarm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.foreign-alarm-actions .link-button {
+  color: var(--bad-fg);
+}
+
+/* The line of the time delay in the question about a cancel: what goes, and what stays */
+.cancel-line {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.cancel-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.cancel-row + .cancel-row {
+  border-top: 1px solid var(--line);
+}
+
+.cancel-row-out {
+  background: var(--bad-bg);
+  color: var(--fg);
+}
+
+.cancel-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--panel);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.cancel-row-out .cancel-mark {
+  background: var(--alarm);
+  color: #fff;
+}
+
+.cancel-what {
+  display: grid;
+  min-width: 0;
+}
+
+.cancel-what strong {
+  overflow-wrap: anywhere;
+}
+
+.cancel-row-out .cancel-what strong {
+  text-decoration: line-through;
+  text-decoration-color: var(--alarm);
+}
+
+.cancel-what small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cancel-tag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cancel-tag-out {
+  background: var(--alarm);
+  color: #fff;
+}
+
+/* A token's own icon in place of its first letter */
+img.token-badge.token-icon {
+  border-radius: 50%;
+  background: transparent;
+  object-fit: contain;
+}
+
+.lead-link {
+  color: inherit;
+  font-weight: 600;
+}
+
+.balance-found {
+  margin-left: 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+/* Several withdrawals that wait together */
+.queue-lines {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.queue-lines li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.queue-lines .token-badge {
+  width: 22px;
+  height: 22px;
+}
+
+.many-line {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.many-line .amount-row {
+  width: 100%;
+}

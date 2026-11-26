@@ -4,9 +4,9 @@ import { call, decode, encode, selector, topic } from "../src/lib/abi.ts";
 import { telegramLink, telegramStart } from "../src/lib/alerts.ts";
 import { CONTRACTS, SENTINEL, ZERO } from "../src/lib/chains.ts";
 import { calendarFile } from "../src/lib/ics.ts";
-import { formatAmount, formatDuration, formatUnits, parseUnits } from "../src/lib/format.ts";
+import { formatAmount, formatDuration, formatUnits, parseUnits, shortAmount } from "../src/lib/format.ts";
 import { checksum, keccak, parseAddress, utf8 } from "../src/lib/hex.ts";
-import { addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, readBalances, readQueue, queueLength, cancelAllTx, QUEUE_PAGE, type Inspection, type QueueItem, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
+import { isForeign, addGuardianTx, councilSwapTx, swapCoverage, predictCouncil, removeGuardianTx, CANCEL_ROLE, DELAY_PROXY_CODE, ROLES_PROXY_CODE, MAX_COOLDOWN, MIN_COOLDOWN, collectCalls, groupsOf, readBalances, readManyInPieces, readQueue, queueLength, cancelAllTx, QUEUE_PAGE, type Inspection, type QueueItem, cancelTx, usdToCoin, changeDelayTx, changeWalletTx, classify, delayTxHash, inspect, itemStatus, lockTx, predictDelay, predictRecoveryDelay, predictRoles, predictSafe, verifyCancelPermission, withdrawalTx, type Rpc } from "../src/lib/chronobox.ts";
 
 const WALLET = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const SAFE = "0x56020d8f8a39fCbE58c27ec287eE8e9805563b71";
@@ -97,7 +97,68 @@ test("only a transfer to the controller is a withdrawal", () => {
     label: "Changes the delay",
   });
   assert.equal(classify({ to: SAFE, value: 0n, data: "0xdeadbeef", operation: 0 }, vault).kind, "settings");
-  assert.equal(classify({ to: token, value: 0n, data: call("approve(address,uint256)", [other, 1n]), operation: 0 }, vault).kind, "unknown");
+  // An allowance lets another address take the tokens later, without a wait. It is named, and it is a warning.
+  assert.deepEqual(classify({ to: token, value: 0n, data: call("approve(address,uint256)", [other, 1n]), operation: 0 }, vault), {
+    kind: "settings",
+    label: "Lets another address take tokens out of your Chronobox",
+  });
+  // A delegatecall can replace the code of the Safe. It names the contract whose code would run.
+  assert.match((classify({ to: other, value: 0n, data: "0x", operation: 1 }, vault) as { label?: string }).label ?? "", /Runs the code of 0x70997970/);
+});
+
+test("everything this app does not make raises the alarm, and nothing it makes does", () => {
+  const vault = { safe: SAFE, delay: "0x4Bc1F5bDd8ac14ffEc0e91441913E428579708f7", controller: WALLET } as const;
+  const other = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+  assert.equal(isForeign(classify(withdrawalTx(WALLET, null, 5n), vault)), false);
+  assert.equal(isForeign(classify(withdrawalTx(other, null, 5n), vault)), true);
+  assert.equal(isForeign(classify({ to: SAFE, value: 0n, data: call("changeMasterCopy(address)", [other]), operation: 0 }, vault)), true);
+  assert.equal(isForeign(classify({ to: other, value: 0n, data: "0x", operation: 1 }, vault)), true);
+  assert.equal(isForeign(classify({ to: vault.delay, value: 0n, data: call("setTxCooldown(uint256)", [86400n]), operation: 0 }, vault)), false);
+  // A delay shorter than an hour or longer than 90 days is never built by this app and must raise the alarm.
+  assert.equal(classify({ to: vault.delay, value: 0n, data: call("setTxCooldown(uint256)", [1n]), operation: 0 }, vault).kind, "settings");
+  assert.equal(isForeign(classify({ to: vault.delay, value: 0n, data: call("setTxCooldown(uint256)", [MIN_COOLDOWN - 1n]), operation: 0 }, vault)), true);
+  assert.equal(isForeign(classify({ to: vault.delay, value: 0n, data: call("setTxCooldown(uint256)", [MAX_COOLDOWN + 1n]), operation: 0 }, vault)), true);
+  // A call touching the recovery Delay directly is a settings change and raises the alarm.
+  const recoveryDelay = predictRecoveryDelay(SAFE);
+  const withRecovery = {
+    ...vault,
+    recoveryDelay: { delay: recoveryDelay, deployed: true, sound: true, avatar: vault.safe, target: vault.safe, modules: [], cooldown: 0n, expiration: 0n, txNonce: 0n, queueNonce: 0n },
+  };
+  assert.equal(classify({ to: recoveryDelay, value: 0n, data: call("enableModule(address)", [other]), operation: 0 }, withRecovery).kind, "settings");
+  assert.equal(isForeign(classify({ to: recoveryDelay, value: 0n, data: call("enableModule(address)", [other]), operation: 0 }, withRecovery)), true);
+  assert.equal(isForeign(null), false);
+});
+
+test("shortAmount formats huge balances concisely and rounds down", () => {
+  assert.equal(shortAmount(999_999n * 10n ** 18n, 18), "999,999");
+  assert.equal(shortAmount(1_239_999n * 10n ** 6n, 6), "1.23M");
+  assert.equal(shortAmount(45_699_000_000n * 10n ** 6n, 6), "45.6B");
+  assert.equal(shortAmount(789_999_000_000_000n, 0), "789T");
+  assert.equal(shortAmount(1_000_000_000_000_000n, 0), "1.00 × 10¹⁵");
+  assert.equal(shortAmount((1n << 256n) - 1n, 0), "1.15 × 10⁷⁷");
+});
+
+test("groupsOf groups consecutive plain withdrawals from the same block and collectCalls builds executeNextTx in order", () => {
+  const delay = "0x4Bc1F5bDd8ac14ffEc0e91441913E428579708f7" as const;
+  const token = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const;
+  const other = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
+  const vault = { safe: SAFE, delay, controller: WALLET } as const;
+  const item = (nonce: bigint, createdAt: bigint, tx: QueueItem["tx"]): QueueItem => ({ nonce, createdAt, hash: "0x00", tx });
+  const a = item(0n, 100n, withdrawalTx(WALLET, null, 1n));
+  const b = item(1n, 100n, withdrawalTx(WALLET, token, 2n));
+  const foreign = item(2n, 100n, withdrawalTx(other, null, 3n));
+  const c = item(3n, 200n, withdrawalTx(WALLET, null, 4n));
+  const unread = item(4n, 200n, null);
+  const groups = groupsOf([a, b, foreign, c, unread], vault);
+  assert.deepEqual(
+    groups.map((g) => g.map((x) => x.nonce)),
+    [[0n, 1n], [2n], [3n], [4n]],
+  );
+  const calls = collectCalls(groups[0], delay);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].to, delay);
+  assert.equal(calls[1].to, delay);
+  assert.notEqual(calls[0].data, calls[1].data);
 });
 
 test("the two settings changes are recognised, and only in their exact form", () => {
@@ -181,7 +242,7 @@ test("many balances come from one read, and a failed read is not a balance of ze
   const TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const assets = [{ token: null, main: true }, { token: TOKEN, main: true }, { token: SAFE }] as const;
   const good = await readBalances(async () => (requests++, answer), WALLET, assets);
-  assert.deepEqual(good, { balances: [5n, null, null], complete: true });
+  assert.deepEqual(good, { balances: [5n, null, null], complete: true, reduced: false });
   assert.equal(requests, 1);
 
   // The network has no Multicall3: the main assets are read one by one, the others stay unknown.
@@ -194,7 +255,75 @@ test("many balances come from one read, and a failed read is not a balance of ze
     WALLET,
     assets,
   );
-  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false });
+  assert.deepEqual(without, { balances: [7n, 9n, null], complete: false, reduced: false });
+});
+
+test("a network that refuses a large read gets the same balances in smaller pieces", async () => {
+  const w = (n: number | bigint) => BigInt(n).toString(16).padStart(64, "0");
+  // Multicall3's answer for n calls that each return 1.
+  const answerFor = (n: number) => {
+    const entry = w(1) + w(64) + w(32) + w(1);
+    const offsets = Array.from({ length: n }, (_, k) => 32 * n + k * 128);
+    return "0x" + w(32) + w(n) + offsets.map(w).join("") + entry.repeat(n);
+  };
+  const assets = Array.from({ length: 30 }, (_, k) => ({ token: `0x${(k + 1).toString(16).padStart(40, "0")}` as `0x${string}` }));
+  const sizes: number[] = [];
+  const rpc = async (_method: string, params: any[] = []) => {
+    // The calldata of aggregate3 holds the number of calls in its second word.
+    const n = Number(BigInt("0x" + String(params[0].data).slice(10 + 64, 10 + 128)));
+    sizes.push(n);
+    if (n > 8) throw new Error("request too large");
+    return answerFor(n);
+  };
+  const read = await readBalances(rpc, WALLET, assets);
+  assert.equal(read.complete, true);
+  assert.equal(read.reduced, true);
+  assert.ok(read.balances.every((b) => b === 1n));
+  assert.ok(sizes.includes(8));
+
+  // Concurrency stays capped at 4 even when chunks cascade through multiple smaller sizes.
+  const manyAssets = Array.from({ length: 120 }, (_, k) => ({ token: `0x${(k + 1).toString(16).padStart(40, "0")}` as `0x${string}` }));
+  let inFlight = 0;
+  let peak = 0;
+  const cappedRpc: Rpc = async (_method, params: any[] = []) => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, 2));
+    const n = Number(BigInt("0x" + String(params[0].data).slice(10 + 64, 10 + 128)));
+    inFlight--;
+    if (n > 3) throw new Error("request too large");
+    return answerFor(n);
+  };
+  const capped = await readBalances(cappedRpc, WALLET, manyAssets);
+  assert.equal(capped.complete, true);
+  assert.ok(peak <= 4, `expected at most 4 in-flight RPCs, saw ${peak}`);
+
+  // A small list does not repeat identical failed multicalls before falling back to single reads.
+  let multicalls = 0;
+  const tinyRpc: Rpc = async (method, params: any[] = []) => {
+    if (method === "eth_getBalance") return "0x5";
+    if (params[0].to === CONTRACTS.multicall3) {
+      multicalls++;
+      throw new Error("no multicall");
+    }
+    return "0x" + w(1);
+  };
+  const tiny = await readBalances(tinyRpc, WALLET, [{ token: null, main: true }]);
+  assert.deepEqual(tiny, { balances: [5n], complete: false, reduced: false });
+  assert.equal(multicalls, 1);
+
+  // readManyInPieces falls back to smaller pieces on networks with tight limits.
+  const piecesRpc: Rpc = async (_method, params: any[] = []) => {
+    const n = Number(BigInt("0x" + String(params[0].data).slice(10 + 64, 10 + 128)));
+    if (n > 8) throw new Error("too large");
+    return answerFor(n);
+  };
+  const answers = await readManyInPieces(
+    piecesRpc,
+    Array.from({ length: 25 }, (_, k) => ({ to: `0x${(k + 1).toString(16).padStart(40, "0")}` as `0x${string}`, data: call("decimals()") })),
+  );
+  assert.equal(answers.length, 25);
+  assert.ok(answers.every((a) => a !== null && BigInt(a) === 1n));
 });
 
 test("guardian changes are recognised, and nothing close to them is", () => {

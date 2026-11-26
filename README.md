@@ -147,7 +147,7 @@ Read these. They are the honest edge of what a delay can do.
 ## Privacy
 
 - No server, no account, no analytics.
-- The production page loads only its own files and makes no other network requests. The Content Security Policy is `connect-src 'none'`. All chain data comes through your wallet, so no extra party learns which vault you look at.
+- The production page loads only its own files. All chain data comes through your wallet, so no extra party learns which vault you look at. The one exception is "Third-party services", off until you switch it on (one switch, remembered in this browser; on Ethereum and Sepolia only): the page then asks Blockscout which tokens the Chronobox holds. Blockscout sees your IP address with that address, so the switch asks you to tick that you use a VPN or that you trust Blockscout. Decimals and balances are still read on the chain. The Content Security Policy allows exactly the two Blockscout hosts (`connect-src https://eth.blockscout.com https://eth-sepolia.blockscout.com`), and a test holds it to `indexer` in `src/lib/chains.ts`.
 - Wallets connect through EIP-6963 in the page. There is no WalletConnect relay.
 - No service worker and no update prompt. See "Updates" below.
 - Alerts are the exception, and you choose them. Our alert service must know who follows a Chronobox to send an alert, and we can see that. If you do not want that, run the alert service yourself. See "Get told" below.
@@ -164,7 +164,7 @@ The alert service watches every Chronobox on one or more networks and runs a Tel
 
 `ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, "Get told" has the way "Telegram", with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
-The registration is in Telegram, not in this app. The app only builds the link, and `connect-src 'none'` stays as it is.
+The registration is in Telegram, not in this app. The app only builds the link: the page opens no connection for it.
 
 What this gives and what it does not:
 

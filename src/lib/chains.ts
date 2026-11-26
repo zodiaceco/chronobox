@@ -68,6 +68,11 @@ export type Chain = {
   publicRpc: string;
   testnet?: boolean;
   /**
+   * The token index that third-party services ask (Blockscout), on networks that have one. Only after the
+   * person switched them on. The content security policy in index.html allows exactly these hosts.
+   */
+  indexer?: string;
+  /**
    * Chainlink price feed of the network's coin in US dollars (8 decimals).
    * Null means the coin is worth one dollar (xDAI). The app reads it through
    * the wallet, only to turn a contribution in dollars into the coin.
@@ -152,6 +157,7 @@ export const CHAINS: Chain[] = [
     name: "Ethereum",
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://etherscan.io",
+    indexer: "https://eth.blockscout.com",
     publicRpc: "https://ethereum-rpc.publicnode.com",
     usdFeed: "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
     keep: 5_000_000_000_000_000n,
@@ -236,6 +242,7 @@ export const CHAINS: Chain[] = [
     name: "Sepolia",
     native: { symbol: "ETH", decimals: 18 },
     explorer: "https://sepolia.etherscan.io",
+    indexer: "https://eth-sepolia.blockscout.com",
     publicRpc: "https://ethereum-sepolia-rpc.publicnode.com",
     testnet: true,
     usdFeed: "0x694AA1769357215DE4FAC081bf1f309aDC325306",

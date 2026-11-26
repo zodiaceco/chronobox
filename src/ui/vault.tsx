@@ -6,7 +6,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { type Chain, CONTRACTS } from "../lib/chains.ts";
-import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
+import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress, shortAmount } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { calendarFile, download } from "../lib/ics.ts";
 import { addCustomToken, blockHints, pendingSwap, rememberVault, setPendingSwap, txCache } from "../lib/store.ts";
@@ -26,6 +26,7 @@ import {
   councilCompatible,
   executeTx,
   inspect,
+  isForeign,
   itemStatus,
   queuedInReceipt,
   queueLength,
@@ -46,10 +47,14 @@ import {
   MIN_COOLDOWN,
   QUEUE_PAGE,
 } from "../lib/chronobox.ts";
-import { errorText } from "../lib/wallet.ts";
+import { assertWallet, canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
 import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
+import { CancelBar } from "./cancel-bar.tsx";
+import { LookupSheet, useFoundTokens } from "./third-party.tsx";
+import { GroupCard, WithdrawManySheet, collectCalls, groupsOf } from "./batch.tsx";
+import { lookupAllowed } from "../lib/store.ts";
 import { DepositPanel } from "./deposit.tsx";
 import { AgreeSheet, AskGuardianSheet, GuardianSheet, prepareSwap } from "./guardian.tsx";
 import { RecoverySection, type RecoveryWaiting, guarded } from "./recovery.tsx";
@@ -79,7 +84,7 @@ type VaultData = {
   fetchedAt: number;
 };
 
-type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | null;
+type Sheet = "withdraw" | "deposit" | "token" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | "lookup" | null;
 
 /** The parts of a locked Chronobox, in the form that the builders want. */
 function vaultOf(safe: Address, inspection: Inspection): VaultRef {
@@ -126,6 +131,8 @@ function useVault(session: Session, chain: Chain, safe: Address) {
       try {
         const rpc = session.rpc;
         const assets = assetsOf(chain);
+        // The balances do not depend on the checks. Their read starts now, next to the checks, and not after them.
+        const early = readBalances(rpc, safe, assets).catch(() => null);
         let [inspection, now] = await Promise.all([inspect(rpc, safe, blockHints(chain.id)), chainTime(rpc)]);
         // A check that passed a moment ago and cannot run now is asked once more before the page says so.
         if (last.current?.key === key && last.current.inspection.state === "locked" && inspection.state !== "locked") {
@@ -169,10 +176,7 @@ function useVault(session: Session, chain: Chain, safe: Address) {
 
         const balances = missing
           ? Promise.resolve()
-          : readBalances(rpc, safe, assets).then(
-              ({ balances, complete }) => publish({ balances, allRead: complete, balancesRead: true }),
-              () => publish({ balancesRead: true, allRead: false }),
-            );
+          : early.then((read) => (read ? publish({ balances: read.balances, allRead: read.complete, balancesRead: true }) : publish({ balancesRead: true, allRead: false })));
         const queue = readsQueue
           ? readQueue(rpc, inspection, txCache(chain.id, inspection.delay!), {
               known: kept,
@@ -280,6 +284,25 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const [sheet, setSheet] = useState<Sheet>(null);
   const [depositBusy, setDepositBusy] = useState(false);
   const [cancelling, setCancelling] = useState<QueueItem | null>(null);
+  // Counts the times third-party services were switched or an action changed the balances.
+  const [lookupRound, setLookupRound] = useState(0);
+  const bumpFound = () => setLookupRound((r) => r + 1);
+  // Tokens in the Chronobox that only the index knows, with third-party services on.
+  // Never runs for an address with no Chronobox, and does not re-fetch on the 30-second passive poll.
+  const foundEnabled = !!data && data.inspection.state !== "missing";
+  const found = useFoundTokens(session, chain, safe, foundEnabled, lookupRound);
+  // The wallet can send several calls as one. Then several assets can be withdrawn together, and collected together.
+  const [batch, setBatch] = useState(false);
+  useEffect(() => {
+    let stale = false;
+    setBatch(false);
+    canBatch(session.wallet.provider, session.account, chain.id).then((yes) => !stale && setBatch(yes));
+    return () => {
+      stale = true;
+    };
+  }, [session.wallet, session.account, chain.id]);
+  // What was cancelled a moment ago, and how much of its wait was still ahead: for the sheet that shows the cancel.
+  const [cancelled, setCancelled] = useState<{ title: string; left: number; count: number } | null>(null);
   const [cancellingAll, setCancellingAll] = useState(false);
   const [copied, setCopied] = useState(false);
   // Finishing and clearing share one state. Cancel has its own: it is the emergency action, and
@@ -318,6 +341,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   if (!data) return <section class="page page-center muted">Opening your Chronobox…</section>;
 
   const { inspection, queue, assets, balances } = data;
+  const allAssets = [...assets, ...found.assets];
+  const allBalances = [...balances, ...found.box];
   // "unverified": one check could not be done from this device. Money can still come out, so only deposits are held back.
   const verified = inspection.state === "locked";
   const locked = verified || inspection.state === "unverified";
@@ -354,6 +379,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   const close = () => {
     setSheet(null);
     refresh();
+    bumpFound();
   };
 
   // After every try the page reads the chain again: a failure often means that the line has moved.
@@ -385,13 +411,18 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         if (!(e instanceof StoppedWaiting && gone())) throw e;
       } finally {
         refresh();
+        bumpFound();
       }
     });
   const cancel = (item: QueueItem) =>
     cancelAction.run("cancel", async (waiting) => {
       try {
+        const index = queue.findIndex((q) => q.nonce === item.nonce);
+        const title = describe(item.tx && vault ? classify(item.tx, vault) : null, allAssets, {}, Boolean(vault?.recoveryOn)).title;
+        const left = 1 - Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(inspection.cooldown || 1n)));
         await sendAndWait(session.rpc, session.account, cancelTx(inspection.roles!, inspection.delay!, item.nonce), { ...sending, ...waiting });
         setCancelling(null);
+        setCancelled({ title, left, count: index + 1 });
       } finally {
         refresh();
       }
@@ -407,6 +438,17 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         setCancellingAll(false);
       } finally {
         refresh();
+      }
+    });
+  // All items of a group in one confirmation, in their order in the line. All of them or none.
+  const collectGroup = (group: QueueItem[]) =>
+    action.run(`collect-${group[0].nonce}`, async (waiting) => {
+      try {
+        await assertWallet(session.rpc, session.account, chain.id, chain.name);
+        await sendBatch(session.wallet.provider, session.account, chain.id, collectCalls(group, inspection.delay!), undefined, waiting.shouldStop);
+      } finally {
+        refresh();
+        bumpFound();
       }
     });
   const askCancelAll = () => {
@@ -439,7 +481,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   };
 
   // What is inside: every asset with a balance. The first one is shown large.
-  const held = assets.map((asset, i) => ({ asset, amount: balances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
+  const held = allAssets.map((asset, i) => ({ asset, amount: allBalances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
   // Until the balances are read once, a missing one is "not read yet", not "could not be read".
   const unread = data.balancesRead ? assets.filter((a, i) => a.main && balances[i] === null).map((a) => a.symbol) : [];
@@ -455,6 +497,21 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
   return (
     <section class="page vault">
       <Status inspection={inspection} session={session} chain={chain} />
+      {vault ? (
+        <ForeignAlarm
+          queue={queue}
+          vault={vault}
+          inspection={inspection}
+          assets={allAssets}
+          now={now}
+          canCancel={canCancel}
+          stops={isGuardian}
+          onCancel={(nonce) => {
+            const item = queue.find((q) => q.nonce === nonce);
+            if (item) askCancel(item);
+          }}
+        />
+      ) : null}
       {props.swap && vault && !isGuardian && inspection.guardian && !sameAddress(props.swap.to, inspection.controller) ? (
         <Notice kind="info" title="This link is for the guardian.">
           It asks the guardian <AddressText address={inspection.guardian} /> to agree to <AddressText address={props.swap.to} /> as the new wallet of this
@@ -493,11 +550,25 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           <ul class="balances">
             {shown.map((h) => (
               <li key={h.asset.token ?? "native"}>
-                <span class="balance-amount">{h.amount === null ? "…" : formatAmount(h.amount, h.asset.decimals)}</span>
-                <span class="balance-symbol">{h.asset.symbol}</span>
+                <span class="balance-amount" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
+                  {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
+                </span>
+                <span class="balance-symbol">
+                  {h.asset.symbol}
+                  {h.asset.found && h.asset.token ? (
+                    <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
+                      {shortAddress(h.asset.token)}
+                    </small>
+                  ) : null}
+                </span>
               </li>
             ))}
           </ul>
+          {isController && chain.indexer && !lookupAllowed() ? (
+            <button type="button" class="link-button" onClick={() => setSheet("lookup")}>
+              A token is missing? Find all tokens in this Chronobox
+            </button>
+          ) : null}
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
           {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {locked ? (
@@ -563,7 +634,33 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </div>
           ) : null}
           <ol class="queue">
-            {queue.map((item, index) => (
+            {(batch ? groupsOf(queue, vault) : queue.map((item) => [item])).map((group, groupIndex) => {
+              const item = group[0];
+              const index = queue.indexOf(item);
+              if (group.length > 1) {
+                return (
+                  <GroupCard
+                    key={`group-${item.nonce}`}
+                    items={group}
+                    first={groupIndex === 0}
+                    status={itemStatus(item, inspection.cooldown, inspection.expiration, now)}
+                    now={now}
+                    cooldown={inspection.cooldown}
+                    vault={vault}
+                    assets={allAssets}
+                    rpc={session.rpc}
+                    busy={action.busy}
+                    onCollect={() => collectGroup(group)}
+                    onCollectFirst={() => finish(group[0])}
+                    onRemove={remove}
+                    onRemind={(nonce, s) => saveReminders(nonce, s, now)}
+                    // A cancel takes an item and every item before it, so the last one of the group takes the group.
+                    onCancel={canCancel ? () => askCancel(group[group.length - 1]) : null}
+                    cancelLabel={isGuardian ? "Stop all" : "Cancel all"}
+                  />
+                );
+              }
+              return (
               <QueueCard
                 key={String(item.nonce)}
                 item={item}
@@ -573,7 +670,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 cooldown={inspection.cooldown}
                 action={item.tx ? classify(item.tx, vault) : null}
                 recoveryOn={Boolean(vault.recoveryOn)}
-                assets={assets}
+                assets={allAssets}
                 chain={chain}
                 safe={safe}
                 rpc={session.rpc}
@@ -584,7 +681,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 onCancel={canCancel ? () => askCancel(item) : null}
                 cancelLabel={isGuardian ? "Stop it" : "Cancel"}
               />
-            ))}
+              );
+            })}
           </ol>
           <SlowNote action={action} />
           {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
@@ -622,6 +720,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           />
           {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
+          {chain.indexer && (isController || lookupAllowed()) ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
@@ -629,8 +728,24 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </ul>
       ) : null}
 
-      {sheet === "withdraw" && vault ? (
-        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={assets} balances={balances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
+      {sheet === "withdraw" && vault && batch ? (
+        <WithdrawManySheet
+          session={session}
+          chain={chain}
+          vault={vault}
+          inspection={inspection}
+          assets={allAssets}
+          balances={allBalances}
+          queue={queue}
+          partial={unshown > 0n}
+          now={now}
+          canCancel={canCancel}
+          onRemind={saveReminders}
+          onClose={close}
+        />
+      ) : null}
+      {sheet === "withdraw" && vault && !batch ? (
+        <WithdrawSheet session={session} chain={chain} vault={vault} inspection={inspection} assets={allAssets} balances={allBalances} queue={queue} partial={unshown > 0n} now={now} canCancel={canCancel} onClose={close} />
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>
@@ -666,6 +781,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         />
       ) : null}
       {sheet === "token" ? <TokenSheet session={session} chain={chain} onClose={close} /> : null}
+      {sheet === "lookup" ? <LookupSheet chain={chain} onClose={() => setSheet(null)} onChanged={() => setLookupRound((r) => r + 1)} onAddToken={() => setSheet("token")} /> : null}
       {sheet === "checks" ? (
         <Modal title="Safety checks" lead="Chronobox reads these from the chain every time you open this page. Nothing is taken on trust." onClose={() => setSheet(null)}>
           <ul class="checks">
@@ -687,23 +803,73 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         </Modal>
       ) : null}
       {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
+      {cancelled ? (
+        <Modal title={isGuardian ? "Stopped." : "Cancelled."} onClose={() => setCancelled(null)}>
+          <p class="big-line">{cancelled.count > 1 ? `${cancelled.title}, and ${cancelled.count - 1} before it` : cancelled.title}</p>
+          <CancelBar passed={1 - cancelled.left} />
+          <p>Nothing moved. The money stays in the Chronobox.</p>
+          <div class="modal-actions">
+            <Button kind="primary" onClick={() => setCancelled(null)}>
+              Done
+            </Button>
+          </div>
+        </Modal>
+      ) : null}
       {cancelling && vault ? (
-        <Modal title={isGuardian ? "Stop this?" : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
+        <Modal
+          title={cancelIndex > 0 ? `${isGuardian ? "Stop" : "Cancel"} ${cancelIndex + 1} items?` : isGuardian ? "Stop this?" : "Cancel this?"}
+          busy={cancelAction.busy !== null && !cancelAction.slow}
+          onClose={() => setCancelling(null)}
+        >
           {cancelItem ? (
             <>
-              <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
-              <p>
-                {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
-                {cancelIndex > 0 ? ` Items wait in line, so this also cancels the ${cancelIndex === 1 ? "one" : cancelIndex} before it.` : ""}
-              </p>
+              {cancelIndex > 0 ? (
+                <>
+                  {/* A cancel takes an item and everything in front of it. So the whole line is shown, with what goes and what stays. */}
+                  <p>
+                    The time delay keeps one line. A {isGuardian ? "stop" : "cancel"} takes an item <b>and everything in front of it</b>.
+                  </p>
+                  <ol class="cancel-line">
+                    {queue.map((item, index) => {
+                      const goes = index <= cancelIndex;
+                      const ready = itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready";
+                      return (
+                        <li key={String(item.nonce)} class={goes ? "cancel-row cancel-row-out" : "cancel-row"}>
+                          <span class="cancel-mark" aria-hidden="true">
+                            {goes ? "\u00d7" : ""}
+                          </span>
+                          <span class="cancel-what">
+                            <strong>{describe(item.tx ? classify(item.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</strong>
+                            <small>{index === cancelIndex ? "The one you chose" : goes ? (ready ? "In front of it, and ready" : "In front of it") : "Behind it: stays in line"}</small>
+                          </span>
+                          <span class={goes ? "cancel-tag cancel-tag-out" : "cancel-tag"}>{goes ? (isGuardian ? "Stopped" : "Cancelled") : "Stays"}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                  {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
+                    <Notice kind="risk" title="Something in front of it is ready.">
+                      Finish it first if you want it. Otherwise it is cancelled too.
+                    </Notice>
+                  ) : null}
+                  <p class="hint">
+                    {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p class="big-line">{describe(cancelItem.tx ? classify(cancelItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</p>
+                  <p>{isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}</p>
+                </>
+              )}
               <SlowNote action={cancelAction} />
               {cancelAction.error ? <Notice kind="bad">{cancelAction.error}</Notice> : null}
               <div class="modal-actions">
                 <Button kind="primary" busy={cancelAction.busy === "cancel"} onClick={() => cancel(cancelItem)}>
-                  {isGuardian ? "Stop it" : "Cancel it"}
+                  {cancelIndex > 0 ? `${isGuardian ? "Stop" : "Cancel"} these ${cancelIndex + 1}` : isGuardian ? "Stop it" : "Cancel it"}
                 </Button>
                 <Button kind="quiet" onClick={() => setCancelling(null)} disabled={!!cancelAction.busy}>
-                  {isGuardian ? "Let it wait" : "Keep it"}
+                  {isGuardian ? (cancelIndex > 0 ? "Let them wait" : "Let it wait") : cancelIndex > 0 ? "Keep them" : "Keep it"}
                 </Button>
               </div>
             </>
@@ -756,8 +922,8 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
         <Modal title="Carry this out?" onClose={() => setConfirming(null)}>
           {confirmItem ? (
             <>
-              <p class="big-line">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).title}</p>
-              <Notice kind="risk">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, assets, {}, Boolean(vault.recoveryOn)).warning}</Notice>
+              <p class="big-line">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).title}</p>
+              <Notice kind="risk">{describe(confirmItem.tx ? classify(confirmItem.tx, vault) : null, allAssets, {}, Boolean(vault.recoveryOn)).warning}</Notice>
               <div class="modal-actions">
                 {canCancel ? (
                   <Button kind="primary" onClick={() => askCancel(confirmItem)}>
@@ -933,10 +1099,111 @@ function describe(
         flagged: true,
       };
     case "settings":
-      return { title: action.label, warning: "This changes the Chronobox, and this app did not create it. If you did not ask for it, cancel it.", finish: "Apply now", flagged: true };
+      return {
+        title: action.label,
+        warning: "This app did not create it. It changes the rules of your Chronobox. If you did not ask for it, cancel it.",
+        finish: "Apply now",
+        flagged: true,
+      };
     default:
-      return { title: "Something this app cannot read", warning: "This app did not create it and cannot tell what it does. If you did not ask for it, cancel it.", finish: "Finish", flagged: true };
+      return {
+        title: action.label ?? "Something this app cannot read",
+        warning: "This app did not create it and cannot tell what it does. It can take your money. If you did not ask for it, cancel it.",
+        finish: "Finish",
+        flagged: true,
+      };
   }
+}
+
+/**
+ * At the top of the page: something waits in the line that this app did not make. It can change the
+ * rules of the Chronobox or move its money, and when its wait is over anybody can carry it out.
+ */
+function ForeignAlarm(props: {
+  queue: QueueItem[];
+  vault: VaultRef;
+  inspection: Inspection;
+  assets: Asset[];
+  now: bigint;
+  /** This wallet can cancel. Otherwise the alarm says who can. */
+  canCancel: boolean;
+  /** The wallet on the page is the guardian: it stops. */
+  stops?: boolean;
+  onCancel: (nonce: bigint) => void;
+}) {
+  const { vault, inspection, now } = props;
+  // An item whose content this page cannot read could be anything. It is named here too: the alarm must not
+  // go quiet just when the page cannot tell what waits. Its card stays amber, as it may well be one's own.
+  const foreign = props.queue.filter(
+    (item) => (!item.tx || isForeign(classify(item.tx, vault))) && itemStatus(item, inspection.cooldown, inspection.expiration, now).phase !== "expired",
+  );
+  if (foreign.length === 0) return null;
+  const first = foreign[0];
+  const status = itemStatus(first, inspection.cooldown, inspection.expiration, now);
+  const title = describe(first.tx ? classify(first.tx, vault) : null, props.assets, {}, Boolean(vault.recoveryOn)).title;
+  const unread = foreign.every((item) => !item.tx);
+  const verb = props.stops ? "Stop" : "Cancel";
+  return (
+    <div class="foreign-alarm" role="alert">
+      <span class="foreign-alarm-icon">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                <path d="M12 3.5 2.5 20h19L12 3.5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" />
+                <path d="M12 10v4.5M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              </svg>
+      </span>
+      <div class="foreign-alarm-body">
+        <strong>
+          {unread
+            ? foreign.length === 1
+              ? "Something is waiting that this page cannot read."
+              : `${foreign.length} things are waiting that this page cannot read.`
+            : foreign.length === 1
+              ? "Something is waiting that this app did not create."
+              : `${foreign.length} things are waiting that this app did not create.`}
+        </strong>
+        <p class="foreign-alarm-what">{foreign.length === 1 ? title : `${title} (+${foreign.length - 1} more)`}</p>
+        <p>
+          {status.phase === "ready" ? (
+            <>
+              Its wait is over: <b>anybody can carry it out now.</b>{" "}
+            </>
+          ) : (
+            <>
+              In <b>{formatDuration(status.readyAt - now)}</b>, on {formatDate(status.readyAt)}, anybody can carry it out.{" "}
+            </>
+          )}
+          {props.stops
+            ? "If the owner did not ask for it, stop it."
+            : "Only your wallet can put something into the line. If you did not ask for it, somebody else can sign with your wallet."}
+        </p>
+        <div class="foreign-alarm-actions">
+          {props.canCancel ? (
+            <Button kind="danger" onClick={() => props.onCancel(foreign[foreign.length - 1].nonce)}>
+              {foreign.length === 1 ? `${verb} it` : `${verb} all ${foreign.length}`}
+            </Button>
+          ) : (
+            <p class="hint">
+              {!vault.roles
+                ? "This Chronobox has no cancel switch."
+                : vault.guardian
+                  ? `Only the wallet ${shortAddress(vault.controller)} or the guardian ${shortAddress(vault.guardian)} can cancel it.`
+                  : `Only the wallet ${shortAddress(vault.controller)} can cancel it.`}
+            </p>
+          )}
+          <a
+            class="link-button"
+            href={`#item-${first.nonce}`}
+            onClick={(event) => {
+              event.preventDefault();
+              document.getElementById(`item-${first.nonce}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+          >
+            {foreign.length === 1 ? "Show it in the line" : "Show them in the line"}
+          </a>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function QueueCard(props: {
@@ -979,11 +1246,23 @@ function QueueCard(props: {
 
   const { title, warning, finish, flagged } = describe(action, props.assets, tokens, props.recoveryOn);
   const progress = Math.max(0, Math.min(1, Number(now - item.createdAt) / Number(props.cooldown || 1n)));
+  // Not made by this app: red, and its cancel is the first thing on the card.
+  const alarm = isForeign(action) && status.phase !== "expired";
 
   return (
-    <li class={`queue-item queue-${status.phase}${warning ? " queue-warning" : ""}`}>
+    <li id={`item-${item.nonce}`} class={`queue-item queue-${status.phase}${alarm ? " queue-alarm" : warning ? " queue-warning" : ""}`}>
       <div class="queue-main">
-        <strong class="queue-title">{title}</strong>
+        <span class="queue-head">
+          {alarm ? (
+            <span class="queue-alarm-icon">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                <path d="M12 3.5 2.5 20h19L12 3.5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" />
+                <path d="M12 10v4.5M12 17.2v.3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+              </svg>
+            </span>
+          ) : null}
+          <strong class="queue-title">{title}</strong>
+        </span>
         {warning ? <span class="queue-flag">{warning}</span> : null}
         {status.phase === "waiting" ? (
           <>
@@ -1013,15 +1292,21 @@ function QueueCard(props: {
             Clear
           </Button>
         ) : null}
-        {status.phase === "waiting" ? (
+        {status.phase === "waiting" && !alarm ? (
           <button type="button" class="link-button" onClick={() => saveReminders(item.nonce, status, now)}>
             Add to calendar
           </button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
-          <button type="button" class="link-button" onClick={props.onCancel}>
-            {props.cancelLabel}
-          </button>
+          alarm ? (
+            <Button small kind="danger" onClick={props.onCancel}>
+              {props.cancelLabel}
+            </Button>
+          ) : (
+            <button type="button" class="link-button" onClick={props.onCancel}>
+              {props.cancelLabel}
+            </button>
+          )
         ) : null}
       </div>
     </li>

@@ -178,3 +178,12 @@ export function setPendingSwap(chainId: number, safe: Address, request: SwapRequ
     // Storage is not available. Then nothing was kept.
   }
 }
+
+/** Did the person switch on third-party services (see lookup.ts)? Off unless they said yes in this browser. */
+export function lookupAllowed(): boolean {
+  return load<unknown>("chronobox:lookup", false) === true;
+}
+
+export function setLookupAllowed(allowed: boolean): void {
+  save("chronobox:lookup", allowed);
+}
