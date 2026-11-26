@@ -111,6 +111,7 @@ test('settings of the service', () => {
   assert.equal(kv.redis.url, 'https://kv');
   // Without PUBLIC_URL, the production domain of the Vercel project.
   assert.equal(serviceConfig(env({ PUBLIC_URL: undefined, VERCEL_PROJECT_PRODUCTION_URL: 'alerts.vercel.app' })).webhookUrl, 'https://alerts.vercel.app/api/telegram');
+  assert.equal(serviceConfig(env({ APP_URL: 'https://Chrono.Box/' })).base.appUrl, 'https://chrono.box');
 
   assert.throws(() => serviceConfig(env({ RPC_URL: 'https://x' })), /RPC_URL must have \{chainId\} in it/);
   assert.throws(() => serviceConfig(env({ CHAINS: undefined })), /Set CHAINS/);

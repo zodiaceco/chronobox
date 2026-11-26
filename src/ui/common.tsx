@@ -64,7 +64,7 @@ export function Button(props: {
   );
 }
 
-const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), details > summary:first-of-type, [tabindex]:not([tabindex="-1"])';
 
 /**
  * A sheet. While `busy` is set it cannot be closed: a transaction is on its way, and closing

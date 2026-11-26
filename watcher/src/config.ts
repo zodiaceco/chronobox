@@ -173,8 +173,17 @@ export function parseConfig(argv: string[], env: Record<string, string | undefin
       if (!/^https?:\/\//i.test(cfg.resendApi)) throw new ConfigError('RESEND_API must start with http:// or https://.');
     }
     cfg.telegramApi = str('TELEGRAM_API')?.replace(/\/+$/, '') ?? cfg.telegramApi;
-    cfg.appUrl = str('APP_URL')?.replace(/\/+$/, '') ?? cfg.appUrl;
-    if (!/^https?:\/\/[^/]+$/i.test(cfg.appUrl)) throw new ConfigError('APP_URL must be where the Chronobox app is, with http:// or https:// and no path, for example https://www.chrono.box.');
+    const rawApp = str('APP_URL')?.replace(/\/+$/, '');
+    if (rawApp !== undefined) {
+      let parsed: URL;
+      try { parsed = new URL(rawApp); } catch {
+        throw new ConfigError('APP_URL must be where the Chronobox app is, with http:// or https:// and no path, for example https://www.chrono.box.');
+      }
+      if (!/^https?:$/i.test(parsed.protocol) || parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password || /[?#]/.test(rawApp)) {
+        throw new ConfigError('APP_URL must be where the Chronobox app is, with http:// or https:// and no path, for example https://www.chrono.box.');
+      }
+      cfg.appUrl = parsed.origin;
+    }
     if (!/^https?:\/\//i.test(cfg.telegramApi)) throw new ConfigError('TELEGRAM_API must start with http:// or https://.');
     for (const k of ['CHRONOBOX', 'DELAY', 'STATE_FILE']) {
       if (str(k)) throw new ConfigError(`${k} does not work with --all. --all watches every Chronobox and uses STATE_DIR.`);

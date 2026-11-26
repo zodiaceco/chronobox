@@ -94,8 +94,8 @@ export const form = (o: { c: string; box: string; problem?: string }, status = 2
 export const sent = (email: string) => page(200, 'Look in your inbox', <>
   <p>We sent a link to {email}. Open it and confirm. It works for one day.</p>
   <small>
-    Nothing more comes before you confirm. If no email arrives, look in the spam folder. If you got emails for a Chronobox that is not
-    yours, open "Not you? Cancel" in one of them, and then ask again here.
+    Nothing more comes before you confirm. If no email arrives, look in the spam folder. If you got emails for a Chronobox that you did
+    not ask for, open "Not you? Cancel" in one of them, and then ask again here.
   </small>
 </>);
 
@@ -126,7 +126,7 @@ export const cancelAsk = (o: { email: string; count: number; token: string }) =>
 
 export const cancelled = () => page(200, 'Done', <>
   <p>We deleted every request to this address that was not confirmed.</p>
-  <small>To get the alerts of your own Chronobox, open "Get told" there again.</small>
+  <small>To get the alerts of a Chronobox, open "Get told" there again.</small>
 </>);
 
 export const stopped = (box: string) => page(200, 'Done', <p>No more alerts of {box} to this address. We deleted it from our list.</p>);

@@ -1443,6 +1443,11 @@ test('Telegram settings', async () => {
   assert.throws(() => parseConfig([], { ...base, CHRONOBOX: SAFE, WEBHOOK_URL: 'http://h/x', TELEGRAM_TOKEN: TG_TOKEN }), /TELEGRAM_TOKEN works with --all only/);
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: 'nonsense' }), (e: Error) => /does not look like a bot token/.test(e.message) && !/nonsense/.test(e.message));
   assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_API: 'ftp://t' }), /TELEGRAM_API must start/);
+  // APP_URL: normalized to its origin, and malformed values or paths fail at startup instead of when a chat starts.
+  assert.equal(parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: TG_TOKEN, APP_URL: 'https://WWW.CHRONO.BOX/' }).appUrl, 'https://www.chrono.box');
+  for (const bad of ['ftp://www.chrono.box', 'https://www.chrono.box/app', 'https://www.chrono.box?x=1', 'https://www.chrono.box?', 'https://www.chrono.box#h', 'https://user:pass@www.chrono.box', 'https://foo:bar', 'https://foo bar']) {
+    assert.throws(() => parseConfig(['--all'], { ...base, TELEGRAM_TOKEN: TG_TOKEN, APP_URL: bad }), /APP_URL must be/, bad);
+  }
   // Telegram alone is enough.
   const c = parseConfig(['--all'], { RPC_URL: 'http://a, http://b ; http://c', TELEGRAM_TOKEN: TG_TOKEN, TELEGRAM_KEY: TG_KEY });
   assert.equal(c.telegramApi, 'https://api.telegram.org');

@@ -96,9 +96,9 @@ Before you rely on it:
 
 ## What it reports
 
-The messages use the words of the Chronobox app. No message in Telegram has a link in it. An email has one: the link that stops the alerts.
+The messages use the words of the Chronobox app. They speak to nobody as "you": the owner, the guardian and anybody else who follows a Chronobox get the same text. Each one ends with one link, to the page of that Chronobox in the app. An email also has the link that stops the alerts.
 
-- **New request**: a request has started in the Chronobox. The message treats the normal case as the norm: it says what the request is and when its wait ends, and then, in one last line, what to do if it was not you. Where a request is not one that the app makes (money to another address, a call that the app does not know), the message says so in words.
+- **New request**: a request has started in the Chronobox. The message treats the normal case as the norm: it says what the request is and when its wait ends, and then, in one last line, what to do if the owner did not ask for it. Where a request is not one that the app makes (money to another address, a call that the app does not know), the message says so in words.
 - **Wait over**: the wait of a request is over, and it can be finished.
 - **Ends soon**: 24 hours before a request becomes void (or halfway through its time if that is shorter than 48 hours).
 - **Too late**: a request was not finished in time and is void.

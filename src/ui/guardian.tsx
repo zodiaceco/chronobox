@@ -485,8 +485,9 @@ function ManageSheet(props: {
         </li>
         <li>{recovery ? "Cannot withdraw. Only the wallet that controls this Chronobox can." : "Cannot withdraw."}</li>
       </ul>
-      <p class="hint">The link for your guardian. {LINK_DOES.replace("your Chronobox", "this Chronobox")}</p>
+      <p class="hint">The link for your guardian. {ALERTS ? "They set up their alerts there." : "It opens this Chronobox for them."}</p>
       <CopyLine text={props.link} />
+      <SamePerson />
       <div class="modal-actions">
         <Button kind="primary" onClick={props.onClose}>
           Done

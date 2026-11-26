@@ -380,7 +380,7 @@ test('Email: a stranger who fills the requests of an address does not block it: 
   mails.splice(0);
   const blocked = await post({ c: `1-${SAFE}`, email: MAIL_ANNA }, '203.0.113.200');
   assert.match(blocked.html, /Look in your inbox/);
-  assert.match(blocked.html, /If you got emails for a Chronobox that is not yours, open &quot;Not you\? Cancel&quot;/);
+  assert.match(blocked.html, /If you got emails for a Chronobox that you did not ask for, open &quot;Not you\? Cancel&quot;/);
   assert.equal(mails.length, 0);
 
   // In the email of the stranger: "Not you? Cancel". Opening it changes nothing, as a scanner opens links too.

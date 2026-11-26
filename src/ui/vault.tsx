@@ -686,7 +686,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           </p>
         </Modal>
       ) : null}
-      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} onClose={close} /> : null}
+      {sheet === "alerts" ? <AlertsSheet chain={chain} safe={safe} forGuardian={isGuardian} onClose={close} /> : null}
       {cancelling && vault ? (
         <Modal title={isGuardian ? "Stop this?" : "Cancel this?"} busy={cancelAction.busy !== null && !cancelAction.slow} onClose={() => setCancelling(null)}>
           {cancelItem ? (

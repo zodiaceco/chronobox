@@ -214,7 +214,7 @@ export function App() {
     // Only the dev server has this route; the production build leaves the page out.
     body = __DEV__ ? <StatesPage /> : null;
   } else if (route.page === "alerts") {
-    body = <AlertsPage chain={route.chain} safe={route.safe} />;
+    body = <AlertsPage key={`${route.chain.id}:${route.safe}`} chain={route.chain} safe={route.safe} />;
   } else if (route.page === "unknown") {
     body = (
       <section class="page page-center">

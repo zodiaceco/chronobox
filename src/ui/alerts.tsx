@@ -185,11 +185,11 @@ function screenOf(stage: Stage, ctx: Ctx): Screen {
   }
 }
 
-export function AlertsSheet(props: { chain: Chain; safe: Address; onClose: () => void }) {
+export function AlertsSheet(props: { chain: Chain; safe: Address; forGuardian?: boolean; onClose: () => void }) {
   // With one way and nothing coming, the sheet opens on that way.
   const [stage, setStage] = useState<Stage>(CHOICE ? "choose" : WAYS[0]);
   if (!ALERTS) return null;
-  const screen = screenOf(stage, { chain: props.chain, safe: props.safe, go: setStage, why: WHY.owner });
+  const screen = screenOf(stage, { chain: props.chain, safe: props.safe, go: setStage, why: props.forGuardian ? WHY.guardian : WHY.owner });
   return (
     <Modal title={screen.title} lead={screen.lead} onClose={props.onClose}>
       {/* A new screen starts new: a text that was open on the last one is not open here. */}
@@ -210,7 +210,7 @@ export function AlertsPage(props: { chain: Chain; safe: Address }) {
       <p class="eyebrow">
         A Chronobox on {props.chain.name} · <AddressText address={props.safe} />
       </p>
-      <h1>{stage === "choose" ? "Get told" : screen.title}</h1>
+      <h1>{screen.title}</h1>
       {screen.lead ? <p class="lead">{screen.lead}</p> : null}
       <div class="alerts-page-body" key={stage}>
         {screen.body}
