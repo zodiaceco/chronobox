@@ -558,7 +558,21 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                 <span class="box-asset" role="cell">
                   <TokenBadge asset={h.asset} />
                   <span>
-                    {h.asset.symbol}
+                    <span class="box-symbol">
+                      {h.asset.symbol}
+                      <a
+                        class="box-ext"
+                        href={h.asset.token ? `${chain.explorer}/token/${h.asset.token}` : `${chain.explorer}/address/${safe}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        aria-label={`${h.asset.symbol} on the block explorer`}
+                        title="Open on the block explorer"
+                      >
+                        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                          <path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8L7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </a>
+                    </span>
                     {h.asset.found && h.asset.token ? (
                       <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
                         {shortAddress(h.asset.token)}
@@ -1311,9 +1325,11 @@ function QueueCard(props: {
               {props.cancelLabel}
             </Button>
           ) : (
-            <button type="button" class="link-button" onClick={props.onCancel}>
-              {props.cancelLabel}
-            </button>
+            <span class="queue-cancel">
+              <Button small onClick={props.onCancel}>
+                {props.cancelLabel}
+              </Button>
+            </span>
           )
         ) : null}
       </div>
@@ -1342,7 +1358,6 @@ function WithdrawSheet(props: {
   });
   const [amountText, setAmountText] = useState("");
   const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
-  const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();
 
@@ -1428,6 +1443,7 @@ function WithdrawSheet(props: {
         <div class="delay-callout">
           <span class="delay-callout-label">This takes</span>
           <span class="delay-callout-value">{delayText}</span>
+          <span class="delay-callout-when">Ready around {formatDate(props.now + inspection.cooldown)}</span>
         </div>
         <ul class="plain-list">
           <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
@@ -1436,11 +1452,10 @@ function WithdrawSheet(props: {
             After the wait, you come back here and collect it. Then it goes to your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
-        <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
-          <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
+          <Button kind="primary" busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
           <Button

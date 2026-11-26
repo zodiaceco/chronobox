@@ -132,6 +132,7 @@ export function WithdrawManySheet(props: {
         <div class="delay-callout">
           <span class="delay-callout-label">This takes</span>
           <span class="delay-callout-value">{delayText}</span>
+          <span class="delay-callout-when">Ready around {formatDate(props.now + inspection.cooldown)}</span>
         </div>
         <ul class="plain-list">
           <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
@@ -320,9 +321,11 @@ export function GroupCard(props: {
           </button>
         ) : null}
         {status.phase !== "expired" && props.onCancel ? (
-          <button type="button" class="link-button" onClick={props.onCancel}>
-            {props.cancelLabel}
-          </button>
+          <span class="queue-cancel">
+            <Button small onClick={props.onCancel}>
+              {props.cancelLabel}
+            </Button>
+          </span>
         ) : null}
       </div>
     </li>

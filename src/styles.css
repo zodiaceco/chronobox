@@ -3779,3 +3779,94 @@ img.token-badge.token-icon {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+
+/* The amount field, with "Max" inside it */
+.amount-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.amount-field {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.amount-field .amount-input {
+  width: 100%;
+}
+
+.amount-field-max .amount-input {
+  padding-right: 64px;
+}
+
+.amount-max {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--blue-text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.amount-max:hover:not(:disabled) {
+  background: var(--blue-wash);
+}
+
+.amount-max:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Cancel: a small button at the right of a waiting card */
+.queue-actions {
+  flex-wrap: wrap;
+}
+
+.queue-cancel {
+  margin-left: auto;
+}
+
+/* About when a new wait is over */
+.delay-callout-when {
+  margin-top: 4px;
+  font-size: 0.86rem;
+  opacity: 0.8;
+}
+
+/* The token's page on the block explorer: shown when the row is pointed at */
+.box-symbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.box-ext {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.box-row:hover .box-ext,
+.box-ext:focus-visible {
+  opacity: 1;
+}
+
+.box-ext:hover {
+  color: var(--blue-text);
+}
+
+@media (hover: none) {
+  .box-ext {
+    opacity: 1;
+  }
+}
