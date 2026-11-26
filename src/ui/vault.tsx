@@ -547,6 +547,15 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </p>
           ) : null}
           <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
+          {/* The rule of this Chronobox, right under its name and above what it holds. */}
+          {locked ? (
+            <p class="vault-lock">
+              <span class="dot" aria-hidden="true" />
+              <span>
+                Every withdrawal waits <b>{formatDuration(inspection.cooldown)}</b>.
+              </span>
+            </p>
+          ) : null}
           {/* What is in the Chronobox, as a table: the asset on the left, the amount on the right, in one column. */}
           <div class="box-table" role="table" aria-label={`In this Chronobox on ${chain.name}`}>
             <div class="box-row box-header" role="row">
@@ -593,14 +602,6 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           ) : null}
           {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
           {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
-          {locked ? (
-            <p class="vault-lock">
-              <span class="dot" aria-hidden="true" />
-              <span>
-                Every withdrawal waits <b>{formatDuration(inspection.cooldown)}</b>.
-              </span>
-            </p>
-          ) : null}
           {/* A guardian is here to watch and to stop. Adding money is not the guardian's job, so the button is not the first thing on the page. */}
           {locked && !isGuardian ? (
             <div class={isController ? "vault-actions" : "vault-actions vault-actions-one"}>
