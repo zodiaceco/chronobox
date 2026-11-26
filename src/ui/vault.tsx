@@ -872,7 +872,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                   </ol>
                   {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
                     <Notice kind="risk" title="Something in front of it is ready.">
-                      Finish it first if you want it. Otherwise it is cancelled too.
+                      Collect it first if you want it. Otherwise it is cancelled too.
                     </Notice>
                   ) : null}
                   <p class="hint">
@@ -1297,7 +1297,7 @@ function QueueCard(props: {
         ) : status.phase === "ready" ? (
           <span class="queue-when">
             <b>Ready.</b>
-            {status.expiresAt !== null ? ` Finish it before ${formatDate(status.expiresAt)}.` : ""}
+            {status.expiresAt !== null ? ` ${action?.kind === "withdraw" ? "Collect" : "Finish"} it before ${formatDate(status.expiresAt)}.` : ""}
             {props.first ? "" : " The item before it comes first."}
           </span>
         ) : (

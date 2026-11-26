@@ -626,7 +626,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           ) : null}
           {!done.unverified && !done.uncertain && !done.inside?.length && done.stayed.length === 0 ? (
             <>
-              <p class="wiz-label">Put money in whenever you like</p>
+              <p class="wiz-label">Add money whenever you like</p>
               <DepositPanel session={session} chain={done.chain} safe={done.safe} assets={assets} quiet />
             </>
           ) : null}
@@ -663,7 +663,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           {
             id: "batch",
             text:
-              (chosen.length > 0 ? "Create your Chronobox, switch on the time delay and put money in" : "Create your Chronobox and switch on the time delay") +
+              (chosen.length > 0 ? "Create your Chronobox, switch on the time delay and add money" : "Create your Chronobox and switch on the time delay") +
               (gives ? `, and send your contribution of ${giveText}` : ""),
           },
           { id: "check", text: "Run the safety checks" },
@@ -846,7 +846,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   } else if (current === "fund") {
     screen = (
       <Screen
-        title="Put money in now?"
+        title="Add money now?"
         lead={batch ? "Choose what goes in. Your wallet does it in the same confirmation as the setup." : "Choose what goes in. The rest stays in your wallet."}
       >
         <div class="wiz-fund">
@@ -981,7 +981,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
 
       <div class="wiz-foot">
         <Button kind="primary" disabled={!canContinue} onClick={last ? run : () => setStep(step + 1)}>
-          {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && chosen.length === 0 ? "Deposit later" : "Continue"}
+          {last ? (plan?.created && !batch ? "Switch on the time delay" : "Create my Chronobox") : current === "fund" && chosen.length === 0 ? "Add money later" : "Continue"}
         </Button>
         {current === "fund" && chosen.length > 0 ? (
           <button
@@ -992,7 +992,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               setStep(step + 1);
             }}
           >
-            Deposit later
+            Add money later
           </button>
         ) : null}
         {last ? (

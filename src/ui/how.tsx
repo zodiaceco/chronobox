@@ -181,8 +181,8 @@ export function HowItWorks() {
         />
         <Step
           {...step(3)}
-          title="Deposit"
-          text="Send money to your Chronobox."
+          title="Add money"
+          text="Add money to your Chronobox."
           art={<DepositArt class="hiw-art" />}
           more={{
             lead: "Any token, from anywhere.",

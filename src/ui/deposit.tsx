@@ -80,8 +80,8 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
           const most = held > reserve ? held - reserve : 0n;
           throw new Error(
             most > 0n
-              ? `Leave some ${symbol} in your wallet for the network fee. You can send up to ${formatAmount(most, asset.decimals)} ${symbol}.`
-              : `Your wallet needs its ${symbol} for the network fee. There is none left to send.`,
+              ? `Leave some ${symbol} in your wallet for the network fee. You can add up to ${formatAmount(most, asset.decimals)} ${symbol}.`
+              : `Your wallet needs its ${symbol} for the network fee. There is none left to add.`,
           );
         }
       }
@@ -152,12 +152,12 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
-          Lock {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : ""}
+          Add {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "money"}
         </Button>
       </div>
 
       {/* From anywhere else: the address of the Chronobox, to copy or to scan. */}
-      <p class="deposit-or">Or deposit from anywhere by transferring to:</p>
+      <p class="deposit-or">Or add money from anywhere by sending it to:</p>
       <button type="button" class="deposit-address" onClick={copy} aria-label="Copy the address">
         <code>{safe}</code>
         <span class="deposit-copy">{copied ? "Copied" : "Tap to copy"}</span>

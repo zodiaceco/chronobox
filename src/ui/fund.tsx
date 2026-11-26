@@ -1,5 +1,5 @@
 /**
- * "Put money in now?": what the wallet holds, most important first. Each
+ * "Add money now?": what the wallet holds, most important first. Each
  * row has an amount to type and a slider with stops at a quarter, a half,
  * three quarters and everything. The slider gives round amounts. The field
  * takes any amount.
@@ -163,7 +163,7 @@ export function FundList(props: {
       </p>
     );
   }
-  if (order.length === 0) return <p class="wiz-note">This wallet holds nothing on {props.networkName} that Chronobox knows. You can send money to your Chronobox at any time.</p>;
+  if (order.length === 0) return <p class="wiz-note">This wallet holds nothing on {props.networkName} that Chronobox knows. You can add money to your Chronobox at any time.</p>;
   const rest = order.length - shown;
   const current = active ?? order[0];
   return (

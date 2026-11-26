@@ -68,7 +68,7 @@ The Vault Delay lets the hot wallet queue any transaction. The app builds three,
 
 ### Money in the setup
 
-The setup has a step "Put money in now?". It lists what the wallet holds, by dollar value where the app has a price (Chainlink feeds, read through the wallet), with five rows first and ten more for each "See more". Each row has a field and a slider with stops at 25%, 50%, 75% and everything. The slider gives round amounts. The step can be skipped ("Deposit later").
+The setup has a step "Add money now?". It lists what the wallet holds, by dollar value where the app has a price (Chainlink feeds, read through the wallet), with five rows first and ten more for each "See more". Each row has a field and a slider with stops at 25%, 50%, 75% and everything. The slider gives round amounts. The step can be skipped ("Add money later").
 
 A token moves only when its holder calls it, or when a spender that the holder approved calls it. During the setup the vault still belongs to the wallet and runs the setup batch, so it can collect tokens in that batch. After the lock it can act only through the delay. So for a plain wallet the setup is the one moment when money goes in without a transaction of its own:
 
