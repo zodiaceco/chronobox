@@ -33,6 +33,8 @@ Recovery of a lost key is out of scope for the mechanism. "Hot wallet" and "guar
 
 What the Council can never do: move funds, change the vault's delay, add other modules, or change the Recovery Delay (the Vault owns it). Those always go through H's queue and wait the delay. So when the guardian key leaks with recovery on, the Council's instant swap removes it from the Council and the cancel role, but it stays the Recovery Delay's module until H's "replace guardian" runs one delay later. Until then it can queue a recovery, which H or the new guardian cancels.
 
+**App scope vs. contract wiring.** The model covers what the deployed contract wiring allows. The app currently builds Council swaps for the hot wallet only (not guardian swaps) and removes/adds a guardian in two separate Vault Delay steps (`removeGuardianTx`, `addGuardianTx`) rather than one `"replace guardian"` step. Rotating a leaked guardian key without a stalemate therefore requires crafting those transactions outside the app.
+
 A recovery runs as the Council Safe itself, through its module. The app's recovery is the Council's key swap, so it reverts if the Council no longer holds its Roles role. A hostile guardian can instead queue a plain owner swap of the Council, which works either way; the model allows the attacker that.
 
 ## Who is involved
@@ -53,7 +55,7 @@ These are the defender's rules, highest priority first. The model checker found 
 
 ## Properties
 
-Each property is checked for every setup and scenario, over every reachable state up to three delays (TLC, exhaustive), with the delay at 48 h and at 72 h.
+Each property is checked for every setup and scenario, over every reachable state up to the model's horizon (`RECOVERY + 3 × delay + 1 day`, 15 days at 48 h; TLC, exhaustive), with the delay at 48 h and at 72 h.
 
 - **P1 No theft:** the attacker never receives the funds.
 - **P2 Recovers:** by the end of one delay (with recovery: of the recovery period), only the defender holds keys with any power again.
@@ -104,7 +106,7 @@ Each ❌ comes with a counterexample trace in `results/` after a run.
 - **Time** moves in whole days; the delay is a multiple of a day. "Before the delay runs out" means at the latest on the last day before an item becomes executable.
 - **Funds:** the vault holds one balance and pays it out at once. Partial withdrawals don't change who can act.
 - **Queued transactions** are reduced to the ones that matter for control: payout, delay change, removal of the Council's role, key swaps.
-- **Recovery period:** modelled as four delays. What the properties depend on is only that it is longer than the delay. Its 30-day execution window is modelled like the Vault Delay's 7 days; both are longer than the time the model covers.
+- **Recovery period:** modelled as four delays. What the properties depend on is only that it is longer than the delay. Its 30-day execution window is modelled as the Vault Delay's 7 days (168 h); the defender executes ready items on the day they mature, well before either window expires.
 - **Queues** hold at most two items. Longer queues add no new behaviour, because a cancel drops a prefix either way.
 - **Not modelled:**
   - **Alert delivery:** the plan assumes the defender learns about every item well within the delay.

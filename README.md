@@ -118,7 +118,7 @@ How it is built:
 | Part | What it is | What it can do |
 | --- | --- | --- |
 | Recovery Delay | A second Delay, at an address that depends only on the Chronobox. The Safe owns it. It is never a module of the Safe. | It acts on the Council Safe. Its one module is the guardian. |
-| Shared Safe | The 2 of 2 Safe of wallet and guardian, in a second form: it has the Recovery Delay as its one module from its first moment. | What it could do before: change the wallet. It cannot move money. |
+| Council Safe | The 2 of 2 Safe of wallet and guardian, in a second form: it has the Recovery Delay as its one module from its first moment. | What it could do before: change the wallet. It cannot move money. |
 | Role "cancel" | Covers `setTxNonce` on the Recovery Delay too. | The wallet and the guardian empty the line of the recovery at once. |
 
 - A recovery is the same step that wallet and guardian sign together to change the wallet at once. The guardian puts it into the line of the Recovery Delay. After the wait, that Delay makes the Council Safe run it. So the guardian alone, after the wait, can do what both can do together at once, and nothing more.

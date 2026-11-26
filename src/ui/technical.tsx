@@ -355,7 +355,7 @@ export function TechnicalPage() {
           <p>
             A guardian is one batch through the Vault Delay. It gives the guardian the role "cancel", and it gives a second role, "council", to the
             address of a 2 of 2 Safe of wallet and guardian. That role can call <code>enableModule</code> and <code>disableModule</code> on the
-            Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
+            Vault Delay, and <code>assignRoles</code> and <code>disableModule</code> on the Roles modifier. The Safe is made with the first request.
             A hand-over by both is <code>approveHash</code> by the guardian and <code>execTransaction</code> by the wallet.
           </p>
           <p>

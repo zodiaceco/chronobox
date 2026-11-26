@@ -16,7 +16,7 @@
  *                may swap keys instantly through its Roles role. It cannot move
  *                funds or change other vault settings.
  *
- *   guardianRecovery adds the recovery Recovery Delay: it acts on the Council, is
+ *   guardianRecovery adds the Recovery Delay: it acts on the Council, is
  *                owned by the Vault, and G is its only module. G may queue a
  *                takeover; it waits RECOVERY, and H or G may cancel it.
  *

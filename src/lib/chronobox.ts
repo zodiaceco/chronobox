@@ -884,7 +884,7 @@ async function councilState(rpc: Rpc, safe: Address, council: Address, wallet: A
 }
 
 /**
- * Can `predictCouncil(safe, wallet, guardian)` serve as the shared 2 of 2 Safe for this pair?
+ * Can `predictCouncil(safe, wallet, guardian)` serve as the Council Safe for this pair?
  * True when nothing is deployed there yet, or when a clean 2 of 2 Safe of exactly these two exists there.
  * False when an existing Safe at that address has other owners (e.g. after an earlier rotation).
  */
@@ -1120,7 +1120,7 @@ export async function inspect(rpc: Rpc, safe: Address, hints?: BlockHints): Prom
     cancelOk = wiredOk && rolesGuardOk && memberOk;
     if (cancelOk) {
       // A history that passed is good until the network, members, txNonce, or council nonce change:
-      // a permission can change only through the Delay (moving txNonce), through the shared 2 of 2
+      // a permission can change only through the Vault Delay (moving txNonce), through the Council
       // Safe (moving its nonce), or through the Recovery Delay, which acts on that Safe (moving its
       // own txNonce). Only a pass is kept, and only in memory when the chainId is known.
       //
@@ -1421,9 +1421,9 @@ const SETTINGS: Record<string, string> = Object.fromEntries(
       ["setTxNonce(uint256)", "Skips queued transactions"],
       ["enableModule(address)", "Gives another address control"],
       ["disableModule(address,address)", "Removes a controller"],
-      ["transferOwnership(address)", "Changes who can configure the Delay"],
-      ["setAvatar(address)", "Points the Delay at another account"],
-      ["setTarget(address)", "Points the Delay at another account"],
+      ["transferOwnership(address)", "Changes who can configure the Vault Delay"],
+      ["setAvatar(address)", "Points the Vault Delay at another account"],
+      ["setTarget(address)", "Points the Vault Delay at another account"],
       ["swapOwner(address,address,address)", "Gives the Safe a new owner"],
       ["addOwnerWithThreshold(address,uint256)", "Gives the Safe a new owner"],
       ["removeOwner(address,address,uint256)", "Removes a Safe owner"],
@@ -1602,7 +1602,7 @@ const assign = (member: Address, role: Hex, on: boolean) => call("assignRoles(ad
  * and disables the old one, and it moves the right to cancel the same way.
  * After it executes, only the new wallet can queue and cancel.
  *
- * With a guardian, the shared 2 of 2 Safe changes too: its role goes to the
+ * With a guardian, the Council Safe changes too: its role goes to the
  * Safe of the new wallet and the same guardian. The guardian can cancel this
  * while it waits, like everything else.
  *
@@ -1964,15 +1964,15 @@ export async function readRecoveryLine(
 // Wallet and guardian together: a new wallet at once
 // ---------------------------------------------------------------------------
 
-/** A transaction of the shared 2 of 2 Safe. */
+/** A transaction of the Council Safe. */
 export type CouncilTx = { to: Address; value: bigint; data: Hex; operation: number };
 
 /** What the owner asks the guardian to agree to: the new wallet, and the point of the line that the change cancels up to. */
 export type SwapRequest = { to: Address; upTo: bigint };
 
 /**
- * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The shared
- * Safe uses its role to enable the new wallet on the Delay and disable the old one, moves the
+ * What wallet and guardian sign together: the Chronobox goes to a new wallet, now. The Council
+ * Safe uses its role to enable the new wallet on the Vault Delay and disable the old one, moves the
  * right to cancel, and replaces the old wallet with the new one among its own two owners.
  * `owners` is the owner list of the Council Safe, in the contract's order.
  *
