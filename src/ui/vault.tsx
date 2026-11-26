@@ -702,7 +702,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           />
           {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
-          {isController && chain.indexer ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
+          {isController && chain.indexer ? <Row icon="thirdParty" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
