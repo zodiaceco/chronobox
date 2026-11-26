@@ -17,7 +17,7 @@
 
 import * as crypto from 'node:crypto';
 import { ADDRESS_RE, type Config } from './config.ts';
-import { networkName, shortAddr } from './format.ts';
+import { APP_URL, boxLink, networkName, shortAddr } from './format.ts';
 import { type Notice, type Peer, type StopKind, NOTICE_MIN_FOLLOW_MS, addStop, claimNotices, noticeDue, stopText } from './notices.ts';
 import { FileStore, type Store } from './store.ts';
 import type { Alert } from './types.ts';
@@ -69,9 +69,11 @@ export const TELEGRAM_MAX_PER_CHAT = 20;
 /** Starts with an address that one chat may send in an hour. Each one can make the watcher read the chain. */
 export const TELEGRAM_STARTS_PER_HOUR = 30;
 
-const TG_HOW = 'To get alerts, open your Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
+const TG_HOW = 'To get alerts, open the Chronobox, tap "Get told" and then "Telegram". That brings you back here with the right address.';
 const TG_HELP = `${TG_HOW}\n\n/list shows what this chat follows.\n/stop ends the alerts.\n/privacy says what I keep.`;
-const TG_NEVER = 'I never send links, and I never ask for a key, a password or money. A message that does is not from me.';
+/** The one link that the bot sends is the page of the Chronobox in the app. The bot says so, so that any other link stands out. */
+const tgNever = (app: string) =>
+  `The only link that I send leads to the Chronobox at ${new URL(app).host}. I never ask for a key, a password or money. A message that does is not from me.`;
 const TG_KEEP = 'I keep the number of this chat, the address of the Chronobox, and since when this chat follows it. I keep nothing else. /stop deletes it.';
 const TG_PRIVACY =
   'I keep the number of this chat, the addresses of the Chronoboxes that it follows, and since when it follows each one. ' +
@@ -80,11 +82,16 @@ const TG_PRIVACY =
   'Telegram can read the messages that I send you. What they say is public on the blockchain. That this chat follows a Chronobox is not.';
 const TG_LATER = 'I cannot read the network right now. Try again in a few minutes.';
 
-/** An alert as a Telegram message: plain text, no links. */
-export function telegramText(a: Alert, chainId: number, vault: string): string {
-  const mark = a.priority >= 5 ? '\u{1F6A8} ' : a.priority >= 4 ? '⚠️ ' : '';
-  const text = `${mark}${a.title}\n\n${a.message}\n\nChronobox ${shortAddr(vault)} on ${networkName(chainId)}`;
-  return text.length > 4000 ? `${text.slice(0, 3990)}…` : text;
+/**
+ * An alert as a Telegram message: plain text, no mark for how grave it is (the words say it), and at the end the one
+ * link: the page of the Chronobox in the app. A long alert is cut before the link, never in it.
+ */
+export function telegramText(a: Alert, chainId: number, vault: string, app: string = APP_URL): string {
+  const link = boxLink(app, chainId, vault);
+  const foot = `\n\nChronobox ${shortAddr(vault)} on ${networkName(chainId)}${link ? `\n${link}` : ''}`;
+  const text = `${a.title}\n\n${a.message}`;
+  const room = 4000 - foot.length;
+  return `${text.length > room ? `${text.slice(0, room - 1)}…` : text}${foot}`;
 }
 
 /** The derived key, per secret. scrypt is slow on purpose, and a warm function needs it one time only. */
@@ -126,6 +133,7 @@ export class Telegram implements Peer {
   private deliveryKey: Buffer;
   private startsKey: Buffer;
   private api: string;
+  private app: string;
   private expected: number;
   private fetchFn: FetchFn;
   private log: Log;
@@ -143,6 +151,7 @@ export class Telegram implements Peer {
     this.deliveryKey = crypto.createHmac('sha256', cfg.alertsKey).update(DELIVERY_LABEL).digest();
     this.startsKey = crypto.createHmac('sha256', cfg.alertsKey).update(STARTS_LABEL).digest();
     this.api = cfg.telegramApi;
+    this.app = cfg.appUrl;
     this.expected = cfg.networks.length;
     this.fetchFn = opts.fetch ?? fetch;
     const out = opts.log ?? defaultLog;
@@ -353,7 +362,7 @@ export class Telegram implements Peer {
     // "Watching" is for the person who runs the watcher. A chat gets the state of the vault when it subscribes.
     if (a.event === 'watching') return;
     await this.ready();
-    const text = telegramText(a, chainId, vault);
+    const text = telegramText(a, chainId, vault, this.app);
     let failed: string | null = null;
     // Marks from before the tags held the number of the chat: they count, and become tags now.
     a.done = a.done.map((m) => (/^tg:-?\d+$/.test(m) ? this.deliveryTag(a, chainId, vault, m.slice(3)) : m));
@@ -546,10 +555,10 @@ export class Telegram implements Peer {
     if (limit) { await this.say(chat, LIMIT); return; }
     if (added) this.log(`telegram: a chat follows ${vault} on chain ${chainId}`);
     const waits = await net.pending(vault);
-    const now = waits === null ? 'I could not read yet what waits there. Open your Chronobox to see it. Alerts for what comes next arrive here.'
+    const now = waits === null ? 'I could not read yet what waits there. Open the Chronobox to see it. Alerts for what comes next arrive here.'
       : waits.length === 0 ? 'Nothing waits there right now.'
       : `Right now ${waits.length === 1 ? 'one request waits' : `${waits.length} requests wait`} there:\n${waits.join('\n')}`;
-    await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${TG_NEVER}`);
+    await this.say(chat, `You now get the alerts of the Chronobox ${shortAddr(vault)} on ${networkName(chainId)}.\n\n${now}\n\n${TG_KEEP}\n\n${tgNever(this.app)}`);
   }
 
   private async unsubscribe(chat: number, arg: string): Promise<void> {

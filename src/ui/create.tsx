@@ -39,6 +39,7 @@ import {
 } from "../lib/chronobox.ts";
 import { StoppedAsking, answerOrStop, assertWallet, canBatch, errorText, isRejection, isTemporary, sendCalls, signTyped, waitForBatch } from "../lib/wallet.ts";
 import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session, Tick, useBalancesState } from "./common.tsx";
+import { ALERTS, AlertsSheet } from "./alerts.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
 import { OnUs, Support } from "./give.tsx";
@@ -130,6 +131,9 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ chain: Chain; safe: Address; unverified: boolean; inside: Line[] | null; stayed: Line[]; gave: string | null; uncertain?: boolean } | null>(null);
   const [reload, setReload] = useState(0);
+  // The done screen asks for alerts first. Once their sheet was open, "Open my Chronobox" is the next step.
+  const [telling, setTelling] = useState(false);
+  const [told, setTold] = useState(false);
   const [balancesRound, setBalancesRound] = useState(0);
   const [switchError, setSwitchError] = useState<string | null>(null);
   // A confirmation that takes long gets a way out. Stopping the wait does not undo what was sent.
@@ -605,6 +609,15 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
               {listOf(done.stayed.map((l) => `${l.text} ${l.symbol}`))} stayed in your wallet. You can add it from your Chronobox.
             </Notice>
           ) : null}
+          {ALERTS ? (
+            <div class="wiz-tell">
+              <strong>Get told about every withdrawal</strong>
+              <p>The wait protects you only if you hear about it in time.</p>
+              <Button kind={told ? "plain" : "primary"} onClick={() => setTelling(true)}>
+                Set up alerts
+              </Button>
+            </div>
+          ) : null}
           {!done.unverified && !done.uncertain && !done.inside?.length && done.stayed.length === 0 ? (
             <>
               <p class="wiz-label">Put money in whenever you like</p>
@@ -613,10 +626,20 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
           ) : null}
         </Screen>
         <div class="wiz-foot">
-          <Button kind="primary" onClick={() => props.onDone(done.chain, done.safe)}>
+          <Button kind={ALERTS && !told ? "plain" : "primary"} onClick={() => props.onDone(done.chain, done.safe)}>
             Open my Chronobox
           </Button>
         </div>
+        {telling ? (
+          <AlertsSheet
+            chain={done.chain}
+            safe={done.safe}
+            onClose={() => {
+              setTelling(false);
+              setTold(true);
+            }}
+          />
+        ) : null}
       </section>
     );
   }

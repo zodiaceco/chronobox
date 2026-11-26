@@ -84,8 +84,10 @@ function decodeAssign(data: string): { module: string; grants: { key: string; on
   return { module: toAddr(b.slice(0, 64)), grants };
 }
 
-// A change that is read from its shape, not proved. The app checks it byte for byte.
-const LOOKS = 'Open your Chronobox to check that the request is what it looks like.';
+// A change that is read from its shape, not proved. The app checks it byte for byte, and shows all of it.
+const LOOKS = 'Open the Chronobox to see the request in full.';
+// The shortest delay that the app offers. A shorter one is not a request of the app.
+const MIN_DELAY = 3600n;
 const NOT_THE_APP = 'The Chronobox app does not make such a request.';
 
 /** What a call on a part of the Chronobox does, in one plain sentence. `a`: its first address, `b`: its second. */
@@ -113,7 +115,9 @@ function meaning(part: 'delay' | 'vault' | 'roles' | 'recovery', fn: string | un
 
 /**
  * What a request does, in the words of the Chronobox app. `summary` starts with a verb ("Withdraw 1 ETH"),
- * so that it reads after "Somebody asked this Chronobox to ...". `detail` is one or more whole sentences.
+ * so that it reads after "A request to ...". `detail` is one or more whole sentences.
+ *
+ * `priority` goes to the webhook as it is. A person sees no mark for it: the words of the alert say what it is.
  */
 export function describeTx(
   tx: { to: string; value: bigint; data: string; operation: number },
@@ -150,18 +154,24 @@ export function describeTx(
     const next = toBig(strip(data).slice(8));
     const now = ctx.cooldown;
     const note = now === undefined || next === now ? ''
-      : next < now ? ` It is ${fmtDuration(now)} now. A shorter delay gives you less time to stop a thief.`
-      : ` It is ${fmtDuration(now)} now. A longer delay makes every withdrawal wait longer.`;
+      : next < now ? ` It is ${fmtDuration(now)} now. With a shorter delay there is less time to cancel a withdrawal.`
+      : ` It is ${fmtDuration(now)} now.`;
     if (next === 0n) {
-      return { kind: 'delay', summary: 'Remove the delay', detail: 'After this, a withdrawal does not wait at all. A person who has your wallet can take the money at once.', priority: 5 };
+      return { kind: 'delay', summary: 'Remove the delay', detail: `After this, a withdrawal does not wait at all, and nobody has time to cancel one. ${NOT_THE_APP}`, priority: 5 };
+    }
+    if (next < MIN_DELAY) {
+      return { kind: 'delay', summary: `Change the delay to ${fmtDuration(next)}`, detail: `After this, every withdrawal waits ${fmtDuration(next)}.${note} ${NOT_THE_APP}`, priority: 5 };
     }
     return { kind: 'delay', summary: `Change the delay to ${fmtDuration(next)}`, detail: `After this, every withdrawal waits ${fmtDuration(next)}.${note}`, priority: 5 };
   }
 
-  // A new wallet. Alone, or as the first part of a batch.
+  // A new wallet. Alone, or as the first part of a batch. The app always takes the wallet of today away in the same
+  // request. One that leaves it in place is not a request of the app.
   const handover = (next: string, removes: boolean) => ({
     kind: 'handover' as const, summary: `Hand over to ${shortAddr(next)}`, priority: 5,
-    detail: `After this, the wallet ${next} holds this Chronobox${removes ? ', and the wallet of today does not' : ' too'}. It can withdraw all the money. ${LOOKS}`,
+    detail: removes
+      ? `After this, the wallet ${next} controls this Chronobox, and the wallet of today does not. ${LOOKS}`
+      : `After this, the wallet ${next} controls this Chronobox too. ${NOT_THE_APP} ${LOOKS}`,
   });
   if (tx.operation === 0 && to === ctx.delay && tx.value === 0n && selector === ENABLE_MODULE && strip(data).length === 72) {
     return handover(toAddr(strip(data).slice(8)), false);
@@ -209,20 +219,20 @@ export function describeTx(
         return {
           kind: 'guardian_add', summary: `Add the guardian ${shortAddr(added.module)}${recoveryOn ? ' with a recovery' : ''}`, priority: 5,
           detail: `After this, ${added.module} can stop every withdrawal. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once.` +
-            (recoveryOn ? ` The guardian can also start a recovery to a new wallet that the guardian chooses.${waits}` : '') + ` ${LOOKS}`,
+            (recoveryOn ? ` The guardian can also start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet.${waits}` : '') + ` ${LOOKS}`,
         };
       }
       const removed = assigns.find((a) => !ctx.controllers.includes(a.module) && a.grants.some((g) => !g.on && g.key === CANCEL_ROLE));
       if (removed) {
         return {
           kind: 'guardian_remove', summary: 'Remove the guardian', priority: 5,
-          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.${recoveryOff ? ' The recovery goes too.' : ''} ${LOOKS}`,
+          detail: `After this, ${removed.module} cannot stop a withdrawal any more. Only the wallet of this Chronobox can cancel.${recoveryOff ? ' The recovery turns off too.' : ''} ${LOOKS}`,
         };
       }
       if (recoveryOn) {
         return {
           kind: 'recovery_on', summary: 'Turn on the recovery', priority: 5,
-          detail: `After this, the guardian ${toAddr(strip(recoveryOn.data).slice(8))} can start a recovery to a new wallet that the guardian chooses.${waits} ${LOOKS}`,
+          detail: `After this, the guardian ${toAddr(strip(recoveryOn.data).slice(8))} can start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet.${waits} ${LOOKS}`,
         };
       }
     }

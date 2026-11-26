@@ -105,9 +105,11 @@ const ANNA_MAIL = "anna@example.org";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chronobox-alerts-"));
 const heard = () => said.splice(0, said.length);
 const chats = (messages: Said[]) => messages.map((m) => m.chat).sort();
-// A person reads these. No word of the contracts belongs in them.
+// A person reads these. No word of the contracts belongs in them, and one link only: the last line of an alert, the
+// page of its Chronobox in the app.
+const BOX_LINK = /\nhttps:\/\/www\.chrono\.box\/#\/v\/eth:0x[0-9a-f]{40}$/;
 const plain = (messages: Said[]) => {
-  for (const m of messages) assert.doesNotMatch(m.text.split("Technical detail:")[0], /queue|transaction|execut|vault|module|Delay |Roles|#\d|https?:/, m.text);
+  for (const m of messages) assert.doesNotMatch(m.text.split("Technical detail:")[0].replace(BOX_LINK, ""), /queue|transaction|execut|vault|module|Delay |Roles|#\d|https?:/, m.text);
 };
 // Who follows what.
 const ANNA_PHONE = 11, ANNA_FRIEND = 12, BEN_PHONE = 13, OLD_PHONE = 14, CURIOUS = 15;
@@ -182,7 +184,7 @@ try {
   step("3b. An email address signs up, and confirms");
   await page({ c: telegramStart(1, anna.safe), email: ANNA_MAIL });
   let got = inbox();
-  assert.deepEqual(got.map((m) => [m.to, m.subject]), [[ANNA_MAIL, "Confirm the alerts for your Chronobox"]]);
+  assert.deepEqual(got.map((m) => [m.to, m.subject]), [[ANNA_MAIL, "Confirm the alerts for the Chronobox"]]);
   assert.deepEqual(email.subscribers(1, anna.safe), []);
   const confirmed = await page({ confirm: /\?confirm=([\w-]+)/.exec(got[0].text)![1] });
   assert.match(confirmed.html, /<h1>Done<\/h1><p>You now get the alerts of the Chronobox 0x\w{4}…\w{4} on Ethereum by email\.<\/p><p>Nothing waits there right now\.<\/p>/);
@@ -203,14 +205,14 @@ try {
   told = heard();
   plain(told);
   assert.deepEqual(chats(told), [ANNA_PHONE, ANNA_FRIEND]);
-  assert.match(told[0].text, /^New request: Withdraw 1 ETH\n\nSomebody asked this Chronobox to withdraw 1 ETH\. The money goes to the wallet of this Chronobox, 0x976ea7\w+\.\n\nThe wait ends on .* UTC \(in 1 day\)\.\n\nWas it you\?/);
-  assert.match(told[0].text, /Was it you\? Then you need to do nothing\. If not, open your Chronobox and cancel it\. Somebody else may have your wallet\.\n\nChronobox 0x\w{4}…\w{4} on Ethereum$/);
+  assert.match(told[0].text, /^New request: Withdraw 1 ETH\n\nA request to withdraw 1 ETH has started\. The money goes to the wallet of this Chronobox, 0x976ea7\w+\.\n\nThe wait ends on .* UTC \(in 1 day\)\.\n\nIf the owner did not ask for this, /);
+  assert.match(told[0].text, /\n\nIf the owner did not ask for this, open the Chronobox and cancel it\.\n\nChronobox 0x\w{4}…\w{4} on Ethereum\nhttps:\/\/www\.chrono\.box\/#\/v\/eth:0x[0-9a-f]{40}$/);
   ok("it went to the two chats of that Chronobox, and to nobody else");
   show(told[0].text);
   got = inbox();
   assert.deepEqual(got.map((m) => [m.to, m.subject]), [[ANNA_MAIL, "New request: Withdraw 1 ETH"]]);
-  assert.match(got[0].text, /^Somebody asked this Chronobox to withdraw 1 ETH\.[\s\S]*\n\nChronobox 0x\w{4}…\w{4} on Ethereum\n\nTo stop these alerts, open this link:\nhttps:\/\/alerts\.example\/api\/email\?stop=[\w-]+$/);
-  assert.match(got[0].html, />Somebody asked this Chronobox to withdraw 1 ETH\./);
+  assert.match(got[0].text, /^A request to withdraw 1 ETH has started\.[\s\S]*\n\nChronobox 0x\w{4}…\w{4} on Ethereum\n\nTo stop these alerts, open this link:\nhttps:\/\/alerts\.example\/api\/email\?stop=[\w-]+$/);
+  assert.match(got[0].html, />A request to withdraw 1 ETH has started\./);
   ok("the email address got the same alert, as text and as HTML, with a link to stop");
   show(`Subject: ${got[0].subject}\n\n${got[0].text.replace(/=[\w-]+/, "=…")}`);
   // Somebody who starts now is told what waits.
@@ -241,16 +243,16 @@ try {
   told = heard();
   plain(told);
   assert.deepEqual(chats(told), [BEN_PHONE]);
-  assert.match(told[0].text, /^⚠️ New request: Send 1 ETH to 0x2361…1E8f\n\n/i);
+  assert.match(told[0].text, /^New request: Send 1 ETH to 0x2361…1E8f\n\n/i);
   assert.match(told[0].text, /That is not the wallet of this Chronobox\. The Chronobox app does not make such a request\./);
-  ok("it is marked, and it names the address in full");
+  ok("it names the address in full");
   show(told[0].text);
   await warp(12n * 3600n + 60n);
   assert.equal(await watcher.poll(), true);
   told = heard();
   plain(told);
   assert.deepEqual(chats(told), [BEN_PHONE]);
-  assert.match(told[0].text, /^⚠️ Wait over: Send 1 ETH to /);
+  assert.match(told[0].text, /^Wait over: Send 1 ETH to /);
   ok("the end of the wait is reported");
   show(told[0].text);
   await sendAndWait(rpc, CARL, executeTx(ben.delay, benOut));
@@ -269,8 +271,8 @@ try {
   told = heard();
   plain(told);
   assert.deepEqual(chats(told), [ANNA_PHONE, ANNA_FRIEND]);
-  assert.match(told[0].text, /^\u{1F6A8} New request: Change the delay to 1 hour\n\n.*After this, every withdrawal waits 1 hour\. It is 1 day now\. A shorter delay gives you less time to stop a thief\./u);
-  ok("a shorter delay is the loudest kind, and says what it means");
+  assert.match(told[0].text, /^New request: Change the delay to 1 hour\n\n.*After this, every withdrawal waits 1 hour\. It is 1 day now\. With a shorter delay there is less time to cancel a withdrawal\./u);
+  ok("a shorter delay says what it means");
   show(told[0].text);
   await sendAndWait(rpc, ANNA, cancelTx(anna.roles, anna.delay, 1n));
   assert.equal(await watcher.poll(), true);
@@ -282,7 +284,7 @@ try {
   told = heard();
   plain(told);
   assert.deepEqual(chats(told), [ANNA_PHONE, ANNA_FRIEND]);
-  assert.match(told[0].text, /^\u{1F6A8} New request: Add the guardian 0xa0ee…9720\n\n/u);
+  assert.match(told[0].text, /^New request: Add the guardian 0xa0ee…9720\n\n/u);
   assert.match(told[0].text, /After this, 0xa0ee7a\w+ can stop every withdrawal\. Together with the wallet of this Chronobox, it can hand the Chronobox to a new wallet at once\./);
   ok("the request of the app to add a guardian is named as that");
   show(told[0].text);
@@ -369,7 +371,7 @@ try {
   told = heard();
   plain(told);
   assert.deepEqual(told.map((m) => m.text.split("\n")[0]), ["Done: Withdraw 1 ETH", "Cancelled: Withdraw 0.000000000000000001 ETH"]);
-  assert.match(told[0].text, /was carried out\. The money left this Chronobox\./);
+  assert.match(told[0].text, /was carried out\. The money went to the wallet of this Chronobox\./);
   assert.doesNotMatch(told[0].text, /No money moved/);
   ok("the withdrawal is reported as carried out, and only the decoy as cancelled");
   show(told.map((m) => m.text).join("\n\n"));

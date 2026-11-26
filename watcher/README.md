@@ -96,9 +96,9 @@ Before you rely on it:
 
 ## What it reports
 
-The messages use the words of the Chronobox app. No message in Telegram has a link in it. An email has one: the link that stops the alerts.
+The messages use the words of the Chronobox app. They speak to nobody as "you": the owner, the guardian and anybody else who follows a Chronobox get the same text. Each one ends with one link, to the page of that Chronobox in the app. An email also has the link that stops the alerts.
 
-- **New request**: somebody asked the Chronobox for something. The message says what it is, when its wait ends, and what to do if it was not you. A withdrawal to the wallet of the Chronobox is the quiet kind. Money that would go to another address is marked. Every change of the Chronobox is the loudest kind: a new delay, a new wallet, a guardian, or anything that the app does not make.
+- **New request**: a request has started in the Chronobox. The message treats the normal case as the norm: it says what the request is and when its wait ends, and then, in one last line, what to do if the owner did not ask for it. Where a request is not one that the app makes (money to another address, a call that the app does not know), the message says so in words.
 - **Wait over**: the wait of a request is over, and it can be finished.
 - **Ends soon**: 24 hours before a request becomes void (or halfway through its time if that is shorter than 48 hours).
 - **Too late**: a request was not finished in time and is void.
@@ -115,7 +115,7 @@ The messages use the words of the Chronobox app. No message in Telegram has a li
 
 Each message is sent once, also across restarts. A message that could not be delivered is tried again on the next poll.
 
-The watcher names the requests of the app by their shape: a new wallet, a new guardian (with or without a recovery), the end of a guardian, and a recovery that is turned on, turned off, or given another wait. It reads a recovery in the line of the recovery the same way: the new wallet comes from its first and its last call. It reads what the request contains, but it cannot prove that the request is exactly the one the app builds. The app can, because it builds the request again and compares every byte. So these messages say "open your Chronobox to check that the request is what it looks like", and they are always the loudest kind.
+The watcher names the requests of the app by their shape: a new wallet, a new guardian (with or without a recovery), the end of a guardian, and a recovery that is turned on, turned off, or given another wait. It reads a recovery in the line of the recovery the same way: the new wallet comes from its first and its last call. It reads what the request contains, but it cannot prove that the request is exactly the one the app builds. The app can, because it builds the request again and compares every byte. So these messages say "open the Chronobox to see the request in full".
 
 ## The alert service on Vercel
 
@@ -158,6 +158,7 @@ an uptime monitor ───────────▶ /api/health     503 when 
    | `WEBHOOK_URL` | Optional. Gets every alert of every Chronobox as a JSON POST. |
    | `START_BLOCK_<chain id>` | Optional. The first block to search for Chronoboxes. Default: the newest block at the first poll. |
    | `PUBLIC_URL` | Optional. The address where Telegram reaches the bot, and where the links in the emails lead. No path. Default: the production domain of the project. |
+   | `APP_URL` | Optional. The Chronobox app. An alert ends with a link to the page of its Chronobox there. No path. Default: `https://www.chrono.box`. |
    | `HEARTBEAT_HOURS`, `FAIL_POLLS`, `LOG_CHUNK`, `MAX_SCAN_BLOCKS` | Optional, as in the CLI. |
    | `POLL_BUDGET_SECONDS` | Optional. After this time a poll reads no further Chronobox, and the next poll goes on (default 60). |
    | `HEALTH_MAX_AGE_SECONDS` | Optional. `/api/health` answers 503 when the last poll is older (default 300). |
@@ -260,7 +261,7 @@ How a person subscribes (on Vercel too):
 
 - The app builds the link `https://t.me/<bot>?start=<chain id>-<address>`. Telegram shows the bot and a Start button. The bot gets `/start <chain id>-<address>` together with the number of the chat. Nobody fills in a form, and the app sends nothing.
 - The bot checks on the chain that the address is a Chronobox. Then it keeps the pair (chat, Chronobox) and answers with what waits there right now.
-- From then on every alert of that Chronobox goes to that chat. "All quiet" is one pinned message that the bot edits each day. A new one comes only if the person deleted it. /stop unpins it. Money to another address is marked with a warning sign, and a change of the Chronobox with an alarm sign, because Telegram cannot ring louder.
+- From then on every alert of that Chronobox goes to that chat. "All quiet" is one pinned message that the bot edits each day. A new one comes only if the person deleted it. /stop unpins it. No alert has a mark for how grave it is: the words say it.
 - `/stop` ends all alerts of a chat and deletes it. `/stop <address>` ends one. `/list` shows what the chat follows. `/privacy` says what the bot keeps. A chat can follow 20 Chronoboxes at most.
 - When a chat stops, every other chat and every email address that follows the same Chronobox is told. Alerts must not go off in silence. But anybody can follow a public Chronobox, so only a follow of a day or more tells the others, and they are told once an hour at most: more stops in that hour come together in the next message ("3 chats … have stopped them"), which the poll sends. A stop is never dropped, so a stranger cannot hide a real one for more than an hour.
 - A chat that blocks the bot is removed. A message that fails is tried again on the next poll, and a chat that already got it does not get it twice.
@@ -330,7 +331,7 @@ With `WEBHOOK_URL`, every alert is a JSON POST:
 { "event": "queued", "title": "...", "message": "...", "priority": 3, "vault": "0x...", "delay": "0x...", "chainId": 1, "nonce": 4, "at": "2026-11-17T19:00:00.000Z" }
 ```
 
-`event` is one of `watching`, `queued`, `ready`, `expires_soon`, `expired`, `cancelled`, `closed`, `settings_changed`, `recovery_started`, `recovery_backlog`, `recovery_soon`, `recovery_ready`, `recovery_expires_soon`, `recovery_expired`, `recovery_stopped`, `recovery_done`, `recovery_closed`, `heartbeat`, `watcher_problem`, `watcher_recovered`. The `nonce` of a recovery event is its place in the line of the recovery, not in the line of withdrawals. `priority` goes from 2 (All quiet) to 5 (a change of the Chronobox). Any answer other than 2xx counts as failed and is tried again.
+`event` is one of `watching`, `queued`, `ready`, `expires_soon`, `expired`, `cancelled`, `closed`, `settings_changed`, `recovery_started`, `recovery_backlog`, `recovery_soon`, `recovery_ready`, `recovery_expires_soon`, `recovery_expired`, `recovery_stopped`, `recovery_done`, `recovery_closed`, `heartbeat`, `watcher_problem`, `watcher_recovered`. The `nonce` of a recovery event is its place in the line of the recovery, not in the line of withdrawals. `priority` goes from 2 (All quiet) to 5 (a change of the Chronobox). Only the webhook gets it. In Telegram and by email it shows nowhere, except that "All quiet" arrives without a sound. Any answer other than 2xx counts as failed and is tried again.
 
 If you want the alerts of your own Chronobox in Telegram without anybody else's service, run the alert service above on your own machine with your own bot. See "Run it yourself".
 

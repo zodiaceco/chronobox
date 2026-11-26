@@ -99,7 +99,7 @@ The address of your nth vault depends only on your wallet address and n. The app
 After setup, the wallet can add a guardian: a second wallet, on another device or held by a person you trust. Adding it waits the full delay, like every change. The app checks the result every time you open the vault.
 
 - The guardian gets the role "cancel" in the Roles modifier: it can call `setTxNonce` on the Delay and nothing else.
-- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can move the vault to a new wallet without the wait. Neither can do it alone.
+- A second role, "council", goes to a 2 of 2 Safe of wallet and guardian. It can call `enableModule` and `disableModule` on the Delay, and `assignRoles` and `disableModule` on the Roles modifier. So wallet and guardian together can change the wallet of the vault without the wait. Neither can do it alone.
 - The guardian cannot withdraw. It can cancel every withdrawal, and the wallet can remove the guardian only through the queue, where the guardian can cancel that too.
 - A guardian alone is not a backup. A wallet change by both needs the wallet. For a lost wallet, turn the recovery on.
 
@@ -111,7 +111,7 @@ With a guardian, the wallet can turn a recovery on: a way back in when the walle
 - A recovery waits a long time. The owner chooses how long: 90, 180 or 365 days, or an own length from 30 to 730 days, and never shorter than the delay. 180 days unless they choose another time.
 - The **wallet can stop** a recovery at once while it waits. So can the guardian. When the wait is over, anybody can carry it out for 30 days, and the new wallet is the wallet of the Chronobox. After those 30 days it is void. No money moves.
 - The alert service tells everybody who follows the Chronobox when a recovery starts, 7 days and 1 day before its wait ends, when its wait is over, and when it is stopped or carried out. When the wait ends, anybody can carry the recovery out at once, so stop it before then.
-- The cost: if the owner does not stop a recovery in time, the guardian can take the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
+- The cost: if the owner does not stop a recovery in time, the guardian can take over the Chronobox. After the recovery the new wallet still waits the delay for every withdrawal. A good guardian for this is a second device of the owner, or the person who gets the money when the owner is gone.
 
 How it is built:
 
@@ -133,11 +133,11 @@ How it is built:
 Read these. They are the honest edge of what a delay can do.
 
 - **Your wallet controls it.** The app does not know what kind of wallet that is: one key, a Safe with several signers, or a smart account. Whatever protects your wallet also protects your Chronobox.
-- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can move the Chronobox to a new wallet at once.
-- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian move the Chronobox to a new wallet at once. Frozen funds are better than lost funds.
+- **A stolen key is a standoff, not a loss.** A person who has your wallet can queue a withdrawal, a shorter delay or a new wallet. You can cancel it while it waits. They can queue again, and you can cancel again. This works only if you see it in time, so look at your Chronobox regularly. With a guardian, you and your guardian can change the wallet of the Chronobox at once.
+- **A stolen key can block.** A person who has your wallet can also cancel your withdrawals, again and again. Then the funds are frozen. A guardian ends this: you and your guardian change the wallet of the Chronobox at once. Frozen funds are better than lost funds.
 - **The destination is a rule of this app, not of the contract.** This app builds only withdrawals to the wallet that controls the vault. The Delay itself lets that wallet queue any transaction. Other queued transactions show up in the queue with a warning, and can be cancelled.
-- **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can bring the Chronobox to a new wallet after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
-- **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet holds your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
+- **Lost wallet, lost funds, unless the recovery is on.** If you can no longer sign with your wallet, nobody can withdraw for you, and a guardian alone cannot help. With the recovery on (above), your guardian can change the wallet of the Chronobox after a long wait. The recovery of your wallet itself (a seed phrase backup, the other signers of a Safe) still works too.
+- **With the recovery on, your guardian can take over.** The guardian chooses the new wallet. If you do not stop a recovery in time, because you are away, ill or gone, that wallet controls your Chronobox. A long wait and the alerts are what protect you. Without the recovery, a guardian can never take anything.
 - **A recovery does not end a standoff.** A person who has your wallet can stop every recovery, as they can cancel every withdrawal. The recovery is for a lost key, not for a stolen one.
 - **The vault is public.** It is linked on chain to the wallet that created it. Chronobox protects against speed, not against being known.
 - **No alerts by itself.** A web page cannot wake up when it is closed. Alerts need a service that watches the chain (below), deployed on its own, and a Telegram account. Without them, use the calendar file, and look at your Chronobox regularly.
@@ -160,7 +160,7 @@ Each queued withdrawal has an **Add to calendar** link: one reminder when it bec
 
 Alerts have two parts. The app has one button. The alert service is a project of its own, in `watcher/`. It is not part of the website: it is deployed as a second Vercel project, with Vercel Cron, a Telegram webhook and Upstash Redis, and the website stays a static site. It can also run on a machine that stays on. Without it, the button leads to a bot that does not answer.
 
-The alert service watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, when a guardian starts a recovery, and when the Chronobox itself changes: a new wallet, a guardian, the recovery on or off. The messages use the words of this app and hold no links. See `watcher/README.md`.
+The alert service watches every Chronobox on one or more networks and runs a Telegram bot. It sends a message when somebody asks a Chronobox for something, when the wait is over, when a request is cancelled or carried out, when a guardian starts a recovery, and when the Chronobox itself changes: a new wallet, a guardian, the recovery on or off. The messages use the words of this app. They speak to nobody as "you": the owner, the guardian and anybody else who follows a Chronobox get the same text. Each one ends with one link, to the page of that Chronobox in this app. See `watcher/README.md`.
 
 `ALERTS_TELEGRAM` in `src/lib/chains.ts` is the name of the bot: `zodiac_chronobox_bot`. It must be the bot that the alert service runs with. `null` turns the alerts off: a Chronobox then does not show "Get told". With a name set, "Get told" has the way "Telegram", with one button, "Get alerts in Telegram". It opens `https://t.me/<bot>?start=<chain id>-<address>`. The person presses Start in Telegram, and the bot sends the alerts of that Chronobox to that chat from then on.
 
@@ -172,7 +172,7 @@ What this gives and what it does not:
 - The alert service keeps, per chat, the number of the Telegram chat, the address of the Chronobox, and since when the chat follows it. It keeps no name, no username, no phone number and no message. `/stop` deletes all of it. This pair is personal data: it links a reachable account to a Chronobox. On disk the list is encrypted with a key that is not stored with it, so a copy of the file alone shows nothing. A person who controls the running service can still read it.
 - Telegram knows the phone number of the account and can read what the bot sends. What the bot sends is public on the chain. That an account follows a Chronobox is not.
 - A person with your wallet cannot stop the alerts: the subscription belongs to the Telegram chat, not to the wallet. When a chat that followed for a day or more stops, every other chat that follows the same Chronobox is told, once an hour at most. A stranger who follows and stops again cannot ring the phones of the others.
-- The bot sends no links and asks for nothing. That makes a fake bot easier to spot. The link to the real bot is in the app, so nobody has to search for it.
+- The bot sends one link only, to the page of the Chronobox in this app, and asks for nothing. It says so when a chat starts, so a message with another link, or one that asks for a key, a password or money, stands out as fake. The link to the real bot is in the app, so nobody has to search for it.
 
 ### The choice, and what our alert service costs in privacy
 
@@ -182,7 +182,7 @@ What this gives and what it does not:
 - **Email**: an email from our alert service (`ALERTS_EMAIL`). The row opens the page of the alert service where a person gives an email address. While `ALERTS_EMAIL_SOON` is true and `ALERTS_EMAIL` is `null`, the list shows email as "Coming soon", and it cannot be chosen.
 - **Your own alert service**: one button that opens the guide "Run it yourself" in `watcher/README.md` (`ALERTS_GUIDE`).
 
-Under the list, the sheet says it in plain words: our alert service is not private. To send an alert it must know who follows a Chronobox, and we can see that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
+Under the list, the sheet says it in plain words: we can see who follows a Chronobox. To send an alert, our alert service must know that. With Telegram, we can see that a Telegram account follows a Chronobox, and Telegram can see it too. Encryption of the list protects a copy of it, not against us. A person who does not want that runs the alert service on their own. Then we learn nothing about them.
 
 A way whose setting is `null` is not in the list. With one way left and `ALERTS_EMAIL_SOON` false, "Get told" opens on that way, without the question.
 

@@ -25,6 +25,11 @@ const FIRST_START_LOOKUP_LIMIT = 50;
  */
 export const RECOVERY_WINDOW = 5;
 /**
+ * How the last line of an alert starts. An alert goes to everybody who follows the Chronobox: the owner, the guardian,
+ * and whoever else asked for it. So the alerts never say "you" or "your": they name the owner.
+ */
+const NOT_ASKED = 'If the owner did not ask for this';
+/**
  * Gas for each call that reads a token's symbol or decimals. A real token needs a few thousand, a proxy a few ten
  * thousand. A contract that wants more is not a token worth waiting for.
  */
@@ -296,7 +301,7 @@ export class Watcher {
       return {
         nonce, createdAt: createdAt.toString(), kind: 'unknown', priority: 5,
         summary: 'Do something that the alert service could not read',
-        detail: 'Its details were not on the network connection of the alert service. Open your Chronobox to see what it is.',
+        detail: 'Its details were not on the network connection of the alert service. Open the Chronobox to see what it is.',
       };
     }
     const tx = decodeTransactionAdded(log);
@@ -440,7 +445,7 @@ export class Watcher {
         s.problemOpen = true;
         this.push({
           event: 'watcher_problem', title: 'Alerts can be late', priority: 4,
-          message: `The alert service cannot read the blockchain since ${fmtWhen(s.problemSince)}. Until that works again, alerts can be late or missing. Look at your Chronobox yourself.`,
+          message: `The alert service cannot read the blockchain since ${fmtWhen(s.problemSince)}. Until that works again, alerts can be late or missing. Look at the Chronobox yourself.`,
           at: Math.floor(Date.now() / 1000),
         });
       }
@@ -701,11 +706,11 @@ export class Watcher {
         const what = it.wallet ? `The recovery to ${it.wallet}` : 'The step in the line of the recovery';
         const [event, title, message] =
           r.how === 'executed' ? ['recovery_done', `Recovery done: ${it.summary}`,
-            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now holds this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
-              : `${what} was carried out on ${fmtWhen(r.ts)}. Open your Chronobox to see what changed.`]
+            it.wallet ? `The recovery was carried out on ${fmtWhen(r.ts)}. The wallet ${it.wallet} now controls this Chronobox. ${(s.settings!.controllers).join(', ')} cannot withdraw or cancel any more. No money moved.`
+              : `${what} was carried out on ${fmtWhen(r.ts)}. Open the Chronobox to see what changed.`]
           : r.how === 'cancelled' ? ['recovery_stopped', `Recovery stopped: ${it.summary}`, `${what} was stopped on ${fmtWhen(r.ts)}. The wallet of this Chronobox did not change.`]
           : r.how === 'expired' ? ['recovery_expired', `Recovery void: ${it.summary}`, `${what} was not carried out in time. It is void, and the wallet of this Chronobox did not change.`]
-          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open your Chronobox to see who holds it.`];
+          : ['recovery_closed', `Recovery closed: ${it.summary}`, `${what} left the line. It was carried out, stopped, or void. The alert service could not see which. Open the Chronobox to see who controls it.`];
         if (r.how === 'executed' && it.wallet) recoveredTo = it.wallet;
         this.push({ event, nonce: it.nonce, priority: r.how === 'executed_or_cancelled' ? 5 : 3, at: Number(now), title, message });
         delete s.recoveryItems![it.nonce];
@@ -737,24 +742,24 @@ export class Watcher {
             event: 'recovery_started', nonce: it.nonce, priority: it.priority, at: Number(now),
             title: it.wallet ? `Recovery started: ${it.summary}` : 'Recovery line: a step that the app does not make',
             message: (it.wallet
-              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. It hands this Chronobox to the wallet ${it.wallet}. After that, ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
-              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who holds this Chronobox. No money can move through it.`) +
-              `\n\n${wait}\n\nIf you did not ask for this, open your Chronobox and stop it.`,
+              ? `The guardian started a recovery of this Chronobox on ${fmtWhen(BigInt(it.createdAt))}. When it is carried out, the wallet ${it.wallet} controls this Chronobox, and ${controllers.join(', ')} cannot withdraw or cancel any more. No money moves.`
+              : `The guardian put a step into the line of the recovery on ${fmtWhen(BigInt(it.createdAt))}. The Chronobox app does not make such a step. After the wait, it can change who controls this Chronobox. No money can move through it.`) +
+              `\n\n${wait}\n\n${NOT_ASKED}, open the Chronobox and stop it.`,
           });
         }
       }
       for (const it of newItems) {
         const st = times(it);
         const wait = `The wait ends on ${fmtWhen(st.readyAt)}${st.readyAt > now ? ` (in ${fmtDuration(st.readyAt - now)})` : ''}.`;
-        // What to do when it was not you. A request that takes money to the wallet means that somebody has the wallet.
-        const stolen = it.kind === 'withdrawal' ? ' Somebody else may have your wallet.' : '';
-        const act = !rolesKnown ? `If not, look at your Chronobox now.${stolen}`
-          : roles ? `If not, open your Chronobox and cancel it.${stolen}`
-          : `If not, look at your Chronobox now. It cannot cancel a request.${stolen}`;
+        // The normal case first: what was asked for, and when its wait ends. Then one line for the case that the
+        // owner did not ask for it. The reader can be the owner or the guardian, so no line says "you".
+        const act = !rolesKnown ? `${NOT_ASKED}, look at the Chronobox now.`
+          : roles ? `${NOT_ASKED}, open the Chronobox and cancel it.`
+          : `${NOT_ASKED}, look at the Chronobox now. It cannot cancel a request.`;
         this.push({
           event: 'queued', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `New request: ${it.summary}`,
-          message: `Somebody asked this Chronobox to ${lowerFirst(it.summary)}. ${it.detail}\n\n${wait}\n\nWas it you? Then you need to do nothing. ${act}`,
+          message: `A request to ${lowerFirst(it.summary)} has started. ${it.detail}\n\n${wait}\n\n${act}`,
         });
         s.items[it.nonce] = it;
       }
@@ -773,9 +778,9 @@ export class Watcher {
         });
       } else {
         const text = {
-          executed: [`Done: ${it.summary}`, `${Request(it)} was carried out. ${money ? 'The money left this Chronobox.' : 'The change is in force.'}`],
+          executed: [`Done: ${it.summary}`, `${Request(it)} was carried out. ${it.kind === 'withdrawal' ? 'The money went to the wallet of this Chronobox.' : money ? 'The money left this Chronobox.' : 'The change is in force.'}`],
           expired: [`Removed: ${it.summary}`, `${Request(it)} was not finished in time and was removed. ${money ? 'No money moved.' : 'Nothing changed.'}`],
-          executed_or_cancelled: [`Closed: ${it.summary}`, `${Request(it)} is closed. It was carried out, or it was cancelled. The alert service could not see which.${money ? ' If nobody cancelled it, the money left this Chronobox.' : ''} Open your Chronobox to see it.`],
+          executed_or_cancelled: [`Closed: ${it.summary}`, `${Request(it)} is closed. It was carried out, or it was cancelled. The alert service could not see which.${money ? ' If nobody cancelled it, the money left this Chronobox.' : ''} Open the Chronobox to see it.`],
         }[r.how];
         this.push({
           // Money that may have left is told as loud as money that goes to another address.
@@ -795,10 +800,10 @@ export class Watcher {
         this.push({
           event: 'ready', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `Wait over: ${it.summary}`,
-          message: `The wait is over for ${request(it)}. Anybody can finish it now, and it does only what the request says.` +
+          message: `${Request(it)} is ready. Open the Chronobox to finish it.` +
             `${st.expiresAt === null ? '' : ` It must be finished before ${fmtWhen(st.expiresAt)}.`}` +
-            (roles ? ' Until it is finished, it can still be cancelled.' : '') +
-            (ahead > 0 ? ` ${ahead === 1 ? 'One earlier request' : `${ahead} earlier requests`} must be finished or removed first.` : ''),
+            (ahead > 0 ? ` ${ahead === 1 ? 'One earlier request' : `${ahead} earlier requests`} must be finished or removed first.` : '') +
+            (roles ? `\n\n${NOT_ASKED}, it can still be cancelled.` : ''),
         });
       }
       if (st.status === 'ready' && st.expiresAt !== null && !it.sentExpiring && now >= st.expiresAt - expiryLead(expiration)) {
@@ -834,7 +839,7 @@ export class Watcher {
           title: `Recovery line: ${rBacklog + RECOVERY_WINDOW} steps wait`,
           message: `${rBacklog + RECOVERY_WINDOW} steps wait in the line of the recovery. Only the guardian can put them there. ` +
             `The alerts name the first ${RECOVERY_WINDOW}, and the ${rBacklog} behind them are only counted. One stop removes all of them.` +
-            '\n\nIf you did not ask for this, open your Chronobox and stop them.',
+            `\n\n${NOT_ASKED}, open the Chronobox and stop them.`,
         });
       }
     }
@@ -848,8 +853,8 @@ export class Watcher {
           event: 'recovery_soon', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `Recovery wait ends soon: ${it.summary}`,
           message: `The wait of ${lowerFirst(what)} ends on ${fmtWhen(st.readyAt)}. That is in ${fmtDuration(st.readyAt - now)}. ` +
-            `Then anybody can carry it out at once${it.wallet ? ', and that wallet holds this Chronobox' : ''}.` +
-            '\n\nIf you did not ask for this, open your Chronobox and stop it before then.',
+            `Then anybody can carry it out at once${it.wallet ? ', and that wallet controls this Chronobox' : ''}.` +
+            `\n\n${NOT_ASKED}, open the Chronobox and stop it before then.`,
         });
       }
       if (st.status === 'ready' && !it.sentReady) {
@@ -858,7 +863,7 @@ export class Watcher {
           event: 'recovery_ready', nonce: it.nonce, priority: it.priority, at: Number(now),
           title: `Recovery wait over: ${it.summary}`,
           message: `The wait is over for ${lowerFirst(what)}. Anybody can carry it out now${st.expiresAt === null ? '' : `, until ${fmtWhen(st.expiresAt)}`}. ` +
-            'Until then, the wallet and the guardian can still stop it.\n\nIf you did not ask for this, open your Chronobox and stop it now.',
+            `Until then, the wallet and the guardian can still stop it.\n\n${NOT_ASKED}, open the Chronobox and stop it now.`,
         });
       }
       if (st.status === 'ready' && st.expiresAt !== null && !it.sentExpiring && now >= st.expiresAt - expiryLead(BigInt(rec!.expiration))) {
@@ -952,7 +957,7 @@ export class Watcher {
       const wait = (x: Settings) => BigInt(x.recovery?.cooldown ?? '0');
       const pOn = recoveryOn(prev), nOn = recoveryOn(next);
       if (!pOn && nOn) {
-        changes.push(`The recovery is on. The guardian can start a recovery to a new wallet that the guardian chooses. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
+        changes.push(`The recovery is on. The guardian can start a recovery. It changes the wallet of this Chronobox, and the guardian chooses the new wallet. A recovery waits ${fmtDuration(wait(next))}, and the wallet and the guardian can stop it in that time.`);
       } else if (pOn && !nOn) {
         changes.push(`The recovery is off. The guardian cannot start a recovery any more.${opts.recoveryWaited ? ' A recovery that waited can never be carried out now.' : ''}`);
       } else if (pOn && nOn && wait(prev) !== wait(next)) {
@@ -988,7 +993,7 @@ export class Watcher {
     for (const w of warnings) if (before.has(w)) changes.push(w);
     this.push({
       event: 'settings_changed', title: 'This Chronobox changed', priority: 5, at,
-      message: `${changes.join('\n')}\n\nIf you did not want this, look at your Chronobox now.`,
+      message: `${changes.join('\n')}\n\n${NOT_ASKED}, open the Chronobox.`,
     });
   }
 

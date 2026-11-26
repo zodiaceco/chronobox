@@ -3122,6 +3122,23 @@ button.row-strong:hover .row-hint {
   width: 100%;
 }
 
+/* The done screen asks for alerts: one card, with its own button. */
+.wiz-tell {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--bg);
+  text-align: center;
+}
+
+.wiz-tell p {
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+
 .wiz-inside .row {
   grid-template-columns: auto 1fr auto;
 }
@@ -3329,4 +3346,103 @@ button.row-strong:hover .row-hint {
 .recovery-list {
   display: grid;
   gap: 10px;
+}
+
+/* The guardian's alert page: the choice of "Get told", on a page of its own. */
+.alerts-page {
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+.alerts-page h1 {
+  margin: 0;
+}
+
+.alerts-page .lead {
+  margin: 0;
+}
+
+.alerts-page-body {
+  display: grid;
+  gap: 16px;
+}
+
+.alerts-page-keep {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.alerts-page-keep .hint {
+  margin: 0;
+}
+
+.alerts-page .deposit-note {
+  text-align: left;
+}
+
+/* In a sheet the buttons are as wide as the sheet, and the line under them sits in the middle. */
+.modal .modal-actions + .more {
+  text-align: center;
+}
+
+/* Text that is one tap away (More). */
+.more {
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-wrap: pretty;
+}
+
+.more summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  border-radius: 6px;
+}
+
+.more summary::-webkit-details-marker {
+  display: none;
+}
+
+.more summary::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+  flex: none;
+}
+
+.more[open] summary::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+.more > div {
+  margin-top: 6px;
+}
+
+.more-info {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--blue-wash);
+  color: var(--blue-text);
+  font-size: 0.95rem;
+}
+
+.more-info summary {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .more summary::after {
+    transition: none;
+  }
 }

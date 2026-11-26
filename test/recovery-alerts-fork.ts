@@ -182,9 +182,9 @@ try {
   got = heard();
   assert.deepEqual(events(got), ["recovery_started"]);
   assert.match(got[0].title, /^Recovery started: Recovery to 0x2361…1E8f$/i);
-  assert.match(got[0].message, new RegExp(`hands this Chronobox to the wallet ${NEW.toLowerCase()}`));
+  assert.match(got[0].message, new RegExp(`When it is carried out, the wallet ${NEW.toLowerCase()} controls this Chronobox`));
   assert.match(got[0].message, /\(in 90 days\)/);
-  assert.match(got[0].message, /If you did not ask for this, open your Chronobox and stop it\.$/);
+  assert.match(got[0].message, /If the owner did not ask for this, open the Chronobox and stop it\.$/);
   ok("the guardian started a recovery: the alert names the new wallet and the end of the wait");
 
   step("3. The wallet stops it");
@@ -210,7 +210,7 @@ try {
   got = heard();
   assert.deepEqual(events(got), ["recovery_soon"]);
   assert.match(got[0].title, /^Recovery wait ends soon: Recovery to 0x2361…1e8f$/i);
-  assert.match(got[0].message, /That is in 6 days 23 hours\. Then anybody can carry it out at once, and that wallet holds this Chronobox\.\n\nIf you did not ask for this, open your Chronobox and stop it before then\.$/);
+  assert.match(got[0].message, /That is in 6 days 23 hours\. Then anybody can carry it out at once, and that wallet controls this Chronobox\.\n\nIf the owner did not ask for this, open the Chronobox and stop it before then\.$/);
   await poll();
   assert.deepEqual(events(heard()), []);
   await warp(6n * DAY);
@@ -233,7 +233,7 @@ try {
   await poll();
   got = heard();
   assert.deepEqual(events(got), ["recovery_done", "cancelled"]);
-  assert.match(got[0].message, new RegExp(`The wallet ${NEW.toLowerCase()} now holds this Chronobox\\. ${WALLET.toLowerCase()} cannot withdraw or cancel any more\\. No money moved\\.`));
+  assert.match(got[0].message, new RegExp(`The wallet ${NEW.toLowerCase()} now controls this Chronobox\\. ${WALLET.toLowerCase()} cannot withdraw or cancel any more\\. No money moved\\.`));
   assert.match(got[1].title, /^Cancelled: Withdraw 1 ETH$/);
   ok("carried out: the new wallet holds it, the old withdrawal is cancelled, and no second message repeats the wallet");
   state = await inspect(rpc, safe);
@@ -266,7 +266,7 @@ try {
   await poll();
   got = heard();
   assert.deepEqual(events(got), ["recovery_started"]);
-  assert.match(got[0].message, new RegExp(`After that, ${OTHER.toLowerCase()} cannot withdraw`));
+  assert.match(got[0].message, new RegExp(`and ${OTHER.toLowerCase()} cannot withdraw`));
   ok("the first poll after the update learns the guardian quietly, and tells of the recovery that nobody was told of");
 
   step("7. Somebody follows the Chronobox while a recovery waits");
