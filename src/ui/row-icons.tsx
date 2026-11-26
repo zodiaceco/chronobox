@@ -6,7 +6,7 @@
  */
 import type { ComponentChildren } from "preact";
 
-export type RowIconName = "address" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | "tokens";
+export type RowIconName = "address" | "delay" | "wallet" | "guardian" | "checks" | "alerts" | "tokens" | "thirdParty";
 
 const SHAPES: Record<RowIconName, ComponentChildren> = {
   // A pin: where this Chronobox is.
@@ -45,6 +45,13 @@ const SHAPES: Record<RowIconName, ComponentChildren> = {
     <>
       <path d="M5.2 13.7V9a4.8 4.8 0 0 1 9.6 0v4.7l1.4 1.6H3.8z" />
       <path d="M8.4 17.1a1.7 1.7 0 0 0 3.2 0" />
+    </>
+  ),
+  // A mask: third-party services, and what they learn about you.
+  thirdParty: (
+    <>
+      <path d="M2.6 7.6c2.2-1.5 4.7-1.7 7.4-.4 2.7-1.3 5.2-1.1 7.4.4-.1 3.4-1.7 5.6-4.1 5.6-1.5 0-2.4-.9-3.3-2.1-.9 1.2-1.8 2.1-3.3 2.1-2.4 0-4-2.2-4.1-5.6z" />
+      <path d="M5.4 9.6c.7-.6 1.6-.6 2.3 0M12.3 9.6c.7-.6 1.6-.6 2.3 0" />
     </>
   ),
   // Two coins: the tokens that this Chronobox shows.
