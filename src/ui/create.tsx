@@ -587,8 +587,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
         >
           {done.unverified ? (
             <Notice kind="risk" title="One safety check could not run here.">
-              Nothing looks wrong. Your wallet's network did not give the old records that the check needs. Open your Chronobox and wait with
-              deposits until the check passes.
+              Nothing looks wrong. Your wallet's network did not give the old records that the check needs. Open your Chronobox and wait before
+              adding money until the check passes.
             </Notice>
           ) : null}
           {done.inside?.length ? (

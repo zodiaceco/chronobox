@@ -480,7 +480,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     }
   };
 
-  // What is inside: every asset with a balance. The first one is shown large.
+  // What is inside: every asset with a balance.
   const held = allAssets.map((asset, i) => ({ asset, amount: allBalances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
   // Until the balances are read once, a missing one is "not read yet", not "could not be read".
@@ -870,11 +870,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                       );
                     })}
                   </ol>
-                  {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
-                    <Notice kind="risk" title="Something in front of it is ready.">
-                      Collect it first if you want it. Otherwise it is cancelled too.
-                    </Notice>
-                  ) : null}
+                  {(() => {
+                    const readyFront = queue.slice(0, cancelIndex).filter((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready");
+                    if (readyFront.length === 0) return null;
+                    const verb = readyFront.every((item) => item.tx && classify(item.tx, vault).kind === "withdraw") ? "Collect" : "Finish";
+                    return (
+                      <Notice kind="risk" title="Something in front of it is ready.">
+                        {verb} it first if you want it. Otherwise it is cancelled too.
+                      </Notice>
+                    );
+                  })()}
                   <p class="hint">
                     {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
                   </p>
@@ -1030,7 +1035,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "unverified") {
     return (
       <Notice kind="risk" title="One safety check could not run here.">
-        Nothing looks wrong, and you can withdraw. Wait with new deposits until the check passes: open this page with a wallet whose
+        Nothing looks wrong, and you can withdraw. Wait before adding money until the check passes: open this page with a wallet whose
         network connection can read old records.
       </Notice>
     );

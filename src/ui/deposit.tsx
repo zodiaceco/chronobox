@@ -1,7 +1,8 @@
 /**
- * How money gets into a Chronobox. The address comes first: a vault can
- * receive from any wallet or exchange, any token, any number of times.
- * Sending from the connected wallet is the second way, one asset at a time.
+ * How money gets into a Chronobox. For the Chronobox's own wallet, adding from
+ * the connected wallet comes first, one asset at a time. Underneath (or alone
+ * for any other wallet): the address and QR code to receive from any wallet or
+ * exchange, any token, any number of times.
  */
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
@@ -134,41 +135,41 @@ export function DepositPanel(props: {
     <div class="deposit">
       {props.addressOnly ? null : (
         <>
-      <div class="deposit-wallet">
-        <AssetAmount
-          assets={assets}
-          asset={safeIndex}
-          amount={amountText}
-          balances={balances}
-          onAsset={(index) => {
-            setAssetIndex(index);
-            setAmountText("");
-            setSent(null);
-            action.clearError();
-          }}
-          onAmount={(text) => {
-            setAmountText(text);
-            setSent(null);
-            action.clearError();
-          }}
-          onMax={held ? max : undefined}
-          disabled={!!action.busy}
-        />
-        {held !== null && held !== undefined ? (
-          <p class="hint">
-            In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
-          </p>
-        ) : null}
-        {bad ? <p class="field-error">Enter the amount as a plain number, for example 1000 or 1.5.</p> : null}
-        {sent ? <Notice kind="good">{sent}</Notice> : null}
-        <SlowNote action={action} />
-        {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
-        <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
-          Add {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "money"}
-        </Button>
-      </div>
+          <div class="deposit-wallet">
+            <AssetAmount
+              assets={assets}
+              asset={safeIndex}
+              amount={amountText}
+              balances={balances}
+              onAsset={(index) => {
+                setAssetIndex(index);
+                setAmountText("");
+                setSent(null);
+                action.clearError();
+              }}
+              onAmount={(text) => {
+                setAmountText(text);
+                setSent(null);
+                action.clearError();
+              }}
+              onMax={held ? max : undefined}
+              disabled={!!action.busy}
+            />
+            {held !== null && held !== undefined ? (
+              <p class="hint">
+                In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
+              </p>
+            ) : null}
+            {bad ? <p class="field-error">Enter the amount as a plain number, for example 1000 or 1.5.</p> : null}
+            {sent ? <Notice kind="good">{sent}</Notice> : null}
+            <SlowNote action={action} />
+            {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+            <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
+              Add {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "money"}
+            </Button>
+          </div>
 
-      {/* From anywhere else: the address of the Chronobox, to copy or to scan. */}
+          {/* From anywhere else: the address of the Chronobox, to copy or to scan. */}
         </>
       )}
       <p class={props.addressOnly ? "deposit-or deposit-or-only" : "deposit-or"}>{props.addressOnly ? "Add money by sending it to:" : "Or add money from anywhere by sending it to:"}</p>

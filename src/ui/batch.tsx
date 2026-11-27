@@ -9,7 +9,7 @@ import { type Inspection, type ItemStatus, type QueueItem, chainTime, classify, 
 import { formatAmount, formatDate, formatDuration, formatUnits, parseUnits, shortAddress } from "../lib/format.ts";
 import { type Address, sameAddress } from "../lib/hex.ts";
 import { BatchUnknown, assertWallet, sendBatch } from "../lib/wallet.ts";
-import { type Asset, AddressText, AssetAmount, Button, Choice, Modal, Notice, type Session, SlowNote, TokenBadge, useAction } from "./common.tsx";
+import { type Asset, AddressText, AssetAmount, Button, Modal, Notice, type Session, SlowNote, TokenBadge, useAction } from "./common.tsx";
 import { UnknownSheet, type VaultRef } from "./queue.tsx";
 import { SunPassArt } from "./art.tsx";
 
@@ -48,7 +48,6 @@ export function WithdrawManySheet(props: {
   const nextId = useRef(1);
   const [lines, setLines] = useState<Line[]>([{ id: 0, asset: held[0] ?? 0, text: "" }]);
   const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
-  const [agreed, setAgreed] = useState(false);
   const [doneAt, setDoneAt] = useState<bigint | null>(null);
   const action = useAction();
 
@@ -141,11 +140,10 @@ export function WithdrawManySheet(props: {
             After the wait, you collect all of it here with one confirmation. Then it goes to your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
-        <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
-          <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
+          <Button kind="primary" busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
           <Button

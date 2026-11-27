@@ -1761,8 +1761,6 @@ a:focus-visible {
   display: grid;
   gap: 10px;
   width: 100%;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1846,36 +1844,6 @@ a:focus-visible {
 
 .mono .address {
   font-size: inherit;
-}
-
-.balances {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.balances li {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.balance-amount {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.balances li:first-child .balance-amount {
-  font-size: 2.4rem;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-}
-
-.balance-symbol {
-  color: var(--muted);
 }
 
 .queue {
@@ -2369,18 +2337,6 @@ a:focus-visible {
   justify-items: center;
   text-align: center;
   padding-top: 4vh;
-}
-
-.vault-main .balances {
-  justify-items: center;
-}
-
-.vault-main .balances li {
-  justify-content: center;
-}
-
-.balances li:first-child .balance-amount {
-  font-size: clamp(2.8rem, 12vw, 3.6rem);
 }
 
 .view-only {
@@ -3676,7 +3632,6 @@ img.token-badge.token-icon {
 }
 
 .balance-found {
-  margin-left: 8px;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.72rem;
@@ -3716,6 +3671,7 @@ img.token-badge.token-icon {
 
 /* Add money: the transfer from this wallet first, then the address for any other way in */
 .deposit-or {
+  width: 100%;
   margin: 8px 0 0;
   padding-top: 16px;
   border-top: 1px solid var(--line);
@@ -3887,6 +3843,12 @@ img.token-badge.token-icon {
   background-repeat: no-repeat;
   background-position: right 16px center;
   background-size: 12px 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%239a9aa2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
 }
 
 /* Legal & imprint: the three pages, one click each */
