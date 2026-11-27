@@ -1761,8 +1761,6 @@ a:focus-visible {
   display: grid;
   gap: 10px;
   width: 100%;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1846,36 +1844,6 @@ a:focus-visible {
 
 .mono .address {
   font-size: inherit;
-}
-
-.balances {
-  list-style: none;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.balances li {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.balance-amount {
-  font-size: 1.25rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.balances li:first-child .balance-amount {
-  font-size: 2.4rem;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-}
-
-.balance-symbol {
-  color: var(--muted);
 }
 
 .queue {
@@ -2369,18 +2337,6 @@ a:focus-visible {
   justify-items: center;
   text-align: center;
   padding-top: 4vh;
-}
-
-.vault-main .balances {
-  justify-items: center;
-}
-
-.vault-main .balances li {
-  justify-content: center;
-}
-
-.balances li:first-child .balance-amount {
-  font-size: clamp(2.8rem, 12vw, 3.6rem);
 }
 
 .view-only {
@@ -3676,7 +3632,6 @@ img.token-badge.token-icon {
 }
 
 .balance-found {
-  margin-left: 8px;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.72rem;
@@ -3712,4 +3667,217 @@ img.token-badge.token-icon {
 
 .many-line .amount-row {
   width: 100%;
+}
+
+/* Add money: the transfer from this wallet first, then the address for any other way in */
+.deposit-or {
+  width: 100%;
+  margin: 8px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+/* What is in a Chronobox: a table, the asset on the left, the amount on the right */
+.box-table {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.box-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 0 16px;
+}
+
+.box-row + .box-row {
+  border-top: 1px solid var(--line);
+}
+
+.box-header {
+  min-height: 38px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.box-header > :last-child,
+.box-amount {
+  text-align: right;
+}
+
+.box-asset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.box-asset > span {
+  display: grid;
+  min-width: 0;
+}
+
+.box-amount {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The amount field, with "Max" inside it */
+.amount-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.amount-field {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.amount-field .amount-input {
+  width: 100%;
+}
+
+.amount-field-max .amount-input {
+  padding-right: 64px;
+}
+
+.amount-max {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--blue-text);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.amount-max:hover:not(:disabled) {
+  background: var(--blue-wash);
+}
+
+.amount-max:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Cancel: a small button at the right of a waiting card */
+.queue-actions {
+  flex-wrap: wrap;
+}
+
+.queue-cancel {
+  margin-left: auto;
+}
+
+/* About when a new wait is over */
+.delay-callout-when {
+  margin-top: 4px;
+  font-size: 0.86rem;
+  opacity: 0.8;
+}
+
+/* The token's page on the block explorer: shown when the row is pointed at */
+.box-symbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.box-ext {
+  display: inline-grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.box-row:hover .box-ext,
+.box-ext:focus-visible {
+  opacity: 1;
+}
+
+.box-ext:hover {
+  color: var(--blue-text);
+}
+
+@media (hover: none) {
+  .box-ext {
+    opacity: 1;
+  }
+}
+
+/* Add money from a wallet that is not the one of this Chronobox: only the address, with no line above it */
+.deposit-or-only {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Drop-downs: the arrow drawn by the page, a comfortable step in from the right edge */
+.select {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%236a6a70' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%239a9aa2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+}
+
+/* Legal & imprint: the three pages, one click each */
+.legal-index {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.legal-index li + li {
+  border-top: 1px solid var(--line);
+}
+
+.legal-index a {
+  display: grid;
+  gap: 2px;
+  padding: 14px 18px;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.legal-index a:hover {
+  background: var(--panel);
+}
+
+.legal-index span {
+  color: var(--muted);
+  font-size: 0.9rem;
 }

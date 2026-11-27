@@ -1,7 +1,8 @@
 /**
- * How money gets into a Chronobox. The address comes first: a vault can
- * receive from any wallet or exchange, any token, any number of times.
- * Sending from the connected wallet is the second way, one asset at a time.
+ * How money gets into a Chronobox. For the Chronobox's own wallet, adding from
+ * the connected wallet comes first, one asset at a time. Underneath (or alone
+ * for any other wallet): the address and QR code to receive from any wallet or
+ * exchange, any token, any number of times.
  */
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import qrcode from "qrcode-generator";
@@ -35,10 +36,19 @@ export function QrCode(props: { text: string; label: string }) {
   );
 }
 
-export function DepositPanel(props: { session: Session; chain: Chain; safe: Address; assets: Asset[]; onSent?: () => void; onBusy?: (busy: boolean) => void; quiet?: boolean }) {
+export function DepositPanel(props: {
+  session: Session;
+  chain: Chain;
+  safe: Address;
+  assets: Asset[];
+  onSent?: () => void;
+  onBusy?: (busy: boolean) => void;
+  quiet?: boolean;
+  /** Only the address and its QR code: the connected wallet is not the one of this Chronobox. */
+  addressOnly?: boolean;
+}) {
   const { session, chain, safe, assets } = props;
   const [copied, setCopied] = useState(false);
-  const [fromWallet, setFromWallet] = useState(false);
   const [assetIndex, setAssetIndex] = useState(0);
   const [amountText, setAmountText] = useState("");
   const [sent, setSent] = useState<string | null>(null);
@@ -49,7 +59,7 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
   currentAsset.current = safeIndex;
   const asset = assets[safeIndex];
   const amount = parseUnits(amountText, asset.decimals);
-  const balances = useBalances(session.rpc, fromWallet ? session.account : null, assets, round);
+  const balances = useBalances(session.rpc, props.addressOnly ? null : session.account, assets, round);
   const held = balances[safeIndex];
 
   useEffect(() => {
@@ -81,8 +91,8 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
           const most = held > reserve ? held - reserve : 0n;
           throw new Error(
             most > 0n
-              ? `Leave some ${symbol} in your wallet for the network fee. You can send up to ${formatAmount(most, asset.decimals)} ${symbol}.`
-              : `Your wallet needs its ${symbol} for the network fee. There is none left to send.`,
+              ? `Leave some ${symbol} in your wallet for the network fee. You can add up to ${formatAmount(most, asset.decimals)} ${symbol}.`
+              : `Your wallet needs its ${symbol} for the network fee. There is none left to add.`,
           );
         }
       }
@@ -123,56 +133,56 @@ export function DepositPanel(props: { session: Session; chain: Chain; safe: Addr
 
   return (
     <div class="deposit">
-      <div class="deposit-qr">
-        <QrCode text={safe} label={`QR code of the address ${safe}`} />
-      </div>
+      {props.addressOnly ? null : (
+        <>
+          <div class="deposit-wallet">
+            <AssetAmount
+              assets={assets}
+              asset={safeIndex}
+              amount={amountText}
+              balances={balances}
+              onAsset={(index) => {
+                setAssetIndex(index);
+                setAmountText("");
+                setSent(null);
+                action.clearError();
+              }}
+              onAmount={(text) => {
+                setAmountText(text);
+                setSent(null);
+                action.clearError();
+              }}
+              onMax={held ? max : undefined}
+              disabled={!!action.busy}
+            />
+            {held !== null && held !== undefined ? (
+              <p class="hint">
+                In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
+              </p>
+            ) : null}
+            {bad ? <p class="field-error">Enter the amount as a plain number, for example 1000 or 1.5.</p> : null}
+            {sent ? <Notice kind="good">{sent}</Notice> : null}
+            <SlowNote action={action} />
+            {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
+            <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
+              Add {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : "money"}
+            </Button>
+          </div>
+
+          {/* From anywhere else: the address of the Chronobox, to copy or to scan. */}
+        </>
+      )}
+      <p class={props.addressOnly ? "deposit-or deposit-or-only" : "deposit-or"}>{props.addressOnly ? "Add money by sending it to:" : "Or add money from anywhere by sending it to:"}</p>
       <button type="button" class="deposit-address" onClick={copy} aria-label="Copy the address">
         <code>{safe}</code>
         <span class="deposit-copy">{copied ? "Copied" : "Tap to copy"}</span>
       </button>
+      <div class="deposit-qr">
+        <QrCode text={safe} label={`QR code of the address ${safe}`} />
+      </div>
       <p class="deposit-note">
         Send on <b>{chain.name}</b> only. From any wallet or exchange, as often as you like.
       </p>
-
-      {fromWallet ? (
-        <div class="deposit-wallet">
-          <AssetAmount
-            assets={assets}
-            asset={safeIndex}
-            amount={amountText}
-            balances={balances}
-            onAsset={(index) => {
-              setAssetIndex(index);
-              setAmountText("");
-              setSent(null);
-              action.clearError();
-            }}
-            onAmount={(text) => {
-              setAmountText(text);
-              setSent(null);
-              action.clearError();
-            }}
-            onMax={held ? max : undefined}
-            disabled={!!action.busy}
-          />
-          {held !== null && held !== undefined ? (
-            <p class="hint">
-              In this wallet: {formatAmount(held, asset.decimals)} {asset.symbol}
-            </p>
-          ) : null}
-          {bad ? <p class="field-error">Enter the amount as a plain number, for example 1000 or 1.5.</p> : null}
-          {sent ? <Notice kind="good">{sent}</Notice> : null}
-          <SlowNote action={action} />
-          {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
-          <Button kind={props.quiet ? "plain" : "primary"} disabled={!amount} busy={action.busy === "deposit"} onClick={send}>
-            Send {amount ? `${formatAmount(amount, asset.decimals)} ${asset.symbol}` : ""}
-          </Button>
-        </div>
-      ) : (
-        <button type="button" class="link-button deposit-switch" onClick={() => setFromWallet(true)}>
-          Or send from this wallet
-        </button>
-      )}
     </div>
   );
 }

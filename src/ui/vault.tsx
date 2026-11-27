@@ -49,7 +49,7 @@ import {
 } from "../lib/chronobox.ts";
 import { assertWallet, canBatch, errorText, sendBatch } from "../lib/wallet.ts";
 import { ALERTS, ALERTS_ROW, AlertsSheet } from "./alerts.tsx";
-import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, useAction } from "./common.tsx";
+import { AddressText, type Asset, AssetAmount, assetsOf, Button, copyText, Choice, Modal, Notice, type Session, SlowNote, TokenBadge, useAction } from "./common.tsx";
 import { SunPassArt } from "./art.tsx";
 import { CancelBar } from "./cancel-bar.tsx";
 import { LookupSheet, useFoundTokens } from "./third-party.tsx";
@@ -480,7 +480,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
     }
   };
 
-  // What is inside: every asset with a balance. The first one is shown large.
+  // What is inside: every asset with a balance.
   const held = allAssets.map((asset, i) => ({ asset, amount: allBalances[i] })).filter((h): h is { asset: Asset; amount: bigint } => h.amount !== null && h.amount > 0n);
   const shown: { asset: Asset; amount: bigint | null }[] = held.length > 0 ? held : [{ asset: assets[0], amount: data.balancesRead ? (balances[0] ?? 0n) : null }];
   // Until the balances are read once, a missing one is "not read yet", not "could not be read".
@@ -547,30 +547,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
             </p>
           ) : null}
           <p class="eyebrow">{isController ? `Your Chronobox on ${chain.name}` : `A Chronobox on ${chain.name}`}</p>
-          <ul class="balances">
-            {shown.map((h) => (
-              <li key={h.asset.token ?? "native"}>
-                <span class="balance-amount" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
-                  {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
-                </span>
-                <span class="balance-symbol">
-                  {h.asset.symbol}
-                  {h.asset.found && h.asset.token ? (
-                    <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
-                      {shortAddress(h.asset.token)}
-                    </small>
-                  ) : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {isController && chain.indexer && !lookupAllowed() ? (
-            <button type="button" class="link-button" onClick={() => setSheet("lookup")}>
-              A token is missing? Find all tokens in this Chronobox
-            </button>
-          ) : null}
-          {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
-          {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
+          {/* The rule of this Chronobox, right under its name and above what it holds. */}
           {locked ? (
             <p class="vault-lock">
               <span class="dot" aria-hidden="true" />
@@ -579,6 +556,52 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
               </span>
             </p>
           ) : null}
+          {/* What is in the Chronobox, as a table: the asset on the left, the amount on the right, in one column. */}
+          <div class="box-table" role="table" aria-label={`In this Chronobox on ${chain.name}`}>
+            <div class="box-row box-header" role="row">
+              <span role="columnheader">Asset</span>
+              <span role="columnheader">In the Chronobox</span>
+            </div>
+            {shown.map((h) => (
+              <div class="box-row" role="row" key={h.asset.token ?? "native"}>
+                <span class="box-asset" role="cell">
+                  <TokenBadge asset={h.asset} />
+                  <span>
+                    <span class="box-symbol">
+                      {h.asset.symbol}
+                      <a
+                        class="box-ext"
+                        href={h.asset.token ? `${chain.explorer}/token/${h.asset.token}` : `${chain.explorer}/address/${safe}`}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        aria-label={`${h.asset.symbol} on the block explorer`}
+                        title="Open on the block explorer"
+                      >
+                        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                          <path d="M6.5 3.5H3.5v9h9v-3M9.5 2.5h4v4M13.2 2.8L7.5 8.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                      </a>
+                    </span>
+                    {h.asset.found && h.asset.token ? (
+                      <small class="balance-found" title={`Found by third-party token index: ${h.asset.token}`}>
+                        {shortAddress(h.asset.token)}
+                      </small>
+                    ) : null}
+                  </span>
+                </span>
+                <span class="box-amount" role="cell" title={h.amount === null ? undefined : `${formatAmount(h.amount, h.asset.decimals, h.asset.decimals)} ${h.asset.symbol}`}>
+                  {h.amount === null ? "…" : shortAmount(h.amount, h.asset.decimals)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {isController && chain.indexer && !lookupAllowed() ? (
+            <button type="button" class="link-button" onClick={() => setSheet("lookup")}>
+              A token is missing? Find all tokens in this Chronobox
+            </button>
+          ) : null}
+          {unread.length > 0 ? <p class="hint">The balance of {unread.join(", ")} could not be read now. It is not shown, and it is not gone.</p> : null}
+          {unread.length === 0 && data.balancesRead && !data.allRead ? <p class="hint">Only the main tokens could be read now. Other tokens are not shown, and they are not gone.</p> : null}
           {/* A guardian is here to watch and to stop. Adding money is not the guardian's job, so the button is not the first thing on the page. */}
           {locked && !isGuardian ? (
             <div class={isController ? "vault-actions" : "vault-actions vault-actions-one"}>
@@ -720,7 +743,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
           />
           {ALERTS ? <Row icon="alerts" label="Get told" value={ALERTS_ROW} onClick={() => setSheet("alerts")} /> : null}
           <Row icon="tokens" label="Tokens" value="Add a token" onClick={() => setSheet("token")} />
-          {chain.indexer && (isController || lookupAllowed()) ? <Row icon="checks" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
+          {chain.indexer && (isController || lookupAllowed()) ? <Row icon="thirdParty" label="Third-party services" value={lookupAllowed() ? "On" : "Off"} onClick={() => setSheet("lookup")} /> : null}
         </ul>
       ) : inspection.checks.length > 0 ? (
         <ul class="rows">
@@ -749,7 +772,7 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
       ) : null}
       {sheet === "deposit" ? (
         <Modal title="Add money" busy={depositBusy} onClose={close}>
-          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} onSent={refresh} onBusy={setDepositBusy} />
+          <DepositPanel session={session} chain={chain} safe={safe} assets={assets} onSent={refresh} onBusy={setDepositBusy} addressOnly={!isController} />
         </Modal>
       ) : null}
       {sheet === "delay" && vault ? <ChangeDelaySheet session={session} chain={chain} vault={vault} inspection={inspection} canCancel={canCancel} onClose={close} /> : null}
@@ -847,11 +870,16 @@ export function VaultPage(props: { session: Session; chain: Chain; safe: Address
                       );
                     })}
                   </ol>
-                  {queue.slice(0, cancelIndex).some((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready") ? (
-                    <Notice kind="risk" title="Something in front of it is ready.">
-                      Finish it first if you want it. Otherwise it is cancelled too.
-                    </Notice>
-                  ) : null}
+                  {(() => {
+                    const readyFront = queue.slice(0, cancelIndex).filter((item) => itemStatus(item, inspection.cooldown, inspection.expiration, now).phase === "ready");
+                    if (readyFront.length === 0) return null;
+                    const verb = readyFront.every((item) => item.tx && classify(item.tx, vault).kind === "withdraw") ? "Collect" : "Finish";
+                    return (
+                      <Notice kind="risk" title="Something in front of it is ready.">
+                        {verb} it first if you want it. Otherwise it is cancelled too.
+                      </Notice>
+                    );
+                  })()}
                   <p class="hint">
                     {isGuardian ? "Nothing moves. The money stays in the Chronobox, and the owner can ask again." : "Nothing moves. Your money stays in the Chronobox."}
                   </p>
@@ -1007,7 +1035,7 @@ function Status(props: { inspection: Inspection; session: Session; chain: Chain 
   if (inspection.state === "unverified") {
     return (
       <Notice kind="risk" title="One safety check could not run here.">
-        Nothing looks wrong, and you can withdraw. Wait with new deposits until the check passes: open this page with a wallet whose
+        Nothing looks wrong, and you can withdraw. Wait before adding money until the check passes: open this page with a wallet whose
         network connection can read old records.
       </Notice>
     );
@@ -1274,7 +1302,7 @@ function QueueCard(props: {
         ) : status.phase === "ready" ? (
           <span class="queue-when">
             <b>Ready.</b>
-            {status.expiresAt !== null ? ` Finish it before ${formatDate(status.expiresAt)}.` : ""}
+            {status.expiresAt !== null ? ` ${action?.kind === "withdraw" ? "Collect" : "Finish"} it before ${formatDate(status.expiresAt)}.` : ""}
             {props.first ? "" : " The item before it comes first."}
           </span>
         ) : (
@@ -1303,9 +1331,11 @@ function QueueCard(props: {
               {props.cancelLabel}
             </Button>
           ) : (
-            <button type="button" class="link-button" onClick={props.onCancel}>
-              {props.cancelLabel}
-            </button>
+            <span class="queue-cancel">
+              <Button small onClick={props.onCancel}>
+                {props.cancelLabel}
+              </Button>
+            </span>
           )
         ) : null}
       </div>
@@ -1334,7 +1364,6 @@ function WithdrawSheet(props: {
   });
   const [amountText, setAmountText] = useState("");
   const [stage, setStage] = useState<"form" | "confirm" | "done" | "unknown">("form");
-  const [agreed, setAgreed] = useState(false);
   const [queued, setQueued] = useState<{ nonce: bigint; at: bigint } | null>(null);
   const action = useAction();
 
@@ -1420,6 +1449,7 @@ function WithdrawSheet(props: {
         <div class="delay-callout">
           <span class="delay-callout-label">This takes</span>
           <span class="delay-callout-value">{delayText}</span>
+          <span class="delay-callout-when">Ready around {formatDate(props.now + inspection.cooldown)}</span>
         </div>
         <ul class="plain-list">
           <li>Nobody can make it faster. No password, no threat, no stolen key. Not even you.</li>
@@ -1428,11 +1458,10 @@ function WithdrawSheet(props: {
             After the wait, you come back here and collect it. Then it goes to your wallet <AddressText address={vault.controller} />.
           </li>
         </ul>
-        <Choice role="checkbox" on={agreed} title={`I will wait ${delayText}.`} onClick={() => setAgreed(!agreed)} disabled={!!action.busy} />
         <SlowNote action={action} />
         {action.error ? <Notice kind="bad">{action.error}</Notice> : null}
         <div class="modal-actions">
-          <Button kind="primary" disabled={!agreed} busy={action.busy === "queue"} onClick={submit}>
+          <Button kind="primary" busy={action.busy === "queue"} onClick={submit}>
             {action.busy ? "Confirm in your wallet" : "Start the wait"}
           </Button>
           <Button

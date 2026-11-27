@@ -18,9 +18,9 @@ function Ext(props: { href: string; children: ComponentChildren }) {
   );
 }
 
-function Back() {
+function Back(props: { to?: string }) {
   return (
-    <a class="wiz-back tech-back" href="#/">
+    <a class="wiz-back tech-back" href={props.to ?? "#/"}>
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
         <path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
@@ -53,7 +53,7 @@ const Company = () => (
 export function PrivacyPage() {
   return (
     <section class="tech legal">
-      <Back />
+      <Back to="#/legal" />
 
       <header class="tech-head">
         <h1>Privacy</h1>
@@ -273,7 +273,7 @@ export function PrivacyPage() {
 export function TermsPage() {
   return (
     <section class="tech legal">
-      <Back />
+      <Back to="#/legal" />
 
       <header class="tech-head">
         <h1>Terms</h1>
@@ -364,7 +364,7 @@ export function TermsPage() {
 export function ImprintPage() {
   return (
     <section class="tech legal">
-      <Back />
+      <Back to="#/legal" />
 
       <header class="tech-head">
         <h1>Imprint</h1>
@@ -427,6 +427,34 @@ export function ImprintPage() {
           The names Zodiac and Chronobox, the logos and the videos are not part of that license. German copyright law applies to them.
         </p>
       </Block>
+    </section>
+  );
+}
+
+/** One link in the footer leads here: the imprint, the privacy policy and the terms, each one click away. */
+export function LegalPage() {
+  const pages = [
+    { href: "#/imprint", title: "Imprint", text: "Who makes Chronobox, and how to reach us." },
+    { href: "#/privacy", title: "Privacy", text: "What data there is, where it goes, and your rights." },
+    { href: "#/terms", title: "Terms", text: "The terms of using Chronobox." },
+  ];
+  return (
+    <section class="tech legal">
+      <Back />
+      <header class="tech-head">
+        <h1>Legal & imprint</h1>
+        <p class="lead">Chronobox is free software. Your wallet controls your Chronobox. We cannot move, stop or recover your money.</p>
+      </header>
+      <ul class="legal-index">
+        {pages.map((p) => (
+          <li key={p.href}>
+            <a href={p.href}>
+              <strong>{p.title}</strong>
+              <span>{p.text}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

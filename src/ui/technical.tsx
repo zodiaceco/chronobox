@@ -346,7 +346,7 @@ export function TechnicalPage() {
           <p>
             Setup is two transactions: create a 1 of 1 Safe owned by your wallet, then one Safe transaction that deploys the <Ext href={DELAY_DOCS}>Vault Delay</Ext> and the{" "}
             <Ext href={ROLES_DOCS}>Roles modifier</Ext>, wires them, and replaces the owner with <span class="tech-mono">0x…dEaD</span>. A wallet that can batch
-            (EIP-5792), such as a Safe or an EIP-7702 account, creates the Chronobox, switches on the time delay and makes the deposits as one atomic transaction.
+            (EIP-5792), such as a Safe or an EIP-7702 account, creates the Chronobox, switches on the time delay and adds the money as one atomic transaction.
           </p>
           <p>
             A change of the delay is <code>setTxCooldown</code> on the Vault Delay. A hand-over enables the new wallet on the Vault Delay and the Roles
