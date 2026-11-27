@@ -8,7 +8,7 @@ import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
-import { chronoboxExists, chronoboxOf, inspect } from "../lib/chronobox.ts";
+import { chronoboxOf, discover, inspect } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
@@ -35,6 +35,8 @@ function shortOf(address: Address): string {
 export function StartPage(props: { session: Session | null; chain: Chain | undefined; connectOpen: boolean; onConnect: () => void }) {
   const { session, chain } = props;
   const [rows, setRows] = useState<Row[] | null>(null);
+  // The wallet has no Chronobox of its own on this network (the list may still show others).
+  const [ownMissing, setOwnMissing] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openText, setOpenText] = useState("");
   const [film, setFilm] = useState(false);
@@ -58,6 +60,7 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     let stale = false;
     setRows(null);
     setReadFailed(false);
+    setOwnMissing(false);
     (async () => {
       // Chronoboxes on other networks come from this browser's memory.
       const list: Row[] = [];
@@ -67,10 +70,11 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       }
       if (chain) {
         try {
-          // The wallet's own Chronobox, at its one address, and the ones this browser has seen it watch (as a guardian).
-          const own = chronoboxOf(session.account);
-          const found = (await chronoboxExists(session.rpc, session.account)) ? [own] : [];
-          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !sameAddress(v.safe, own));
+          // The wallet's own Chronobox, and the ones this browser has seen it watch (as a guardian). A new wallet gets one
+          // Chronobox only, but one made before that rule may have more: they are still found, so no money is out of sight.
+          const found = (await discover(session.rpc, session.account)).map((f) => f.safe);
+          if (!found.some((safe) => sameAddress(safe, chronoboxOf(session.account)))) setOwnMissing(true);
+          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f, v.safe)));
           const here = [...found, ...known.map((k) => k.safe)];
           // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
           const inspected: Row[] = [];
@@ -205,6 +209,12 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             ))}
           </ul>
           <div class="home-actions">
+            {/* Chronoboxes from other networks, or watched ones, are listed; this network has none of its own yet. */}
+            {ownMissing && chain && !readFailed ? (
+              <a class="button button-plain" href="#/new">
+                Create my Chronobox on {chain.name}
+              </a>
+            ) : null}
             <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
               Open one by its address
             </button>
