@@ -10,7 +10,7 @@ import { CreatePage } from "./ui/create.tsx";
 import { DevBar } from "./ui/devbar.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
 import { StartPage, vaultHref } from "./ui/start.tsx";
-import { ImprintPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
+import { ImprintPage, LegalPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { StatesPage } from "./ui/states.tsx";
 import { VaultPage } from "./ui/vault.tsx";
@@ -30,6 +30,7 @@ type Route =
   | { page: "states" }
   | { page: "terms" }
   | { page: "imprint" }
+  | { page: "legal" }
   | { page: "vault"; chain: Chain; safe: Address; swap: { to: Address; upTo: bigint | null } | null }
   | { page: "alerts"; chain: Chain; safe: Address }
   | { page: "unknown" };
@@ -46,6 +47,7 @@ function parseRoute(hash: string): Route {
   if (path === "/privacy") return { page: "privacy" };
   if (path === "/terms") return { page: "terms" };
   if (path === "/imprint") return { page: "imprint" };
+  if (path === "/legal") return { page: "legal" };
   // Every state of the vault page, from `npm run scenarios`. Only in the dev server.
   if (__DEV__ && path === "/states") return { page: "states" };
   const alerts = /^\/alerts\/([a-z0-9]+):(0x[0-9a-fA-F]{40})$/.exec(path);
@@ -211,6 +213,8 @@ export function App() {
     body = <TermsPage />;
   } else if (route.page === "imprint") {
     body = <ImprintPage />;
+  } else if (route.page === "legal") {
+    body = <LegalPage />;
   } else if (route.page === "states") {
     // Only the dev server has this route; the production build leaves the page out.
     body = __DEV__ ? <StatesPage /> : null;
@@ -317,7 +321,7 @@ export function App() {
       <footer class="foot">
         <ByZodiac />
         <span class="muted">
-          <a href="#/technical">How it is built</a> · <a href="#/terms">Terms</a> · <a href="#/privacy">Privacy</a> · <a href="#/imprint">Imprint</a> ·{" "}
+          <a href="#/technical">How it is built</a> · <a href="#/legal">Legal & imprint</a> ·{" "}
           <a href={REPO} target="_blank" rel="noreferrer noopener">
             GitHub
           </a>
