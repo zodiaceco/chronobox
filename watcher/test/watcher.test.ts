@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  Watcher, AllWatcher, MemoryStore, NOTICE_GAP_MS, NOTICE_MIN_FOLLOW_MS, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
+  Watcher, AllWatcher, MemoryStore, nextAlertAt, watchedBy, RECOVERY_REMINDERS, NOTICE_GAP_MS, NOTICE_MIN_FOLLOW_MS, MAX_QUEUE, MODULE_PROXY_FACTORY, MASTER_COPY, BadAnswerError, RevertError, decodeAddressArray, decodeAddresses, Telegram, batchCalls, fmtWhen, telegramStart, TELEGRAM_MAX_PER_CHAT, parseConfig, ConfigError, itemStatus, fmtTime, fmtDuration, describeTx,
   encAddr, proxyCode, BURN_ADDRESS, SENTINEL, SEL, predictRecoveryDelay,
 } from '../src/index.ts';
 import type { Config } from '../src/index.ts';
@@ -819,33 +819,151 @@ test('--all finds a new Chronobox by its Delay and sends its alerts with the add
   assert.equal(hooks().length, 2);
 });
 
-test('--all reads a quiet Chronobox only when it queues something', async () => {
+test('--all reads a Chronobox only when one of its contracts logs something, or when an alert of it is due', async () => {
   const w = all();
   await w.poll();
   chain.create();
   await w.poll();
+  const reads = () => chain.calls.filter((c) => c === 'eth_call').length;
   chain.calls.length = 0;
   chain.mine(600n);
   await w.poll();
-  assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
-  // Two searches: the known Delays (for withdrawals and for a recovery), and new Delays from the factory. Never all contracts.
+  assert.equal(reads(), 0);
+  // Two searches: the contracts of the known Chronobox (its Delay, its Recovery Delay, its Safe), and new Delays from
+  // the factory. Never all contracts.
   assert.equal(chain.calls.filter((c) => c === 'eth_getLogs').length, 2);
-  assert.deepEqual(chain.logQueries.slice(-2), [[DELAY, predictRecoveryDelay(SAFE)], [MODULE_PROXY_FACTORY]]);
+  assert.deepEqual(chain.logQueries.slice(-2), [[DELAY, predictRecoveryDelay(SAFE), SAFE], [MODULE_PROXY_FACTORY]]);
 
-  // Something waits: the vault is read on every poll until the queue is empty again.
+  // A request: read once, for its alert.
   chain.mine(12n);
   chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
   await w.poll();
+  assert.match(hooks().at(-1)!.json.title, /^New request/);
+  // Then it waits, and nothing changes: not read, though something waits.
+  chain.calls.length = 0;
+  chain.mine(600n);
+  await w.poll();
+  assert.equal(reads(), 0);
+  // Its wait ends: read when it is due, for the alert that only time brings.
   chain.mine(2n * DAY);
   await w.poll();
   assert.match(hooks().at(-1)!.json.title, /^Wait over/);
+  chain.calls.length = 0;
+  chain.mine(600n);
+  await w.poll();
+  assert.equal(reads(), 0, 'the next alert of time (ends soon) is days away');
+  // Carried out: the Safe logs the call of the Delay, and the vault is read.
   chain.execute();
   await w.poll();
   assert.match(hooks().at(-1)!.json.title, /^Done/);
   chain.calls.length = 0;
   chain.mine(600n);
   await w.poll();
-  assert.equal(chain.calls.filter((c) => c === 'eth_call').length, 0);
+  assert.equal(reads(), 0);
+});
+
+test('--all sends the same alerts at the same polls as a watcher that reads in every poll', async () => {
+  // The single watcher reads the vault in each poll; --all reads it only on a log, when an alert is due, and once an
+  // hour while something waits. Both poll after each step. Its clock is the time of the chain, as in production.
+  chain.withCancel();
+  const net = new AllWatcher(allConfig(), { log: (m) => logs.push(m), clock: () => Number(chain.now()) * 1000 });
+  const every = watcher();
+  await net.poll();
+  chain.create();
+  const of = (url: string) => sent.filter((x) => x.url === url).map((x) => `${x.json.event}${x.json.nonce === undefined ? '' : ` #${x.json.nonce}`}: ${x.json.title}`);
+  const step = async (what: string) => {
+    await every.poll();
+    await net.poll();
+    assert.deepEqual(of('/hook'), of('/hook/secret-123'), `after: ${what}`);
+  };
+  const days = async (n: number, what: string) => { for (let d = 1; d <= n; d++) { chain.mine(DAY); await step(`${what}, day ${d}`); } };
+
+  await step('the start');
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await step('a withdrawal');
+  chain.mine(3600n);
+  chain.enqueue(STRANGER, ONE_HALF_ETH);
+  await step('a withdrawal to a stranger');
+  chain.mine(600n);
+  await step('ten quiet minutes');
+  await days(3, 'both waits end');
+  chain.execute();
+  await step('the first withdrawal is carried out');
+  chain.enqueue(DELAY, 0n, '0xebb2b4a2' + u(3n * DAY));
+  await step('a longer delay is asked for');
+  await days(6, 'the second request ends soon and is void, the change waits');
+  // skipExpired logs nothing: --all sees it in its hourly read while something waits.
+  chain.skipExpired(1);
+  chain.mine(3601n);
+  await step('the void request is removed, and an hour goes by');
+  chain.execute();
+  await step('the longer delay is carried out');
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await step('a withdrawal with the longer delay');
+  chain.cancel(chain.queue.length);
+  await step('it is cancelled');
+  await days(2, 'quiet');
+  const events = of('/hook').map((e) => e.split(' ')[0]);
+  for (const e of ['watching', 'queued', 'ready', 'expires_soon', 'expired', 'closed', 'settings_changed', 'cancelled']) {
+    assert.ok(events.some((x) => x.startsWith(e)), `${e} was part of the run: ${events.join(', ')}`);
+  }
+});
+
+test('nextAlertAt: the time of each alert that only time brings, and none that cannot come', () => {
+  const HOUR = 3600n;
+  const base = { version: 1 as const, outbox: [], failCount: 0, problemOpen: false, seq: 0, vault: SAFE, delay: DELAY };
+  // A withdrawal: 2 days wait, then 7 days to finish it. Ends soon = 1 day before its end.
+  const settings = { cooldown: String(2n * DAY), expiration: String(7n * DAY), controllers: [OWNER_WALLET], safeModules: [DELAY], owner: SAFE, avatar: SAFE, target: SAFE };
+  const item = (extra: object = {}) => ({ nonce: 0, createdAt: '1000', kind: 'withdrawal' as const, summary: 'x', detail: '', priority: 3, ...extra });
+  const at = (it: object, now = 1000n, x: object = settings) => nextAlertAt({ ...base, settings: x as any, items: { 0: item(it) } }, now);
+  assert.equal(at({}), 1000n + 2n * DAY, 'the wait ends');
+  assert.equal(at({ sentReady: true }), 1000n + 8n * DAY, 'ends soon');
+  assert.equal(at({ sentReady: true, sentExpiring: true }), 1000n + 9n * DAY + 1n, 'void: after its end');
+  assert.equal(at({ sentReady: true, sentExpiring: true, sentExpired: true }), undefined, 'a void request brings nothing more');
+  assert.equal(at({ sentReady: true }, 1000n, { ...settings, expiration: '0' }), undefined, 'without an end, nothing after the wait');
+  // A short expiration: ends soon at half of it, never before the wait ends.
+  assert.equal(at({ sentReady: true }, 1000n, { ...settings, expiration: String(4n * HOUR) }), 1000n + 2n * DAY + 2n * HOUR);
+  assert.equal(nextAlertAt({ ...base, items: {} }, 1000n), undefined, 'never read to the end: nothing');
+
+  // The line of a recovery: 30 days wait, reminders 7 days and 1 day before.
+  assert.deepEqual(RECOVERY_REMINDERS, [7n * DAY, DAY]);
+  const recovery = { delay: '0x' + 'd'.repeat(40), made: true, owner: SAFE, avatar: '', target: '', guard: '', modules: [], cooldown: String(30n * DAY), expiration: String(7n * DAY) };
+  const step = (it: object, now: bigint) => nextAlertAt({ ...base, settings: { ...settings, recovery } as any, items: {}, recoveryItems: { 0: item(it) } }, now);
+  const ready = 1000n + 30n * DAY;
+  assert.equal(step({ remindersSent: 0 }, 1000n), ready - 7n * DAY, 'the first reminder');
+  assert.equal(step({ remindersSent: 1 }, 1000n), ready - DAY, 'the second reminder');
+  assert.equal(step({ remindersSent: 2 }, 1000n), ready, 'the wait ends');
+  // A reminder that was not sent before the wait ended never comes: it must not make the vault due in each poll.
+  assert.equal(step({ remindersSent: 0, sentReady: true }, ready + 1n), ready + 6n * DAY, 'only ends soon is left');
+});
+
+test('watchedBy: the contracts whose logs mean a change of the vault, never the wallet', () => {
+  const COUNCIL = '0x' + 'c'.repeat(40);
+  const state = {
+    version: 1 as const, items: {}, outbox: [], failCount: 0, problemOpen: false, seq: 0, vault: SAFE, delay: DELAY,
+    settings: {
+      cooldown: '1', expiration: '0', controllers: [OWNER_WALLET], safeModules: [DELAY, ROLES], owner: SAFE, avatar: SAFE, target: SAFE,
+      roles: ROLES, cancellers: [OWNER_WALLET, COUNCIL], council: COUNCIL,
+      recovery: { delay: predictRecoveryDelay(SAFE), made: false, owner: '', avatar: '', target: '', guard: '', modules: [], cooldown: '0', expiration: '0' },
+    },
+  };
+  assert.deepEqual(watchedBy(state as any).sort(), [SAFE, DELAY, predictRecoveryDelay(SAFE), ROLES, COUNCIL].sort());
+  assert.deepEqual(watchedBy({ ...state, settings: undefined } as any), []);
+});
+
+test('--all: when the search does not reach the head, a vault in which something waits is read in each poll', async () => {
+  const w = all({ MAX_SCAN_BLOCKS: '1' });
+  await w.poll();
+  chain.create();
+  // One block per poll: the search catches up with the Delay and the request, then falls behind the head.
+  for (let i = 0; i < 40 && !w.state.vaults[SAFE]; i++) await w.poll();
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  for (let i = 0; i < 40 && !hooks().some((h) => h.json.event === 'queued'); i++) await w.poll();
+  assert.ok(hooks().some((h) => h.json.event === 'queued'), 'the request is told');
+  chain.calls.length = 0;
+  chain.mine(600n);
+  await w.poll();
+  assert.ok(chain.calls.filter((c) => c === 'eth_call').length > 0, 'read without a log: the search did not reach the head');
 });
 
 test('--all does not read logs of unknown contracts: an older Chronobox is found by START_BLOCK or by a Start', async () => {
@@ -955,7 +1073,8 @@ test('--all tries a failed delivery again on the next poll', async () => {
 });
 
 test('--all: a poll out of time goes on where it stopped, so busy vaults cannot starve the others', async () => {
-  // Four vaults where something always waits. The clock moves 10 ms per read, and a poll has 5 ms: one read each.
+  // Four vaults that must be read in each poll: an alert of each waits to be sent. The clock moves 10 ms per read, and
+  // a poll has 5 ms: one read each.
   let now = 1_000_000;
   const vaults = ['a', 'b', 'c', 'd'].map((c) => '0x' + c.repeat(40));
   const store = new MemoryStore();
@@ -966,7 +1085,7 @@ test('--all: a poll out of time goes on where it stopped, so busy vaults cannot 
   const open = (st: MemoryStore) => {
     const w = new AllWatcher(allConfig(), { log: (m) => logs.push(m), store: st, clock: () => now });
     (w as any).watcherOf = (vault: string) => ({
-      state: { items: { 0: {} }, outbox: [], failCount: 0, lastBlock: 1 },
+      state: { items: { 0: {} }, outbox: [{}], failCount: 0, lastBlock: 1 },
       poll: async () => {
         // The time of this read is saved before the read.
         assert.equal(JSON.parse((await st.get('all'))!).vaults[vault].lookedAt, now);
@@ -1070,6 +1189,8 @@ test('--all: a known vault that stops answering like a Chronobox is its own prob
   assert.deepEqual(Object.keys(w.state.vaults).sort(), [FAKE_SAFE, SAFE].sort(), 'it passed the check: it says what a Chronobox says');
   // Now its Delay answers garbage. (A real Delay cannot; this stands for anything that makes one vault unreadable.)
   chain.answers[`${FAKE_DELAY}:${SEL.txCooldown}`] = '';
+  // It logs something, so the poll reads it. After a failed read, it is read again without a log.
+  chain.emit(FAKE_DELAY, '0x' + '11'.repeat(32));
   sent = [];
   assert.equal(await w.poll(), true, 'the network is fine');
   assert.equal(w.report.failing, 1);
