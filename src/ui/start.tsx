@@ -8,7 +8,7 @@ import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
-import { chronoboxOf, discover, inspect } from "../lib/chronobox.ts";
+import { chronoboxExists, chronoboxOf, inspect } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
@@ -70,11 +70,11 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       }
       if (chain) {
         try {
-          // The wallet's own Chronobox, and the ones this browser has seen it watch (as a guardian). A new wallet gets one
-          // Chronobox only, but one made before that rule may have more: they are still found, so no money is out of sight.
-          const found = (await discover(session.rpc, session.account)).map((f) => f.safe);
-          if (!found.some((safe) => sameAddress(safe, chronoboxOf(session.account)))) setOwnMissing(true);
-          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f, v.safe)));
+          // The wallet's one Chronobox, at its one address (one read), and the ones this browser has seen it watch as a guardian.
+          const own = chronoboxOf(session.account);
+          const found = (await chronoboxExists(session.rpc, session.account)) ? [own] : [];
+          if (found.length === 0) setOwnMissing(true);
+          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !sameAddress(v.safe, own));
           const here = [...found, ...known.map((k) => k.safe)];
           // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
           const inspected: Row[] = [];

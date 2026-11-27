@@ -1233,17 +1233,6 @@ export async function isHalfMade(rpc: Rpc, safe: Address, wallet: Address): Prom
   return owners.length === 1 && sameAddress(owners[0], wallet);
 }
 
-/** Finds the vaults of a wallet on the connected chain. Stops at the first unused index. */
-export async function discover(rpc: Rpc, wallet: Address, limit = 100): Promise<{ index: number; safe: Address }[]> {
-  const found: { index: number; safe: Address }[] = [];
-  for (let index = 0; index < limit; index++) {
-    const safe = predictSafe(wallet, index);
-    if (size(await getCode(rpc, safe)) === 0) break;
-    found.push({ index, safe });
-  }
-  return found;
-}
-
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------

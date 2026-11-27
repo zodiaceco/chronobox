@@ -33,7 +33,8 @@ import {
   createTx,
   delayTxHash,
   depositTx,
-  discover,
+  chronoboxExists,
+  chronoboxOf,
   executeTx,
   inspect,
   itemStatus,
@@ -132,8 +133,9 @@ try {
   assert.equal(state.state, "open");
   assert.ok(sameAddress(state.owners[0], WALLET));
   ok("inspection says: open (not locked yet)");
-  assert.deepEqual(await discover(rpc, WALLET), [{ index: 0, safe }]);
-  ok("discovery finds the vault from the wallet address");
+  assert.equal(chronoboxOf(WALLET), safe);
+  assert.equal(await chronoboxExists(rpc, WALLET), true);
+  ok("the wallet's one Chronobox is found from the wallet address");
 
   step("2. Lock");
   // A stranger cannot lock somebody else's Safe.
