@@ -78,3 +78,5 @@ jobs:
       - run: npm run test:fork:guardian
       - run: npm run test:fork:deposit
       - run: npm run test:fork:alerts
+      - run: npm run test:fork:recovery
+      - run: npm run test:fork:recovery-alerts
