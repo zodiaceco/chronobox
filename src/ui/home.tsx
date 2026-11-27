@@ -7,6 +7,8 @@ import { useEffect, useState } from "preact/hooks";
 import { type Chain, CHAINS } from "../lib/chains.ts";
 import { chronoboxExists, chronoboxOf } from "../lib/chronobox.ts";
 import { shortAddress } from "../lib/format.ts";
+import { sameAddress } from "../lib/hex.ts";
+import { savedVaults } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
 import { Button, Notice, type Session } from "./common.tsx";
 import { CreatePage } from "./create.tsx";
@@ -81,14 +83,18 @@ export function HomePage(props: { session: Session; chain: Chain | undefined }) 
     return <VaultPage key={`${chain.id}:${safe}`} session={session} chain={chain} safe={safe} swap={null} />;
   }
   // No Chronobox yet: the setup. When it is done, the same read finds it, and this becomes its page.
-  // Above it, which wallet this is about: someone whose Chronobox is on another account sees at once that this is the wrong one.
+  // Above it, which wallet this is about, but only for someone this browser has seen with a Chronobox of another
+  // wallet, or of this wallet on another network: they may be on the wrong account. A first visit gets no note.
+  const seenElsewhere = savedVaults().some((v) => !(v.wallet && sameAddress(v.wallet, session.account) && v.chainId === chain.id));
   return (
     <>
-      <div class="home-none">
-        <Notice kind="info" title={`The wallet ${shortAddress(session.account)} has no Chronobox on ${chain.name} yet.`}>
-          Set one up below. Is your Chronobox on another account? Switch to it in your wallet, or <a href="#/open">open a Chronobox by its address</a>.
-        </Notice>
-      </div>
+      {seenElsewhere ? (
+        <div class="home-none">
+          <Notice kind="info" title={`The wallet ${shortAddress(session.account)} has no Chronobox on ${chain.name} yet.`}>
+            Set one up below. Is your Chronobox on another account? Switch to it in your wallet, or <a href="#/open">open a Chronobox by its address</a>.
+          </Notice>
+        </div>
+      ) : null}
       <CreatePage session={session} chain={chain} onDone={() => setRound((r) => r + 1)} />
     </>
   );
