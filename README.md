@@ -1,4 +1,4 @@
-# Zodiac Chronobox
+# Chronobox by Zodiac
 
 A vault that nobody can empty quickly.
 

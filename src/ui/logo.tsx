@@ -11,7 +11,7 @@ export function Mark(props: { size?: number }) {
 
 export function Lockup() {
   return (
-    <a class="lockup" href="#/" aria-label="Zodiac Chronobox, start page">
+    <a class="lockup" href="#/" aria-label="Chronobox by Zodiac, start page">
       <Mark />
       <span class="lockup-word">CHRONOBOX</span>
     </a>

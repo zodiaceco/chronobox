@@ -49,7 +49,7 @@ export type Config = {
 };
 
 
-export const HELP = `Zodiac Chronobox watcher
+export const HELP = `Chronobox by Zodiac: the watcher
 
 Watches a Chronobox vault (a Safe whose only exit is a Zodiac Delay, optionally
 with a Roles modifier that lets a few addresses cancel) and sends an alert when
