@@ -41,6 +41,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
+import { madeOnFork } from "./fork-hints.ts";
 import { AllWatcher, RECOVERY_WINDOW, parseConfig } from "../watcher/src/index.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
@@ -111,6 +112,8 @@ const partsOf = (state: Inspection) => ({
   councilRecovery: state.councilRecovery,
 });
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [WALLET, GUARDIAN, NEW, OTHER, STRANGER]) await rpc("anvil_setCode", [account, "0x"]);
@@ -150,11 +153,11 @@ try {
   await poll();
   let got = heard();
   assert.deepEqual(events(got), ["watching"]);
-  let state = await inspect(rpc, safe);
+  let state = await inspect(rpc, safe, forkHints);
   const delay = state.delay!;
   const roles = state.roles!;
   await sendAndWait(rpc, STRANGER, recoveryDelayCreateTx(safe));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const adding = addGuardianTx({ safe, delay, roles, controller: WALLET }, GUARDIAN, { parts: state.recoveryDelay!, wait: WAIT })!;
   let r = await through(delay, WALLET, adding);
   assert.deepEqual(events(r.asked), ["queued"]);
@@ -165,7 +168,7 @@ try {
   assert.match(r.done[0].message, /The recovery is on\. .* A recovery waits 90 days/);
   assert.doesNotMatch(r.done[0].message, /can now cancel a request|Warning/);
   ok("the request and the change name the guardian and the recovery, and nothing else");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   const delayR = state.recoveryDelay!.delay;
 
@@ -174,7 +177,7 @@ try {
   assert.equal(heard().length, 0);
   assert.equal(watcher.state.vaults[safe.toLowerCase()].active, false);
   await sendAndWait(rpc, GUARDIAN, councilCreateTx(safe, WALLET, GUARDIAN, true));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   let owners = await councilOwners(rpc, state.council!);
   let started = recoveryTx(partsOf(state), owners, NEW, state.queueNonce)!;
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, started));
@@ -188,7 +191,7 @@ try {
   ok("the guardian started a recovery: the alert names the new wallet and the end of the wait");
 
   step("3. The wallet stops it");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   await sendAndWait(rpc, WALLET, cancelTx(roles, delayR, state.recovery!.txNonce));
   await poll();
   got = heard();
@@ -197,7 +200,7 @@ try {
   ok("stopped");
 
   step("4. The guardian starts another one, and nobody stops it");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   // The recovery names the end of the line of withdrawals when it starts. Whatever the old wallet asks for after
   // that, it cancels too: the guardian leaves room for one more.
   started = recoveryTx(partsOf(state), owners, NEW, state.queueNonce + 1n)!;
@@ -236,7 +239,7 @@ try {
   assert.match(got[0].message, new RegExp(`The wallet ${NEW.toLowerCase()} now controls this Chronobox\\. ${WALLET.toLowerCase()} cannot withdraw or cancel any more\\. No money moved\\.`));
   assert.match(got[1].title, /^Cancelled: Withdraw 1 ETH$/);
   ok("carried out: the new wallet holds it, the old withdrawal is cancelled, and no second message repeats the wallet");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.controller!.toLowerCase(), NEW.toLowerCase());
 
   step("5. Wallet and guardian change the wallet together, at once, without a request");
@@ -259,7 +262,7 @@ try {
   for (const k of ["guardian", "council", "councilOwners", "councilThreshold", "councilModules", "recovery"]) delete saved.settings[k];
   for (const k of ["recoveryTxNonce", "recoveryQueueNonce", "recoveryItems"]) delete saved[k];
   fs.writeFileSync(file, JSON.stringify(saved));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   owners = await councilOwners(rpc, state.council!);
   started = recoveryTx(partsOf(state), owners, NEW, state.queueNonce)!;
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, started));
@@ -286,7 +289,7 @@ try {
 
   step("8. The guardian floods the line of the recovery: every poll reads the same few steps");
   recoveryLine = delayR.toLowerCase();
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   owners = await councilOwners(rpc, state.council!);
   const flood = recoveryTx(partsOf(state), owners, NEW, state.queueNonce)!;
   const queueMany = async (n: number) => {
@@ -313,7 +316,7 @@ try {
   assert.deepEqual(events(heard()), []);
   ok("told again when the line doubled, not for each step, and no more reads");
   assert.ok((await watcher.pending(safe.toLowerCase()))!.some((line) => /^19 more steps in the line of the recovery\./.test(line)));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   await sendAndWait(rpc, state.controller!, cancelAllTx(roles, delayR, state.recovery!)!);
   await poll();
   got = heard();
@@ -324,7 +327,7 @@ try {
   ok("one stop removed all 24, and a new step is named again");
 
   step("9. The new wallet turns the recovery off, while a recovery waits");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   r = await through(delay, OTHER, removeRecoveryTx(partsOf(state))!);
   assert.match(r.asked[0].title, /^New request: Turn off the recovery$/);
   assert.deepEqual(events(r.done), ["settings_changed", "closed"]);

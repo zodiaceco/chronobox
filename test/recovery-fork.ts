@@ -50,6 +50,7 @@ import {
   setRecoveryTx,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
+import { madeOnFork } from "./fork-hints.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 6 to 9, and 4 as the stranger.
@@ -94,6 +95,8 @@ const ok = (text: string) => console.log(`  ok  ${text}`);
 const gas = (receipt: unknown) => toBigInt((receipt as { gasUsed: Hex }).gasUsed);
 const same = (a: readonly string[], b: readonly string[]) => assert.deepEqual(a.map((x) => x.toLowerCase()), b.map((x) => x.toLowerCase()));
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [WALLET, GUARDIAN, NEW, OTHER, STRANGER]) await rpc("anvil_setCode", [account, "0x"]);
@@ -131,12 +134,12 @@ try {
   step("1. A finished Chronobox with a guardian, and no recovery");
   const safe = safeFromReceipt(await sendAndWait(rpc, WALLET, createTx(WALLET, 0)))!;
   await sendAndWait(rpc, WALLET, lockTx(WALLET, safe, DAY));
-  let state = await inspect(rpc, safe);
+  let state = await inspect(rpc, safe, forkHints);
   const delay = state.delay!;
   const roles = state.roles!;
   await through(delay, WALLET, addGuardianTx({ safe, delay, roles, controller: WALLET }, GUARDIAN)!);
   await sendAndWait(rpc, WALLET, depositTx(safe, null, 2n * ETH));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.ok(sameAddress(state.guardian, GUARDIAN));
   assert.equal(state.recovery, null);
@@ -163,7 +166,7 @@ try {
   const made = await sendAndWait(rpc, STRANGER, recoveryDelayCreateTx(safe));
   ok(`a stranger made the Recovery Delay (gas ${gas(made)})`);
   await reverts(STRANGER, recoveryDelayCreateTx(safe), "making the Recovery Delay a second time");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.recovery, null);
   assert.ok(state.recoveryDelay!.deployed && state.recoveryDelay!.sound && state.recoveryDelay!.modules.length === 0);
@@ -175,7 +178,7 @@ try {
   await sendAndWait(rpc, GUARDIAN, cancelTx(roles, delay, state.queueNonce));
   ok("the guardian cancelled the first try");
   const applied = await through(delay, WALLET, setting);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.ok(state.recovery);
   assert.equal(state.recovery!.wait, WAIT);
@@ -199,7 +202,7 @@ try {
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, stealing));
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, viaCouncil));
   await sendAndWait(rpc, STRANGER, councilCreateTx(safe, WALLET, GUARDIAN, true));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.councilMade, true);
   same(await councilOwners(rpc, council), [WALLET, GUARDIAN]);
@@ -217,9 +220,9 @@ try {
   await warp(WAIT + 60n);
   await reverts(STRANGER, executeTx(delayR, viaCouncil), "after the wait: a withdrawal with the role of the Council Safe");
   await rpc("evm_revert", [before2]);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   await sendAndWait(rpc, WALLET, cancelAllTx(roles, delayR, state.recovery!)!);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.recovery!.txNonce, state.recovery!.queueNonce);
   assert.equal(await nativeBalance(rpc, safe), 2n * ETH);
   ok("the wallet emptied that line, and no money moved");
@@ -227,7 +230,7 @@ try {
   step("4. The guardian starts a recovery, to a wallet that the guardian chooses");
   // The old wallet has a withdrawal in the line. The recovery takes it out.
   await sendAndWait(rpc, WALLET, queueTx(delay, withdrawalTx(WALLET, null, ETH)));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const owners = await councilOwnersNow(rpc, partsOf(state), state.councilMade);
   for (const bad of [WALLET, GUARDIAN, council, safe, delay, roles, delayR, CONTRACTS.burn, null]) assert.equal(recoveryTx(partsOf(state), owners, bad, state.queueNonce), null, `to ${bad}`);
   assert.equal(recoveryTx({ ...partsOf(state), recoveryOn: false }, owners, NEW, state.queueNonce), null);
@@ -236,7 +239,7 @@ try {
   await reverts(STRANGER, queueTx(delayR, recovery), "a stranger starts a recovery");
   const started = await sendAndWait(rpc, GUARDIAN, queueTx(delayR, recovery));
   ok(`the guardian started it (gas ${gas(started)})`);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   line = await readRecoveryLine(rpc, partsOf(state), owners);
   assert.equal(line.length, 1);
@@ -246,26 +249,26 @@ try {
 
   step("5. The wallet stops it, at once. So can the guardian");
   await sendAndWait(rpc, WALLET, cancelTx(roles, delayR, line[0].nonce));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal((await readRecoveryLine(rpc, partsOf(state), owners)).length, 0);
   await warp(WAIT + 60n);
   await reverts(STRANGER, executeTx(delayR, recovery), "a stopped recovery, after the wait");
   ok("stopped by the wallet: it can never run");
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, recovery));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   await sendAndWait(rpc, GUARDIAN, cancelAllTx(roles, delayR, state.recovery!)!);
   ok("started again, and stopped by the guardian");
   await reverts(STRANGER, cancelTx(roles, delayR, 0n), "a stranger stops a recovery");
 
   step("6. Nobody stops it: after the wait, the Chronobox goes to the new wallet");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const again = recoveryTx(partsOf(state), owners, NEW, state.queueNonce)!;
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, again));
   await warp(WAIT - DAY);
   await reverts(STRANGER, executeTx(delayR, again), "one day before the wait is over");
   await warp(DAY + 60n);
   const done = await sendAndWait(rpc, STRANGER, executeTx(delayR, again));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.ok(sameAddress(state.controller, NEW));
   assert.ok(sameAddress(state.guardian, GUARDIAN));
@@ -282,7 +285,7 @@ try {
   ok("the new wallet withdraws, with the normal wait");
 
   step("7. Turning it off really ends it");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const owners2 = await councilOwnersNow(rpc, partsOf(state), state.councilMade);
   // The guardian starts one more while the turning off waits.
   const off = removeRecoveryTx(partsOf(state))!;
@@ -292,7 +295,7 @@ try {
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, late));
   await warp(DAY + 60n);
   await sendAndWait(rpc, STRANGER, executeTx(delay, off));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.recovery, null);
   assert.equal(state.recoveryDelay!.modules.length, 0);
@@ -309,7 +312,7 @@ try {
   const onAgain = setRecoveryTx(partsOf(state), 90n * DAY)!;
   assert.deepEqual(classify(onAgain, partsOf(state)), { kind: "set-recovery", wait: 90n * DAY });
   await through(delay, NEW, onAgain);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.recovery!.wait, 90n * DAY);
   assert.equal(state.recovery!.txNonce, state.recovery!.queueNonce);
@@ -323,7 +326,7 @@ try {
   assert.deepEqual(classify(longer, partsOf(state)), { kind: "set-recovery", wait: WAIT });
   assert.equal(setRecoveryTx(partsOf(state), 90n * DAY), null);
   await through(delay, NEW, longer);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.recovery!.wait, WAIT);
   ok("the wait changed to 180 days, with one step in the line");
@@ -332,7 +335,7 @@ try {
   const moving = changeWalletTx(delay, NEW, OTHER, roles, safe, { guardian: GUARDIAN, council: state.council!, members: state.members }, state.recoveryDelay);
   assert.deepEqual(classify(moving!, partsOf(state)), { kind: "change-wallet", to: OTHER });
   await through(delay, NEW, moving!);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   const council2 = predictCouncil(safe, OTHER, GUARDIAN, true);
   assert.ok(sameAddress(state.controller, OTHER) && sameAddress(state.council, council2));
@@ -346,7 +349,7 @@ try {
   await sendAndWait(rpc, GUARDIAN, queueTx(delayR, third));
   await warp(WAIT + 60n);
   await sendAndWait(rpc, STRANGER, executeTx(delayR, third));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.ok(sameAddress(state.controller, WALLET) && state.recovery);
   ok("new Council Safe, recovery on, and a recovery through it works");
@@ -354,18 +357,18 @@ try {
   step("10. Something else than the guardian on the Recovery Delay is found");
   const before5 = await rpc("evm_snapshot", []);
   await through(delay, WALLET, { to: delayR, value: 0n, data: call("enableModule(address)", [STRANGER]), operation: 0 });
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "invalid");
   assert.ok(state.checks.some((c) => c.id === "recovery-wiring" && !c.ok));
   await rpc("evm_revert", [before5]);
   ok("a second address that can start a recovery makes the Chronobox fail its checks");
 
   step("11. Removing the guardian removes the recovery too");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const leaving = removeGuardianTx(partsOf(state))!;
   assert.deepEqual(classify(leaving, partsOf(state)), { kind: "remove-guardian", guardian: GUARDIAN });
   await through(delay, WALLET, leaving);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   assert.equal(state.guardian, null);
   assert.equal(state.recovery, null);
@@ -380,7 +383,7 @@ try {
   assert.deepEqual(classify(both, { ...base, members: state.members, recoveryDelay: state.recoveryDelay }), { kind: "add-guardian", guardian: OTHER, recoveryWait: 365n * DAY });
   assert.deepEqual(classify(addGuardianTx(base, OTHER)!, { ...base, members: state.members, recoveryDelay: state.recoveryDelay }), { kind: "add-guardian", guardian: OTHER });
   await through(delay, WALLET, both);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   locked(state);
   for (const check of state.checks) console.log(`  ${check.ok ? "ok " : "BAD"} ${check.label} (${check.detail})`);
   assert.ok(sameAddress(state.guardian, OTHER));

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { call } from "../src/lib/abi.ts";
 import { CHAINS } from "../src/lib/chains.ts";
 import { EXPIRATION_SECONDS, type Rpc, createTx, inspect, lockTx, nativeBalance, safeFromReceipt, sendAndWait, tokenBalance } from "../src/lib/chronobox.ts";
+import { madeOnFork } from "./fork-hints.ts";
 import { type Pull, freshPulls, readPrices, signPull, splitContribution, tokenPayment, tolerantCall, waysIn } from "../src/lib/deposit.ts";
 import { type Address, type Hex, toBigInt } from "../src/lib/hex.ts";
 
@@ -45,6 +46,8 @@ const deal = async (holder: Address, symbol: string, amount: bigint): Promise<bo
 // The wallet signs as a real wallet does: it gets the typed message as text.
 const signAs = (wallet: Address) => (data: object) => rpc("eth_signTypedData_v4", [wallet, JSON.stringify(data)]) as Promise<string>;
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of WALLETS) {
@@ -121,7 +124,7 @@ try {
   assert.equal(await tokenBalance(rpc, token("USDS").address, safe), units("USDS", 2_000n));
   assert.equal(walletUsdc - (await tokenBalance(rpc, token("USDC").address, WALLET)), units("USDC", 5_000n));
   assert.equal((await nativeBalance(rpc, RECEIVER)) - receiverBefore, fee);
-  assert.equal((await inspect(rpc, safe)).state, "locked", "the safety checks pass with money in the setup");
+  assert.equal((await inspect(rpc, safe, forkHints)).state, "locked", "the safety checks pass with money in the setup");
   ok("coin and both tokens are inside, the contribution arrived, and the Chronobox passes every check");
 
   step("3. Everything goes in: the contribution comes out of the dollar token");
@@ -146,7 +149,7 @@ try {
   assert.equal(await tokenBalance(rpc, token("USDC").address, safe2), all - units("USDC", 10n));
   assert.equal((await tokenBalance(rpc, token("USDC").address, RECEIVER)) - receiverUsdc, units("USDC", 10n));
   assert.equal(await nativeBalance(rpc, safe2), coinIn);
-  assert.equal((await inspect(rpc, safe2)).state, "locked");
+  assert.equal((await inspect(rpc, safe2, forkHints)).state, "locked");
   ok("the wallet's USDC is empty, the Chronobox has all of it less 10 USDC, the receiver has 10 USDC");
 
   step("4. A permit that somebody used first does not stop the setup");
@@ -167,7 +170,7 @@ try {
   assert.equal((await freshPulls(rpc, WALLET, safe3, [permit]))[0].calls.length, 1);
   await sendAndWait(rpc, WALLET, lockTx(WALLET, safe3, DAY, EXPIRATION_SECONDS, null, { coin: 0n, calls: permit.calls }));
   assert.equal(await tokenBalance(rpc, token("USDS").address, safe3), units("USDS", 500n));
-  assert.equal((await inspect(rpc, safe3)).state, "locked");
+  assert.equal((await inspect(rpc, safe3, forkHints)).state, "locked");
   ok("the permit somebody sent first fails inside the setup without stopping it: the approval is in place, and the tokens went in");
 
 

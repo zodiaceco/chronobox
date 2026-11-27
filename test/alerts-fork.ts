@@ -33,6 +33,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
+import { madeOnFork } from "./fork-hints.ts";
 import { AllWatcher, EMAIL_PATH, Email, Telegram, parseConfig } from "../watcher/src/index.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
@@ -117,11 +118,13 @@ const ANNA_PHONE = 11, ANNA_FRIEND = 12, BEN_PHONE = 13, OLD_PHONE = 14, CURIOUS
 async function chronobox(wallet: Address, cooldown: bigint, index = 0) {
   const safe = safeFromReceipt(await sendAndWait(rpc, wallet, createTx(wallet, index)))!;
   await sendAndWait(rpc, wallet, lockTx(wallet, safe, cooldown));
-  const state = await inspect(rpc, safe);
+  const state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   return { safe, delay: state.delay!, roles: state.roles! };
 }
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [ANNA, BEN, CARL, GUARD]) await rpc("anvil_setCode", [account, "0x"]);
@@ -302,7 +305,7 @@ try {
   assert.doesNotMatch(changed.text, /Warning/);
   ok("after it is carried out, the chats are told that the Chronobox changed");
   show(changed.text);
-  const guarded = await inspect(rpc, anna.safe);
+  const guarded = await inspect(rpc, anna.safe, forkHints);
   assert.equal(guarded.guardian?.toLowerCase(), GUARD.toLowerCase());
   // A watcher that starts from nothing still knows it as a Chronobox.
   const fresh = new AllWatcher(parseConfig(["--all"], { ...settings, STATE_DIR: path.join(dir, "fresh") }), { log: () => undefined });
