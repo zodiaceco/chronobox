@@ -132,7 +132,16 @@ export type WatcherOptions = {
   where?: string;
   /** Counts the requests to the RPC here. */
   rpcCounts?: RpcCounts;
+  /** The chain as the poll of the network read it a moment ago. Then a read does not ask for it again. */
+  chain?: ChainNow;
+  /** Which addresses are proxies of the Delay or of Roles, kept by the caller across reads. Proxy code does not change. */
+  proxyKinds?: ProxyKinds;
 };
+
+/** The network and its head block, with the time of that block. */
+export type ChainNow = { chainId: number; head: number; timestamp: bigint };
+
+export type ProxyKinds = Map<string, 'delay' | 'roles'>;
 
 export class Watcher {
   cfg: Config;
@@ -141,7 +150,8 @@ export class Watcher {
   log: Log;
   fetchFn: FetchFn;
   private blockTs = new Map<number, bigint>();
-  private proxyKinds = new Map<string, 'delay' | 'roles'>();
+  private proxyKinds: ProxyKinds;
+  private chain?: ChainNow;
   private telegram?: Telegram;
   private email?: Email;
   private store: Store;
@@ -154,6 +164,8 @@ export class Watcher {
     this.telegram = opts.telegram;
     this.email = opts.email;
     this.fetchFn = opts.fetch ?? fetch;
+    this.proxyKinds = opts.proxyKinds ?? new Map();
+    this.chain = opts.chain;
     this.rpc = new Rpc(cfg.rpcUrls, this.fetchFn, 20000,
       cfg.rpcServiceKey ? { host: cfg.rpcServiceHost, key: cfg.rpcServiceKey } : undefined, opts.rpcCounts);
     const out = opts.log ?? defaultLog;
@@ -470,11 +482,15 @@ export class Watcher {
   private async observe(): Promise<void> {
     this.blockTs.clear();
     const s = this.state;
-    const chainId = Number(await this.rpc.call('eth_chainId'));
+    // The head that the poll of the network read, unless this vault was read at a later block since (a question of the
+    // bot can read it during the poll): its state must never go back to an older block.
+    const polled = this.chain && (s.lastBlock === undefined || this.chain.head >= s.lastBlock) ? this.chain : undefined;
+    const chainId = polled ? polled.chainId : Number(await this.rpc.call('eth_chainId'));
     if (s.chainId !== undefined && s.chainId !== chainId) {
       throw new ConfigError(`The RPC is on chain ${chainId}, but this watcher watches chain ${s.chainId}. Check RPC_URL.`);
     }
-    const head = Number(await this.rpc.call('eth_blockNumber'));
+    const head = polled ? polled.head : Number(await this.rpc.call('eth_blockNumber'));
+    if (polled) this.blockTs.set(head, polled.timestamp);
     const now = await this.timestampOf(head);
     const tag = hex(head);
     const delay = s.delay ?? (await this.resolveDelay(tag));

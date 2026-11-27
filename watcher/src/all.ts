@@ -23,7 +23,7 @@ import { BusyError, DryRunStore, FileStore, type Store } from './store.ts';
 import type { Email } from './email.ts';
 import type { Network, Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, errText } from './util.ts';
-import { Watcher, parseState } from './watcher.ts';
+import { type ChainNow, type ProxyKinds, Watcher, parseState } from './watcher.ts';
 
 type Known = {
   delay: string;
@@ -117,6 +117,8 @@ export class AllWatcher {
   calls: PollCalls = { scan: {}, vaults: {}, read: 0 };
   private opts: AllOptions;
   private probe: Watcher;
+  /** Shared by every read of this network, across polls: proxy code does not change. */
+  private proxyKinds: ProxyKinds = new Map();
   private store: Store;
   private clock: () => number;
 
@@ -126,7 +128,7 @@ export class AllWatcher {
     this.clock = opts.clock ?? Date.now;
     this.store = opts.store ?? (cfg.dryRun ? new DryRunStore(new FileStore(cfg.stateDir)) : new FileStore(cfg.stateDir));
     // Reads the chain only. It never loads or saves a state.
-    this.probe = new Watcher({ ...cfg, dryRun: true }, { fetch: opts.fetch, log: opts.log });
+    this.probe = new Watcher({ ...cfg, dryRun: true }, { fetch: opts.fetch, log: opts.log, proxyKinds: this.proxyKinds });
     this.log = this.probe.log;
   }
 
@@ -287,10 +289,10 @@ export class AllWatcher {
   redact(msg: string): string { return this.probe.redact(msg); }
 
   /** The watcher of one vault: the same code as for a single vault. */
-  private watcherOf(vault: string, known: Known, rpcCounts?: RpcCounts): Watcher {
+  private watcherOf(vault: string, known: Known, rpcCounts?: RpcCounts, chain?: ChainNow): Watcher {
     return new Watcher({ ...this.cfg, chronobox: vault, delay: known.delay }, {
       fetch: this.opts.fetch, telegram: this.opts.telegram, email: this.opts.email, store: this.store, key: vault, where: `The state of ${vault}`,
-      log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`), rpcCounts,
+      log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`), rpcCounts, chain, proxyKinds: this.proxyKinds,
     });
   }
 
@@ -298,13 +300,13 @@ export class AllWatcher {
    * Reads one vault and sends its alerts. False if the chain could not be read. Null if a question of the bot reads
    * this vault right now: that read sends its alerts, and this poll goes on with the next vault.
    */
-  private async look(vault: string, known: Known, calls: PollCalls): Promise<boolean | null> {
+  private async look(vault: string, known: Known, calls: PollCalls, chain: ChainNow | undefined): Promise<boolean | null> {
     // Saved before the read: if the function is killed during it, this vault goes to the back of the line, and it
     // cannot block every poll after this one.
     known.lookedAt = this.clock();
     delete known.waitingSince;
     await this.save();
-    const w = this.watcherOf(vault, known, calls.vaults);
+    const w = this.watcherOf(vault, known, calls.vaults, chain);
     let ok: boolean;
     try {
       ok = await this.store.lock(`vault:${vault}`, () => { calls.read++; return w.poll(); }, { waitMs: 0 });
@@ -324,7 +326,7 @@ export class AllWatcher {
    * and the queue is saved with the new lastBlock before any of them is checked: a search is never done twice, also
    * when the function is killed afterwards. Returns the vaults to look at now.
    */
-  private async scan(probe: Watcher): Promise<{ chainId: number; now: number; touched: Set<string> }> {
+  private async scan(probe: Watcher): Promise<{ chain: ChainNow; now: number; touched: Set<string> }> {
     const s = this.state;
     const rpc = probe.rpc;
     const chainId = Number(await rpc.call('eth_chainId'));
@@ -377,7 +379,7 @@ export class AllWatcher {
     s.chainId = chainId;
     s.lastBlock = to;
     this.announce();
-    return { chainId, now, touched };
+    return { chain: { chainId, head, timestamp: BigInt(block.timestamp) }, now, touched };
   }
 
   /**
@@ -441,10 +443,13 @@ export class AllWatcher {
     // Counted apart from the bot's questions, which use this.probe at the same time.
     const calls: PollCalls = { scan: {}, vaults: {}, read: 0 };
     this.calls = calls;
-    const probe = new Watcher({ ...this.cfg, dryRun: true }, { fetch: this.opts.fetch, log: this.opts.log, rpcCounts: calls.scan });
+    const probe = new Watcher({ ...this.cfg, dryRun: true }, { fetch: this.opts.fetch, log: this.opts.log, rpcCounts: calls.scan, proxyKinds: this.proxyKinds });
+    // What the search read of the chain. The reads of the vaults use it: one head for the whole poll.
+    let chain: ChainNow | undefined;
     try {
       const r = await this.scan(probe);
       now = r.now;
+      chain = r.chain;
       for (const vault of r.touched) s.vaults[vault].active = true;
       await this.save();
     } catch (e) {
@@ -485,7 +490,7 @@ export class AllWatcher {
       // answers anything. Its readers are told (Watcher), and it waits longer each time, while the chain can be read.
       let read: boolean | null = false;
       try {
-        read = await this.look(vault, known, calls);
+        read = await this.look(vault, known, calls, chain);
       } catch (e) {
         this.log(`${vault}: ${errText(e)}`);
       }
