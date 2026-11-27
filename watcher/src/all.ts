@@ -13,7 +13,7 @@
 // every question of the bot reads it again under the lock "all", because on Vercel a cron run and the webhook
 // work at the same time, in different places.
 import {
-  MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_DISABLED_MODULE, TOPIC_ENABLED_MODULE, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED,
+  MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_MODULE_PROXY_CREATION,
   type RpcCounts, callsByMethod, encAddr, hex, strip, toAddr, totalCalls,
 } from './chain.ts';
 import { predictRecoveryDelay } from './guardian.ts';
@@ -23,11 +23,18 @@ import { BusyError, DryRunStore, FileStore, type Store } from './store.ts';
 import type { Email } from './email.ts';
 import type { Network, Telegram } from './telegram.ts';
 import { ConfigError, type FetchFn, type Log, errText } from './util.ts';
-import { type ChainNow, type ProxyKinds, Watcher, parseState } from './watcher.ts';
+import { type ChainNow, type ProxyKinds, Watcher, nextAlertAt, parseState, watchedBy } from './watcher.ts';
 
 type Known = {
   delay: string;
+  /** Read it in the next poll: it is new, a log of one of its contracts came, an alert waits to be sent, or its last read failed. */
   active: boolean;
+  /** Something waits in its line or in the line of its recovery. */
+  waiting?: boolean;
+  /** The chain time (s) of its next alert that only time brings (nextAlertAt). The poll reads it then. */
+  dueAt?: number;
+  /** The contracts whose logs mean it changed, besides its Delay and Recovery Delay (watchedBy). From its last read. */
+  watch?: string[];
   heartbeatAt?: number;
   /** When the last read of this vault began (ms). The poll reads the vaults that waited longest first. */
   lookedAt?: number;
@@ -58,8 +65,13 @@ const CHECK_TRIES = 3;
 /** A vault whose read fails while the chain can be read waits 1, 2, 4 ... minutes before the next read, an hour at most. */
 const RETRY_FIRST_MS = 60_000;
 const RETRY_MAX_MS = 3_600_000;
-/** Delays per eth_getLogs request for the requests of known Chronoboxes. */
+/** Addresses per eth_getLogs request for the logs of known Chronoboxes. */
 const ADDRESSES_PER_QUERY = 100;
+/**
+ * A vault in which something waits is read at least this often, even without a log or an alert due (ms). Some changes
+ * come without a log: the Delay 1.0.1 removes void requests in skipExpired() without one.
+ */
+export const RECHECK_MS = 3_600_000;
 
 export type AllOptions = {
   fetch?: FetchFn;
@@ -300,7 +312,7 @@ export class AllWatcher {
    * Reads one vault and sends its alerts. False if the chain could not be read. Null if a question of the bot reads
    * this vault right now: that read sends its alerts, and this poll goes on with the next vault.
    */
-  private async look(vault: string, known: Known, calls: PollCalls, chain: ChainNow | undefined): Promise<boolean | null> {
+  private async look(vault: string, known: Known, calls: PollCalls, chain: ChainNow | undefined, now: number): Promise<boolean | null> {
     // Saved before the read: if the function is killed during it, this vault goes to the back of the line, and it
     // cannot block every poll after this one.
     known.lookedAt = this.clock();
@@ -315,8 +327,13 @@ export class AllWatcher {
       throw e;
     }
     const ws = w.state;
-    known.active = Object.keys(ws.items).length > 0 || Object.keys(ws.recoveryItems ?? {}).length > 0 ||
-      ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
+    // Read again in the next poll only for what a log does not show: an alert that waits to be sent, a failed read.
+    known.active = ws.outbox.length > 0 || ws.failCount > 0 || ws.lastBlock === undefined;
+    known.waiting = Object.keys(ws.items).length > 0 || Object.keys(ws.recoveryItems ?? {}).length > 0;
+    const due = nextAlertAt(ws, BigInt(chain?.timestamp ?? now));
+    if (due === undefined) delete known.dueAt;
+    else known.dueAt = Number(due);
+    if (ws.settings) known.watch = watchedBy(ws);
     known.heartbeatAt = ws.lastHeartbeat;
     return ok;
   }
@@ -326,7 +343,7 @@ export class AllWatcher {
    * and the queue is saved with the new lastBlock before any of them is checked: a search is never done twice, also
    * when the function is killed afterwards. Returns the vaults to look at now.
    */
-  private async scan(probe: Watcher): Promise<{ chain: ChainNow; now: number; touched: Set<string> }> {
+  private async scan(probe: Watcher): Promise<{ chain: ChainNow; now: number; touched: Set<string>; covered: boolean }> {
     const s = this.state;
     const rpc = probe.rpc;
     const chainId = Number(await rpc.call('eth_chainId'));
@@ -345,17 +362,24 @@ export class AllWatcher {
     // A long way behind (the first start with START_BLOCK, or after an outage): one part per poll.
     const to = this.cfg.maxScanBlocks > 0 ? Math.min(head, from + this.cfg.maxScanBlocks - 1) : head;
     if (from <= to) {
-      const byDelay = new Map(Object.entries(s.vaults).map(([vault, k]) => [k.delay, vault]));
-      // The requests of the Chronoboxes it knows, and a wallet that comes or goes without a request: wallet and
-      // guardian together, or a recovery. Only their Delays can emit these logs. The Recovery Delay of a vault may
-      // not be made: then it has no logs.
-      const watched = new Map(byDelay);
-      for (const vault of Object.keys(s.vaults)) watched.set(predictRecoveryDelay(vault), vault);
+      // Every log of the contracts of the Chronoboxes it knows: a request, a wallet that comes or goes, a change of
+      // a setting, a call of a module of the Safe, a change of the Council Safe. A vault is read when one of its
+      // contracts logs something (or when an alert of it is due), so these must be all the contracts whose change it
+      // tells of. The Recovery Delay of a vault may not be made: then it has no logs. Logs that anybody can cause (money
+      // sent to the Safe) cost a read, never more than one in each poll.
+      const watched = new Map<string, Set<string>>();
+      const watch = (address: string, vault: string) => {
+        const a = address.toLowerCase();
+        if (!watched.has(a)) watched.set(a, new Set());
+        watched.get(a)!.add(vault);
+      };
+      for (const [vault, k] of Object.entries(s.vaults)) {
+        for (const a of [k.delay, predictRecoveryDelay(vault), ...(k.watch ?? [])]) watch(a, vault);
+      }
       const all = [...watched.keys()];
       for (let i = 0; i < all.length; i += ADDRESSES_PER_QUERY) {
-        for (const l of await probe.getLogs(from, to, [[TOPIC_TRANSACTION_ADDED, TOPIC_ENABLED_MODULE, TOPIC_DISABLED_MODULE]], all.slice(i, i + ADDRESSES_PER_QUERY))) {
-          const vault = watched.get(String(l.address).toLowerCase());
-          if (vault) touched.add(vault);
+        for (const l of await probe.getLogs(from, to, [], all.slice(i, i + ADDRESSES_PER_QUERY))) {
+          for (const vault of watched.get(String(l.address).toLowerCase()) ?? []) touched.add(vault);
         }
       }
       // New Delays, from the factory. Every Chronobox deploys its Delay there.
@@ -379,7 +403,7 @@ export class AllWatcher {
     s.chainId = chainId;
     s.lastBlock = to;
     this.announce();
-    return { chain: { chainId, head, timestamp: BigInt(block.timestamp) }, now, touched };
+    return { chain: { chainId, head, timestamp: BigInt(block.timestamp) }, now, touched, covered: to === head };
   }
 
   /**
@@ -428,8 +452,11 @@ export class AllWatcher {
   }
 
   /**
-   * One poll. A vault with an empty queue cannot change until it queues something, so only vaults
-   * with something pending, with a new queued transaction or with a heartbeat due are read.
+   * One poll. A vault changes only through its contracts, and they log each change. So a vault is read when one of
+   * them logged something, when an alert that only time brings is due (a wait that ends, a request that ends soon),
+   * when its heartbeat is due, and at least once in RECHECK_MS while something waits in it. A vault that is new, has
+   * alerts to send or could not be read is read in each poll. When the search did not reach the head, each vault in
+   * which something waits is read, as if every one of them had logged something.
    * Throws BusyError at once if another poll or a question of the bot holds the lock.
    */
   poll(opts: PollOptions = {}): Promise<boolean> {
@@ -446,10 +473,13 @@ export class AllWatcher {
     const probe = new Watcher({ ...this.cfg, dryRun: true }, { fetch: this.opts.fetch, log: this.opts.log, rpcCounts: calls.scan, proxyKinds: this.proxyKinds });
     // What the search read of the chain. The reads of the vaults use it: one head for the whole poll.
     let chain: ChainNow | undefined;
+    // The search read the logs up to the head: a vault without a log and without an alert due has not changed.
+    let covered = false;
     try {
       const r = await this.scan(probe);
       now = r.now;
       chain = r.chain;
+      covered = r.covered;
       for (const vault of r.touched) s.vaults[vault].active = true;
       await this.save();
     } catch (e) {
@@ -471,7 +501,11 @@ export class AllWatcher {
       // An "all quiet" message makes sense only where somebody can hear it. Email gets none, so an address is no reason.
       const heard = Boolean(this.cfg.webhookUrl || this.cfg.dryRun) || (this.opts.telegram?.subscribers(chainId, vault).length ?? 0) > 0;
       if (known.retryAt !== undefined && known.retryAt > this.clock()) return false;
-      return known.active || (heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat);
+      return known.active ||
+        (heard && beat > 0 && now - (known.heartbeatAt ?? 0) >= beat) ||
+        (known.dueAt !== undefined && now >= known.dueAt) ||
+        // Without a search up to the head, a vault in which something waits is read in each poll, as before.
+        (Boolean(known.waiting) && (!covered || this.clock() - (known.lookedAt ?? 0) >= RECHECK_MS));
     });
     // The vaults that waited longest first. A poll that runs out of time goes on there the next time, so vaults
     // that are always busy cannot keep the others from being read.
@@ -490,7 +524,7 @@ export class AllWatcher {
       // answers anything. Its readers are told (Watcher), and it waits longer each time, while the chain can be read.
       let read: boolean | null = false;
       try {
-        read = await this.look(vault, known, calls, chain);
+        read = await this.look(vault, known, calls, chain, now);
       } catch (e) {
         this.log(`${vault}: ${errText(e)}`);
       }

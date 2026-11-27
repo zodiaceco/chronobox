@@ -21,6 +21,9 @@ export const DAY = 86400n;
 
 export type QItem = { createdAt: bigint; to: string; value: bigint; data: string; operation: number; block: number };
 
+/** A log as the stand-in keeps it: lowercase address, its block, and its place in that block. */
+export type MockLog = { address: string; block: number; index: number; topics: string[]; data: string };
+
 export class MockChain {
   chainId = 1;
   head = 1000;
@@ -65,7 +68,9 @@ export class MockChain {
   ts(n: number) { return T0 + 12n * BigInt(n); }
   now() { return this.ts(this.head); }
   mine(seconds: bigint) { this.head += Number(seconds / 12n) + 1; }
+  /** A request in a transaction of its own: a new block, as on a chain (a block that was read gets no more logs). */
   enqueue(to: string, value: bigint, data = '0x', operation = 0) {
+    this.mine(12n);
     this.queue.push({ createdAt: this.now(), to, value, data, operation, block: this.head });
     this.mine(12n);
     return this.queue.length - 1;
@@ -75,6 +80,33 @@ export class MockChain {
   }
   /** What really happened to each request that left the queue. The truth that the watcher must not contradict. */
   outcomes: Record<number, 'executed' | 'expired' | 'cancelled'> = {};
+  /** Other logs: a change of a setting, of the Council Safe, money sent to the Safe. Each one in a new block. */
+  extraLogs: { address: string; block: number; topics: string[]; data: string }[] = [];
+  /** A contract logs an event in a transaction of its own: a new block. */
+  emit(address: string, topic: string, data = '0x') {
+    this.mine(12n);
+    this.extraLogs.push({ address: address.toLowerCase(), block: this.head, topics: [topic], data });
+  }
+  /** Every log of the chain, in chain order, as a node keeps them. */
+  logs(): MockLog[] {
+    const all: Omit<MockLog, 'index'>[] = [];
+    const created = [...(this.created === null ? [] : [{ delay: DELAY, block: this.created }]), ...this.otherCreated];
+    for (const c of created) {
+      all.push({ address: MODULE_PROXY_FACTORY, block: c.block, topics: [TOPIC_MODULE_PROXY_CREATION, '0x' + encAddr(c.delay), '0x' + encAddr(MASTER_COPY.delay)], data: '0x' });
+    }
+    if (this.delayHasNonceEvent) for (const l of this.nonceSets) all.push({ address: DELAY, block: l.block, topics: [TOPIC_TX_NONCE_SET], data: '0x' + u(l.nonce) });
+    this.queue.forEach((q, n) => all.push({ address: DELAY, block: q.block, topics: [TOPIC_TRANSACTION_ADDED, '0x' + u(n), '0x' + 'ab'.repeat(32)], data: encAdded(q) }));
+    for (const l of this.safeLogs) all.push({ address: SAFE, ...l });
+    all.push(...this.extraLogs);
+    // Sorted by block, and in the order they came within a block (the Safe logs a call, then its result).
+    const sorted = all.map((l, i) => ({ l, i })).sort((a, b) => a.l.block - b.l.block || a.i - b.i).map(({ l }) => l);
+    const index = new Map<number, number>();
+    return sorted.map((l) => {
+      const i = index.get(l.block) ?? 0;
+      index.set(l.block, i + 1);
+      return { ...l, index: i };
+    });
+  }
   /** What the Safe (a SafeL2 1.4.1) logs: each call of a module, and its result right after it. In chain order. */
   safeLogs: { block: number; topics: string[]; data: string }[] = [];
   private moduleCall(module: string, to: string, value: bigint, data: string, operation: number, success: boolean) {
@@ -162,53 +194,16 @@ export function handle(chain: MockChain, method: string, params: any[]): { resul
       const f = params[0];
       const from = Number(BigInt(f.fromBlock)), to = Number(BigInt(f.toBlock));
       if (to - from + 1 > chain.maxLogRange) return { error: { code: -32005, message: 'query returned more than 10000 results' } };
-      const out: unknown[] = [];
       // The watcher reads logs of contracts it chose only. An RPC may refuse a search over every contract, and
       // anybody can fill one.
       if (!f.address) return { error: { code: -32602, message: 'the stand-in wants an address' } };
       const addrs: string[] = [f.address].flat().map((x: string) => x.toLowerCase());
       chain.logQueries.push(addrs);
-      if (f.topics[0] === TOPIC_MODULE_PROXY_CREATION) {
-        if (!addrs.includes(MODULE_PROXY_FACTORY)) return { result: out };
-        const created = [...(chain.created === null ? [] : [{ delay: DELAY, block: chain.created }]), ...chain.otherCreated].sort((x, y) => x.block - y.block);
-        for (const c of created) {
-          if (c.block < from || c.block > to) continue;
-          if (f.topics[2] && f.topics[2] !== '0x' + encAddr(MASTER_COPY.delay)) continue;
-          out.push({
-            address: MODULE_PROXY_FACTORY, blockNumber: '0x' + c.block.toString(16),
-            topics: [TOPIC_MODULE_PROXY_CREATION, '0x' + encAddr(c.delay), '0x' + encAddr(MASTER_COPY.delay)], data: '0x',
-          });
-        }
-        return { result: out };
-      }
-      f.address = addrs.length === 1 ? addrs[0] : addrs;
-      if (f.topics[0] === TOPIC_TX_NONCE_SET && addrs.includes(DELAY)) {
-        for (const l of chain.delayHasNonceEvent ? chain.nonceSets : []) {
-          if (l.block < from || l.block > to) continue;
-          out.push({ address: DELAY, blockNumber: '0x' + l.block.toString(16), logIndex: '0x0', topics: [TOPIC_TX_NONCE_SET], data: '0x' + u(l.nonce) });
-        }
-        return { result: out };
-      }
-      if (addrs.includes(SAFE)) {
-        const wanted: string[] = [f.topics[0]].flat();
-        const index = new Map<number, number>();
-        for (const l of chain.safeLogs) {
-          const i = index.get(l.block) ?? 0;
-          index.set(l.block, i + 1);
-          if (l.block < from || l.block > to || !wanted.includes(l.topics[0])) continue;
-          out.push({ address: SAFE, blockNumber: '0x' + l.block.toString(16), logIndex: '0x' + i.toString(16), topics: l.topics, data: l.data });
-        }
-        return { result: out };
-      }
-      chain.queue.forEach((q, n) => {
-        if (!addrs.includes(DELAY)) return;
-        if (q.block < from || q.block > to) return;
-        if (![f.topics[0]].flat().includes(TOPIC_TRANSACTION_ADDED)) return;
-        const t1 = '0x' + u(n);
-        if (f.topics[1] && f.topics[1] !== t1) return;
-        out.push({ address: DELAY, blockNumber: '0x' + q.block.toString(16), topics: [TOPIC_TRANSACTION_ADDED, t1, '0x' + 'ab'.repeat(32)], data: encAdded(q) });
-      });
-      return { result: out };
+      // As a node: every log of the chain, then the ones of these addresses, in these blocks, with these topics.
+      const topics: (string | string[] | null)[] = f.topics ?? [];
+      const fits = (l: MockLog) => addrs.includes(l.address) && l.block >= from && l.block <= to &&
+        topics.every((t, i) => t === null || [t].flat().includes(l.topics[i]));
+      return { result: chain.logs().filter(fits).map((l) => ({ ...l, blockNumber: '0x' + l.block.toString(16), logIndex: '0x' + l.index.toString(16) })) };
     }
     case 'eth_call': {
       const to = params[0].to.toLowerCase();

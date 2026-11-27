@@ -99,6 +99,48 @@ function remindersDue(readyAt: bigint, now: bigint): number {
   return RECOVERY_REMINDERS.filter((lead) => now >= readyAt - lead).length;
 }
 
+/**
+ * The earliest chain time (s) at which a read of this state can send an alert that only time brings: a wait that
+ * ends, a request or a recovery that ends soon or is void, a reminder before a recovery can be carried out. Undefined
+ * when none can come. Each alert of that kind in observe() has its time here. A time too early costs one read; a time
+ * too late would make an alert late, so when in doubt it is earlier.
+ */
+export function nextAlertAt(s: State, now: bigint): bigint | undefined {
+  const times: bigint[] = [];
+  const line = (items: Record<string, Item> | undefined, cooldown: bigint, expiration: bigint, reminders: boolean) => {
+    for (const it of Object.values(items ?? {})) {
+      const { readyAt, expiresAt } = itemStatus(BigInt(it.createdAt), cooldown, expiration, now);
+      if (!it.sentReady) times.push(readyAt);
+      if (expiresAt !== null && !it.sentExpiring) {
+        const soon = expiresAt - expiryLead(expiration);
+        times.push(soon > readyAt ? soon : readyAt);
+      }
+      if (expiresAt !== null && !it.sentExpired) times.push(expiresAt + 1n);
+      // A reminder is sent only while the step waits. Once the wait is over, the reminders that were not sent never come.
+      if (reminders && now < readyAt) RECOVERY_REMINDERS.forEach((lead, i) => { if ((it.remindersSent ?? 0) <= i) times.push(readyAt - lead); });
+    }
+  };
+  const x = s.settings;
+  if (!x) return undefined;
+  line(s.items, BigInt(x.cooldown), BigInt(x.expiration), false);
+  if (x.recovery) line(s.recoveryItems, BigInt(x.recovery.cooldown), BigInt(x.recovery.expiration), true);
+  return times.length ? times.reduce((a, b) => (b < a ? b : a)) : undefined;
+}
+
+/**
+ * The contracts whose logs show a change of this vault, besides its Delay and its Recovery Delay: the Safe of the
+ * vault (every call of a module, and every change of its owners, modules and guard), its cancel contract, the Council
+ * Safe, and the other addresses that can cancel (a Council Safe that is made later is one of them before it is made).
+ * Empty before the vault was read to the end.
+ */
+export function watchedBy(s: State): string[] {
+  const x = s.settings;
+  if (!x || !s.vault) return [];
+  const wallets = new Set(x.controllers.map((a) => a.toLowerCase()));
+  const all = [s.vault, s.delay, x.recovery?.delay, x.roles, x.council, ...(x.cancellers ?? []).filter((a) => !wallets.has(a.toLowerCase()))];
+  return [...new Set(all.filter((a): a is string => Boolean(a)).map((a) => a.toLowerCase()))];
+}
+
 export function emptyState(): State {
   return { version: 1, items: {}, outbox: [], failCount: 0, problemOpen: false, seq: 0 };
 }
