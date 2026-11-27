@@ -443,7 +443,7 @@ export function LegalPage() {
       <Back />
       <header class="tech-head">
         <h1>Legal & imprint</h1>
-        <p class="lead">Chronobox is made by Zodiac Labs GmbH, Berlin.</p>
+        <p class="lead">Chronobox is free software. Your wallet controls your Chronobox. We cannot move, stop or recover your money.</p>
       </header>
       <ul class="legal-index">
         {pages.map((p) => (
