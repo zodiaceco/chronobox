@@ -8,7 +8,7 @@ import { formatDuration } from "../lib/format.ts";
 import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
 import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
-import { discover, inspect } from "../lib/chronobox.ts";
+import { chronoboxExists, chronoboxOf, inspect } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
@@ -67,9 +67,11 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       }
       if (chain) {
         try {
-          const found = await discover(session.rpc, session.account);
-          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f.safe, v.safe)));
-          const here = [...found.map((f) => f.safe), ...known.map((k) => k.safe)];
+          // The wallet's own Chronobox, at its one address, and the ones this browser has seen it watch (as a guardian).
+          const own = chronoboxOf(session.account);
+          const found = (await chronoboxExists(session.rpc, session.account)) ? [own] : [];
+          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !sameAddress(v.safe, own));
+          const here = [...found, ...known.map((k) => k.safe)];
           // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
           const inspected: Row[] = [];
           for (let i = 0; i < here.length; i += 3) {
@@ -169,8 +171,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     return (
       <div class="start">
         <section class="home">
-          <h1>Your Chronoboxes</h1>
-          <p class="wiz-note">Looking for your Chronoboxes…</p>
+          <h1>Your Chronobox</h1>
+          <p class="wiz-note">Looking for your Chronobox…</p>
         </section>
       </div>
     );
@@ -181,7 +183,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     return (
       <div class="start">
         <section class="home">
-          <h1>Your Chronoboxes</h1>
+          {/* One of its own, on each network. More rows are on other networks, or ones it watches as a guardian. */}
+          <h1>{rows!.length === 1 ? "Your Chronobox" : "Your Chronoboxes"}</h1>
           {readNotice}
           <ul class="vault-list">
             {rows!.map((row) => (
@@ -202,9 +205,6 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             ))}
           </ul>
           <div class="home-actions">
-            <a class="button button-plain" href="#/new">
-              Create another
-            </a>
             <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
               Open one by its address
             </button>

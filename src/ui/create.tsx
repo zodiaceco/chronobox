@@ -24,13 +24,13 @@ import {
   MAX_COOLDOWN,
   MIN_COOLDOWN,
   createTx,
-  discover,
+  chronoboxExists,
+  chronoboxOf,
   inspect,
   isHalfMade,
   lockTx,
   nativeBalance,
   predictRoles,
-  predictSafe,
   safeFromReceipt,
   sendAndWait,
   setupCalls,
@@ -43,6 +43,7 @@ import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session
 import { ALERTS, AlertsSheet } from "./alerts.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
+import { vaultHref } from "./start.tsx";
 import { OnUs, Support } from "./give.tsx";
 import { Mark } from "./logo.tsx";
 
@@ -60,7 +61,8 @@ const PRESETS: { label: string; seconds: bigint }[] = [
  */
 const RECEIVER: Address | null = CONTRIBUTION_RECEIVER ?? (__DEV__ ? "0x000000000000000000000000000000000000c0de" : null);
 
-type Plan = { index: number; safe: Address; created: boolean };
+/** `done`: the wallet's Chronobox is set up already. The setup has nothing to make, and the page goes to it. */
+type Plan = { index: number; safe: Address; created: boolean; done?: boolean };
 type StepId = "network" | "delay" | "promises" | "fund" | "review";
 /**
  * Where the setup stands: the id of a row on the working screen ("sign:3",
@@ -164,12 +166,11 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
    * that a step which has landed is never sent again.
    */
   const findPlan = async (): Promise<Plan> => {
-    const found = await discover(session.rpc, session.account);
-    // A Chronobox whose setup stopped after the first step comes first.
-    for (const vault of found) {
-      if (await isHalfMade(session.rpc, vault.safe, session.account)) return { index: vault.index, safe: vault.safe, created: true };
-    }
-    return { index: found.length, safe: predictSafe(session.account, found.length), created: false };
+    // A wallet has one Chronobox, at one address. It is not made yet, it stopped after its first step, or it is there.
+    const safe = chronoboxOf(session.account);
+    if (!(await chronoboxExists(session.rpc, session.account))) return { index: 0, safe, created: false };
+    if (await isHalfMade(session.rpc, safe, session.account)) return { index: 0, safe, created: true };
+    return { index: 0, safe, created: true, done: true };
   };
 
   useEffect(() => {
@@ -178,7 +179,12 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
     setPlan(null);
     setLoadError(null);
     findPlan().then(
-      (next) => !stale && setPlan(next),
+      (next) => {
+        if (stale) return;
+        // The one Chronobox of this wallet is there already: there is nothing to set up.
+        if (next.done && !running.current && chain) location.hash = vaultHref(chain, next.safe);
+        else setPlan(next);
+      },
       (e) => !stale && setLoadError(errorText(e)),
     );
     return () => {
