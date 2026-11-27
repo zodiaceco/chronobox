@@ -336,3 +336,18 @@ function OpenByAddress(props: { chainId: number; onChain: (id: number) => void; 
     </form>
   );
 }
+
+/** Open any Chronobox by its address: one a guardian watches, one on another network, anybody's. */
+export function OpenPage(props: { chainId: number | undefined }) {
+  const [chainId, setChainId] = useState(props.chainId ?? CHAINS[0].id);
+  const [text, setText] = useState("");
+  const address = parseAddress(text);
+  const target = chainById(chainId);
+  return (
+    <section class="page page-center">
+      <h1>Open a Chronobox</h1>
+      <p class="lead">Any Chronobox, by its address: one you watch as a guardian, or one on another network.</p>
+      <OpenByAddress chainId={chainId} onChain={setChainId} text={text} onText={setText} target={target && address ? vaultHref(target, address) : null} />
+    </section>
+  );
+}

@@ -43,7 +43,6 @@ import { AddressText, type Asset, assetsOf, Button, Choice, Notice, type Session
 import { ALERTS, AlertsSheet } from "./alerts.tsx";
 import { DepositPanel } from "./deposit.tsx";
 import { FundList } from "./fund.tsx";
-import { vaultHref } from "./start.tsx";
 import { OnUs, Support } from "./give.tsx";
 import { Mark } from "./logo.tsx";
 
@@ -182,7 +181,7 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
       (next) => {
         if (stale) return;
         // The one Chronobox of this wallet is there already: there is nothing to set up.
-        if (next.done && !running.current && chain) location.hash = vaultHref(chain, next.safe);
+        if (next.done && !running.current) location.hash = "#/";
         else setPlan(next);
       },
       (e) => !stale && setLoadError(errorText(e)),

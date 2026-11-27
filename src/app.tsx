@@ -9,7 +9,8 @@ import { ALERTS, AlertsPage } from "./ui/alerts.tsx";
 import { CreatePage } from "./ui/create.tsx";
 import { DevBar } from "./ui/devbar.tsx";
 import { ByZodiac, Lockup } from "./ui/logo.tsx";
-import { StartPage, vaultHref } from "./ui/start.tsx";
+import { OpenPage, StartPage } from "./ui/start.tsx";
+import { HomePage } from "./ui/home.tsx";
 import { ImprintPage, LegalPage, PrivacyPage, TermsPage } from "./ui/legal.tsx";
 import { TechnicalPage } from "./ui/technical.tsx";
 import { StatesPage } from "./ui/states.tsx";
@@ -25,6 +26,7 @@ import { VaultPage } from "./ui/vault.tsx";
 type Route =
   | { page: "start" }
   | { page: "new" }
+  | { page: "open" }
   | { page: "technical" }
   | { page: "privacy" }
   | { page: "states" }
@@ -43,6 +45,7 @@ function parseRoute(hash: string): Route {
   const path = hash.replace(/^#/, "");
   if (path === "" || path === "/" || !path.startsWith("/")) return { page: "start" };
   if (path === "/new") return { page: "new" };
+  if (path === "/open") return { page: "open" };
   if (path === "/technical") return { page: "technical" };
   if (path === "/privacy") return { page: "privacy" };
   if (path === "/terms") return { page: "terms" };
@@ -204,7 +207,14 @@ export function App() {
 
   let body;
   if (route.page === "start") {
-    body = <StartPage session={session} chain={chain} connectOpen={connectOpen} onConnect={() => setConnectOpen(true)} />;
+    // A connected wallet sees its Chronobox, or the setup, right here. Without a wallet: the welcome.
+    body = session ? (
+      <HomePage key={`${session.account}:${session.chainId}`} session={session} chain={chain} />
+    ) : (
+      <StartPage session={null} chain={chain} connectOpen={connectOpen} onConnect={() => setConnectOpen(true)} />
+    );
+  } else if (route.page === "open") {
+    body = <OpenPage chainId={chain?.id} />;
   } else if (route.page === "technical") {
     body = <TechnicalPage />;
   } else if (route.page === "privacy") {
@@ -251,8 +261,9 @@ export function App() {
       <CreatePage
         session={session}
         chain={chain}
-        onDone={(c, safe) => {
-          location.hash = vaultHref(c, safe);
+        onDone={() => {
+          // The wallet's one Chronobox is its start page.
+          location.hash = "#/";
         }}
       />
     );
