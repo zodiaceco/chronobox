@@ -14,6 +14,7 @@
 // them into Vercel functions.
 import * as crypto from 'node:crypto';
 import { AllWatcher } from './all.ts';
+import { totalCalls } from './chain.ts';
 import { type Config, parseConfig } from './config.ts';
 import { DEFAULT_POLL_BUDGET_SECONDS, LOCK_TTL_MS } from './limits.ts';
 import { EMAIL_PATH, Email, PAGE_HEADERS } from './email.ts';
@@ -192,6 +193,8 @@ export type NetworkResult = {
   queued?: number;
   /** Vaults that could not be read while the chain could. A problem of those vaults; their readers are told. */
   failing?: number;
+  /** Requests to the RPC in this poll: for the search and the new Delays, and for the reads of the vaults. */
+  rpc?: { scan: number; vaults: number; read: number };
 };
 
 /** The note of the last poll, or null if there is none or it cannot be read. */
@@ -225,8 +228,9 @@ export async function poll(env: Env, req: Request, deps: Deps = {}): Promise<Rep
     try {
       const ok = await w.poll({ deadline });
       const { late, overdueSeconds, queued, failing } = w.report;
+      const rpc = { scan: totalCalls(w.calls.scan), vaults: totalCalls(w.calls.vaults), read: w.calls.read };
       const observedAt = new Date().toISOString();
-      return { chainId, ok, observedAt, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}), ...(failing ? { failing } : {}) };
+      return { chainId, ok, observedAt, ...(late ? { late, overdueSeconds } : {}), ...(queued ? { queued } : {}), ...(failing ? { failing } : {}), rpc };
     } catch (e) {
       // The poll before this one still runs. It does this work. Until it ends, the time of the last poll that ended stays.
       if (e instanceof BusyError) {

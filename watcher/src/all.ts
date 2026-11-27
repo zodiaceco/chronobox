@@ -14,7 +14,7 @@
 // work at the same time, in different places.
 import {
   MASTER_COPY, MODULE_PROXY_FACTORY, RevertError, TOPIC_DISABLED_MODULE, TOPIC_ENABLED_MODULE, TOPIC_MODULE_PROXY_CREATION, TOPIC_TRANSACTION_ADDED,
-  encAddr, hex, strip, toAddr,
+  type RpcCounts, callsByMethod, encAddr, hex, strip, toAddr, totalCalls,
 } from './chain.ts';
 import { predictRecoveryDelay } from './guardian.ts';
 import type { Config } from './config.ts';
@@ -84,6 +84,14 @@ export type PollReport = {
   failing: number;
 };
 
+/** The requests to the RPC in the last poll: for the search and the new Delays, and for the reads of the vaults. */
+export type PollCalls = {
+  scan: RpcCounts;
+  vaults: RpcCounts;
+  /** Vaults that the poll read. */
+  read: number;
+};
+
 export type PollOptions = {
   /** A time (ms since 1970). After it, the poll reads no further vault. They are read on the next poll. */
   deadline?: number;
@@ -105,6 +113,8 @@ export class AllWatcher {
   log: Log;
   /** Set by each poll. */
   report: PollReport = { late: 0, overdueSeconds: 0, queued: 0, failing: 0 };
+  /** Set by each poll. A question of the bot that reads a vault is not in it. */
+  calls: PollCalls = { scan: {}, vaults: {}, read: 0 };
   private opts: AllOptions;
   private probe: Watcher;
   private store: Store;
@@ -277,10 +287,10 @@ export class AllWatcher {
   redact(msg: string): string { return this.probe.redact(msg); }
 
   /** The watcher of one vault: the same code as for a single vault. */
-  private watcherOf(vault: string, known: Known): Watcher {
+  private watcherOf(vault: string, known: Known, rpcCounts?: RpcCounts): Watcher {
     return new Watcher({ ...this.cfg, chronobox: vault, delay: known.delay }, {
       fetch: this.opts.fetch, telegram: this.opts.telegram, email: this.opts.email, store: this.store, key: vault, where: `The state of ${vault}`,
-      log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`),
+      log: (m) => this.log(`${vault.slice(0, 10)}: ${m}`), rpcCounts,
     });
   }
 
@@ -288,16 +298,16 @@ export class AllWatcher {
    * Reads one vault and sends its alerts. False if the chain could not be read. Null if a question of the bot reads
    * this vault right now: that read sends its alerts, and this poll goes on with the next vault.
    */
-  private async look(vault: string, known: Known): Promise<boolean | null> {
+  private async look(vault: string, known: Known, calls: PollCalls): Promise<boolean | null> {
     // Saved before the read: if the function is killed during it, this vault goes to the back of the line, and it
     // cannot block every poll after this one.
     known.lookedAt = this.clock();
     delete known.waitingSince;
     await this.save();
-    const w = this.watcherOf(vault, known);
+    const w = this.watcherOf(vault, known, calls.vaults);
     let ok: boolean;
     try {
-      ok = await this.store.lock(`vault:${vault}`, () => w.poll(), { waitMs: 0 });
+      ok = await this.store.lock(`vault:${vault}`, () => { calls.read++; return w.poll(); }, { waitMs: 0 });
     } catch (e) {
       if (e instanceof BusyError) return null;
       throw e;
@@ -314,9 +324,9 @@ export class AllWatcher {
    * and the queue is saved with the new lastBlock before any of them is checked: a search is never done twice, also
    * when the function is killed afterwards. Returns the vaults to look at now.
    */
-  private async scan(): Promise<{ chainId: number; now: number; touched: Set<string> }> {
+  private async scan(probe: Watcher): Promise<{ chainId: number; now: number; touched: Set<string> }> {
     const s = this.state;
-    const rpc = this.probe.rpc;
+    const rpc = probe.rpc;
     const chainId = Number(await rpc.call('eth_chainId'));
     if (this.cfg.chainId !== undefined && chainId !== this.cfg.chainId) {
       throw new ConfigError(`The RPC of chain ${this.cfg.chainId} is on chain ${chainId}. Check RPC_URL_${this.cfg.chainId}.`);
@@ -341,7 +351,7 @@ export class AllWatcher {
       for (const vault of Object.keys(s.vaults)) watched.set(predictRecoveryDelay(vault), vault);
       const all = [...watched.keys()];
       for (let i = 0; i < all.length; i += ADDRESSES_PER_QUERY) {
-        for (const l of await this.probe.getLogs(from, to, [[TOPIC_TRANSACTION_ADDED, TOPIC_ENABLED_MODULE, TOPIC_DISABLED_MODULE]], all.slice(i, i + ADDRESSES_PER_QUERY))) {
+        for (const l of await probe.getLogs(from, to, [[TOPIC_TRANSACTION_ADDED, TOPIC_ENABLED_MODULE, TOPIC_DISABLED_MODULE]], all.slice(i, i + ADDRESSES_PER_QUERY))) {
           const vault = watched.get(String(l.address).toLowerCase());
           if (vault) touched.add(vault);
         }
@@ -350,7 +360,7 @@ export class AllWatcher {
       const queue = s.queue ?? [];
       const waiting = new Set(queue);
       let dropped = 0;
-      const created = await this.probe.getLogs(from, to, [TOPIC_MODULE_PROXY_CREATION, null, '0x' + encAddr(MASTER_COPY.delay)], MODULE_PROXY_FACTORY);
+      const created = await probe.getLogs(from, to, [TOPIC_MODULE_PROXY_CREATION, null, '0x' + encAddr(MASTER_COPY.delay)], MODULE_PROXY_FACTORY);
       for (const l of created) {
         if (String(l.address).toLowerCase() !== MODULE_PROXY_FACTORY || toAddr(strip(l.topics[2] ?? '')) !== MASTER_COPY.delay) continue;
         const delay = toAddr(strip(l.topics[1]));
@@ -376,7 +386,7 @@ export class AllWatcher {
    * chain could be read in this poll: then a check that fails is a problem of that Delay (anybody can deploy a Delay
    * whose Safe answers anything). It goes to the back of the queue, and after CHECK_TRIES it is dropped.
    */
-  private async check(deadline: number | undefined): Promise<number> {
+  private async check(probe: Watcher, deadline: number | undefined): Promise<number> {
     const s = this.state;
     let found = 0;
     let turns = (s.queue ?? []).length;
@@ -386,7 +396,7 @@ export class AllWatcher {
       first = false;
       const batch = s.queue!.slice(0, Math.min(CHECK_PARALLEL, turns));
       turns -= batch.length;
-      const results = await Promise.allSettled(batch.map((delay) => this.probe.chronoboxOf(delay, 'latest')));
+      const results = await Promise.allSettled(batch.map((delay) => probe.chronoboxOf(delay, 'latest')));
       const again: string[] = [];
       results.forEach((r, i) => {
         const delay = batch[i];
@@ -428,8 +438,12 @@ export class AllWatcher {
     const s = this.state;
     let ok = true;
     let now = Math.floor(Date.now() / 1000);
+    // Counted apart from the bot's questions, which use this.probe at the same time.
+    const calls: PollCalls = { scan: {}, vaults: {}, read: 0 };
+    this.calls = calls;
+    const probe = new Watcher({ ...this.cfg, dryRun: true }, { fetch: this.opts.fetch, log: this.opts.log, rpcCounts: calls.scan });
     try {
-      const r = await this.scan();
+      const r = await this.scan(probe);
       now = r.now;
       for (const vault of r.touched) s.vaults[vault].active = true;
       await this.save();
@@ -444,7 +458,7 @@ export class AllWatcher {
     // batch always), so that a flood of Delays cannot take the time of the Chronoboxes that are known.
     const started = this.clock();
     // Only when the chain could be read: else a failed check says nothing about the Delay.
-    if (ok) await this.check(opts.deadline === undefined ? undefined : started + Math.max(0, opts.deadline - started) / 4);
+    if (ok) await this.check(probe, opts.deadline === undefined ? undefined : started + Math.max(0, opts.deadline - started) / 4);
     await this.opts.telegram?.ready();
     const beat = this.cfg.heartbeatHours * 3600;
     const chainId = s.chainId;
@@ -471,7 +485,7 @@ export class AllWatcher {
       // answers anything. Its readers are told (Watcher), and it waits longer each time, while the chain can be read.
       let read: boolean | null = false;
       try {
-        read = await this.look(vault, known);
+        read = await this.look(vault, known, calls);
       } catch (e) {
         this.log(`${vault}: ${errText(e)}`);
       }
@@ -491,10 +505,21 @@ export class AllWatcher {
     if (failing) this.log(`${failing} Chronobox${failing === 1 ? '' : 'es'} could not be read`);
     if (late) this.log(`out of time: ${late} Chronobox${late === 1 ? '' : 'es'} will be read on the next poll (the oldest waits ${this.report.overdueSeconds}s)`);
     this.report.queued = (s.queue ?? []).length;
+    this.logCalls(calls);
     await this.save();
     // Stops that the other followers were not told of yet, because one was told in the last hour.
     await this.opts.telegram?.sendNotices().catch((e) => this.log(`telegram: could not send the notices of stops: ${errText(e)}`));
     await this.opts.email?.sendNotices().catch((e) => this.log(`email: could not send the notices of stops: ${errText(e)}`));
     return ok;
+  }
+
+  /** One line per poll: how many requests went to the RPC, and for what. */
+  private logCalls(calls: PollCalls): void {
+    const scan = totalCalls(calls.scan);
+    const vaults = totalCalls(calls.vaults);
+    const by: RpcCounts = { ...calls.scan };
+    for (const [m, n] of Object.entries(calls.vaults)) by[m] = (by[m] ?? 0) + n;
+    this.log(`rpc: ${scan + vaults} requests (search ${scan}, ${calls.read} Chronobox${calls.read === 1 ? '' : 'es'} read ${vaults})` +
+      (scan + vaults ? `: ${callsByMethod(by)}` : ''));
   }
 }
