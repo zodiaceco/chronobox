@@ -54,6 +54,7 @@ import {
   tokenBalance,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
+import { madeAfter, madeOnFork } from "./fork-hints.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 3 and 4. The dev wallet in the browser uses accounts 0 to 2,
@@ -96,6 +97,8 @@ async function reverts(from: Address, tx: { to: Address; data: Hex }, expect: Re
 const step = (text: string) => console.log(`\n${text}`);
 const ok = (text: string) => console.log(`  ok  ${text}`);
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   // On mainnet the well-known anvil keys carry EIP-7702 delegations to sweeper
@@ -125,7 +128,7 @@ try {
   const runtimeHash = keccak((await rpc("eth_getCode", [safe, "latest"])) as Hex);
   assert.equal(SAFE_PROXY_CODE_HASH, runtimeHash, `pin SAFE_PROXY_CODE_HASH = ${runtimeHash}`);
   ok("Safe proxy runtime code hash matches");
-  let state = await inspect(rpc, safe);
+  let state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "open");
   assert.ok(sameAddress(state.owners[0], WALLET));
   ok("inspection says: open (not locked yet)");
@@ -137,7 +140,7 @@ try {
   await reverts(STRANGER, lockTx(STRANGER, safe, WEEK), /GS026|GS025/, "a stranger sends the lock transaction");
   const locked = await sendAndWait(rpc, WALLET, lockTx(WALLET, safe, WEEK));
   console.log(`  gas used by the lock transaction: ${toBigInt((locked as any).gasUsed)}`);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   for (const check of state.checks) console.log(`  ${check.ok ? "ok " : "BAD"} ${check.label} (${check.detail})`);
   assert.equal(state.state, "locked");
   const delay = state.delay!;
@@ -220,7 +223,7 @@ try {
   assert.deepEqual(queuedInReceipt(queued, delay), [{ nonce: 0n, tx: ethOut }]);
   await warp(3600n);
   await sendAndWait(rpc, WALLET, queueTx(delay, wethOut));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.queueNonce, 2n);
   const queue = await readQueue(rpc, state);
   assert.equal(queue.length, 2);
@@ -263,10 +266,10 @@ try {
   const c2 = withdrawalTx(WALLET, WETH, ETH / 2n);
   await sendAndWait(rpc, WALLET, queueTx(delay, c1));
   await sendAndWait(rpc, WALLET, queueTx(delay, c2));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const vaultBefore = await nativeBalance(rpc, safe);
   await sendAndWait(rpc, WALLET, cancelTx(roles, delay, state.queueNonce - 1n));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.txNonce, state.queueNonce);
   assert.equal(state.state, "locked");
   assert.equal(await nativeBalance(rpc, safe), vaultBefore);
@@ -286,12 +289,12 @@ try {
   await reverts(WALLET, executeTx(delay, toDay), /cooldown/, "the change of the delay before its own wait");
   await warp(WEEK + 60n);
   await sendAndWait(rpc, STRANGER, executeTx(delay, toDay));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.cooldown, DAY);
   assert.equal(state.state, "locked");
   ok("the delay is 1 day now, after it waited 7 days");
   await sendAndWait(rpc, STRANGER, executeTx(delay, handOver));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   assert.ok(sameAddress(state.controller, NEW_WALLET));
   await reverts(WALLET, queueTx(delay, withdrawalTx(WALLET, null, 1n)), null, "the old wallet queues a withdrawal");
@@ -307,7 +310,7 @@ try {
   await warp(DAY + 60n);
   await sendAndWait(rpc, STRANGER, executeTx(delay, handBack));
   await sendAndWait(rpc, STRANGER, executeTx(delay, changeDelayTx(delay, WEEK)));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.ok(sameAddress(state.controller, WALLET));
   assert.equal(state.cooldown, WEEK);
 
@@ -322,13 +325,13 @@ try {
 
   step("9. Expiry");
   await warp(WEEK + EXPIRATION_SECONDS + 60n);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const stale = await readQueue(rpc, state);
   assert.equal(stale.length, 2);
   assert.equal(itemStatus(stale[0], state.cooldown, state.expiration, await chainTime(rpc)).phase, "expired");
   await reverts(WALLET, executeTx(delay, shorten), /expired/, "execute after the window closed");
   await sendAndWait(rpc, STRANGER, skipExpiredTx(delay));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.txNonce, state.queueNonce);
   assert.equal(state.state, "locked");
   assert.equal(state.cooldown, WEEK);
@@ -337,7 +340,7 @@ try {
   step("9a. A flooded line is read at its front, and one cancel removes all of it");
   const flood = QUEUE_PAGE + 5;
   for (let i = 0; i < flood; i++) await sendAndWait(rpc, WALLET, queueTx(delay, withdrawalTx(WALLET, null, BigInt(i + 1))));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(queueLength(state), BigInt(flood));
   const front = await readQueue(rpc, state);
   assert.equal(front.length, QUEUE_PAGE);
@@ -345,21 +348,27 @@ try {
   assert.deepEqual(front[0].tx, withdrawalTx(WALLET, null, 1n));
   ok(`${flood} items wait, the first ${QUEUE_PAGE} are read`);
   await sendAndWait(rpc, WALLET, cancelAllTx(roles, delay, state)!);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.txNonce, state.queueNonce);
   assert.equal(queueLength(state), 0n);
   assert.equal(state.state, "locked");
   ok("one cancel, read from the two numbers alone, emptied the line");
 
   step("9b. An RPC without old logs");
+  // Both checks make the app search from block 0. The Roles modifier was made on the fork, so the part before it is
+  // answered here, not by the forked RPC (see fork-hints.ts). The app still asks the same questions.
+  const asked: string[] = [];
+  const fromFork = madeAfter(rpc, roles, forkHints.head, asked);
   const noHistory: Rpc = async (method, params = []) => {
     if (method === "eth_getLogs" && (params as any[])[0]?.address?.toLowerCase() === roles.toLowerCase()) throw new Error("query exceeds max block range");
-    return rpc(method, params);
+    return fromFork(method, params);
   };
   assert.equal((await inspect(noHistory, safe)).state, "unverified");
   ok("without the event history the vault is unverified, not locked");
   const wrongHints: BlockHints = { get: () => toBigInt(locked.blockNumber) + 5n, set: () => undefined };
-  assert.equal((await inspect(rpc, safe, wrongHints)).state, "locked");
+  asked.length = 0;
+  assert.equal((await inspect(fromFork, safe, wrongHints)).state, "locked");
+  assert.deepEqual(asked, ["0x" + (toBigInt(locked.blockNumber) + 5n).toString(16), "0x0"], "the history is read from the remembered block, then from block 0");
   ok("a wrong remembered block does not break the check");
 
   step("9c. A genuine SafeProxy in front of a fake singleton is caught");
@@ -389,7 +398,7 @@ try {
   } finally {
     await rpc("anvil_setStorageAt", [safe, "0x0", realSingleton]);
   }
-  assert.equal((await inspect(rpc, safe)).state, "locked");
+  assert.equal((await inspect(rpc, safe, forkHints)).state, "locked");
   ok("with the real singleton back, the vault is locked again");
 
   step("10. A tampered setup is caught");
@@ -417,7 +426,7 @@ try {
         ...(after ? extra(evil, evilDelay, evilRoles) : []),
       ]),
     );
-    const result = await inspect(rpc, evil);
+    const result = await inspect(rpc, evil, forkHints);
     const failed = result.checks.filter((check) => !check.ok).map((check) => check.id);
     assert.equal(result.state, "invalid", `${what}: must be invalid`);
     console.log(`  ok  caught: ${what} (failed check: ${failed.join(", ")})`);
@@ -468,7 +477,7 @@ try {
       ]),
     );
     // The same network and the same reader, as a page that refreshes: a pass could be kept between the two looks.
-    const hints: BlockHints = { chainId: 1, get: () => null, set: () => undefined };
+    const hints: BlockHints = { chainId: 1, get: forkHints.get, set: () => undefined };
     const before = await inspect(rpc, live, hints);
     assert.equal(before.state, "invalid");
     assert.equal(before.checks.find((c) => c.id === "owner")?.ok, false);
@@ -504,7 +513,7 @@ try {
   await sendAndWait(rpc, WALLET, lockPaid);
   assert.equal((await nativeBalance(rpc, RECEIVER)) - receiverBefore, fee);
   assert.equal(await nativeBalance(rpc, paid), 0n, "nothing stays in the vault");
-  assert.equal((await inspect(rpc, paid)).state, "locked");
+  assert.equal((await inspect(rpc, paid, forkHints)).state, "locked");
   assert.throws(() => lockTx(WALLET, paid, WEEK, EXPIRATION_SECONDS, { to: paid, amount: fee }));
   ok("the contribution arrived, the vault is locked and empty");
 
@@ -522,7 +531,7 @@ try {
   assert.equal(batch.length, 4);
   const one = await asSafe(batch);
   console.log(`  gas used by the one transaction: ${toBigInt((one as any).gasUsed)}`);
-  const state2 = await inspect(rpc, vault2);
+  const state2 = await inspect(rpc, vault2, forkHints);
   assert.equal(state2.state, "locked");
   assert.ok(sameAddress(state2.controller, walletSafe));
   assert.equal(await nativeBalance(rpc, vault2), 3n * ETH);

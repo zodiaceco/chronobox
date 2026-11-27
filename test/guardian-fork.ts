@@ -43,6 +43,7 @@ import {
   sendAndWait,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
+import { madeOnFork } from "./fork-hints.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 6 to 9. The browser uses 0 to 2 and the main fork test 3 to 5.
@@ -87,6 +88,8 @@ const step = (text: string) => console.log(`\n${text}`);
 const ok = (text: string) => console.log(`  ok  ${text}`);
 const gas = (receipt: unknown) => toBigInt((receipt as { gasUsed: Hex }).gasUsed);
 
+// Everything that this test makes comes after the head of now. See fork-hints.ts.
+const forkHints = await madeOnFork(rpc);
 const snapshot = await rpc("evm_snapshot", []);
 try {
   for (const account of [WALLET, GUARDIAN, SECOND, THIRD, STRANGER]) await rpc("anvil_setCode", [account, "0x"]);
@@ -95,7 +98,7 @@ try {
   const make = async (wallet: Address, index: number) => {
     const safe = safeFromReceipt(await sendAndWait(rpc, wallet, createTx(wallet, index)))!;
     await sendAndWait(rpc, wallet, lockTx(wallet, safe, DAY));
-    const state = await inspect(rpc, safe);
+    const state = await inspect(rpc, safe, forkHints);
     assert.equal(state.state, "locked");
     return { safe, delay: state.delay!, roles: state.roles! };
   };
@@ -109,7 +112,7 @@ try {
   step("1. A finished Chronobox, as the setup makes it: no guardian");
   const { safe, delay, roles } = await make(WALLET, 0);
   await sendAndWait(rpc, WALLET, depositTx(safe, null, 2n * ETH));
-  let state = await inspect(rpc, safe);
+  let state = await inspect(rpc, safe, forkHints);
   assert.equal(state.guardian, null);
   assert.equal(state.council, null);
   assert.deepEqual(state.members.map((m) => m.toLowerCase()), [WALLET.toLowerCase()]);
@@ -129,12 +132,12 @@ try {
   await sendAndWait(rpc, WALLET, queueTx(delay, adding));
   await reverts(WALLET, executeTx(delay, adding), /cooldown/, "the guardian starts before the wait is over");
   await reverts(GUARDIAN, cancelTx(roles, delay, 0n), null, "the guardian cancels before it has started");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.guardian, null);
   assert.equal(state.state, "locked");
   await warp(DAY + 60n);
   console.log(`  gas used to apply the guardian: ${gas(await sendAndWait(rpc, STRANGER, executeTx(delay, adding)))}`);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   for (const check of state.checks) console.log(`  ${check.ok ? "ok " : "BAD"} ${check.label} (${check.detail})`);
   assert.equal(state.state, "locked");
   assert.ok(sameAddress(state.guardian, GUARDIAN));
@@ -147,10 +150,10 @@ try {
   step("3. The guardian alone: cancel, and nothing else");
   const out = withdrawalTx(WALLET, null, ETH);
   await sendAndWait(rpc, WALLET, queueTx(delay, out));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const before = await nativeBalance(rpc, safe);
   await sendAndWait(rpc, GUARDIAN, cancelTx(roles, delay, state.queueNonce - 1n));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.txNonce, state.queueNonce);
   assert.equal(await nativeBalance(rpc, safe), before);
   ok("the guardian cancelled a withdrawal, nothing moved");
@@ -165,7 +168,7 @@ try {
   // Anybody can make the Council Safe. The result is the same.
   const made = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(safe, WALLET, GUARDIAN)))!;
   assert.ok(sameAddress(made, council));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   assert.equal(state.councilMade, true);
   ok("a stranger made the Council Safe, it is at the expected address and the checks pass");
@@ -215,7 +218,7 @@ try {
   await reverts(STRANGER, executeTx(delay, late), null, "the withdrawal queued after the agreement runs after the guardian cancelled it");
   assert.equal(await nativeBalance(rpc, safe), balance);
   ok("the guardian cancelled the rest at once, and nothing of the old wallet runs after the wait");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   for (const check of state.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
   assert.equal(state.state, "locked");
   assert.ok(sameAddress(state.controller, SECOND));
@@ -231,16 +234,16 @@ try {
   ok("the new wallet can ask and cancel");
 
   step("5. The guardian has the last word on changes that the wallet makes alone");
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   const alone = changeWalletTx(delay, SECOND, THIRD, roles, safe, { guardian: GUARDIAN, council, members: state.members })!;
   assert.deepEqual(classify(alone, parts()), { kind: "change-wallet", to: THIRD });
   const removal = removeGuardianTx(parts() as any)!;
   assert.deepEqual(classify(removal, parts()), { kind: "remove-guardian", guardian: GUARDIAN });
   await sendAndWait(rpc, SECOND, queueTx(delay, alone));
   await sendAndWait(rpc, SECOND, queueTx(delay, removal));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   await sendAndWait(rpc, GUARDIAN, cancelTx(roles, delay, state.queueNonce - 1n));
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.txNonce, state.queueNonce);
   assert.ok(sameAddress(state.controller, SECOND));
   assert.ok(sameAddress(state.guardian, GUARDIAN));
@@ -248,7 +251,7 @@ try {
 
   step("6. The wallet alone, when the guardian lets it pass: a new wallet after the wait");
   await through(delay, SECOND, alone);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   for (const check of state.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
   assert.equal(state.state, "locked");
   assert.ok(sameAddress(state.controller, THIRD));
@@ -260,14 +263,14 @@ try {
 
   step("7. Remove the guardian, then add another: back to one member, and the history still proves it");
   await through(delay, THIRD, removeGuardianTx(parts() as any)!);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   assert.equal(state.guardian, null);
   assert.deepEqual(state.members.map((m) => m.toLowerCase()), [THIRD.toLowerCase()]);
   await reverts(GUARDIAN, cancelTx(roles, delay, state.txNonce), null, "the removed guardian cancels");
   ok("no guardian, one member, locked");
   await through(delay, THIRD, addGuardianTx({ safe, delay, roles, controller: THIRD }, SECOND)!);
-  state = await inspect(rpc, safe);
+  state = await inspect(rpc, safe, forkHints);
   assert.equal(state.state, "locked");
   assert.ok(sameAddress(state.guardian, SECOND));
   ok("a second guardian, locked");
@@ -289,7 +292,7 @@ try {
   // The shared role goes to a plain address, not to a Safe of the two.
   const a = await make(WALLET, 1);
   await through(a.delay, WALLET, batch([item(a.roles, assign(GUARDIAN, CANCEL_ROLE)), item(a.roles, assign(STRANGER, COUNCIL_ROLE))]));
-  const stateA = await inspect(rpc, a.safe);
+  const stateA = await inspect(rpc, a.safe, forkHints);
   assert.equal(stateA.state, "invalid");
   assert.equal(stateA.checks.find((c) => c.id === "canceller")?.ok, false);
   ok("a plain address with the shared role: invalid");
@@ -301,7 +304,7 @@ try {
   await warp(DAY + 60n);
   await sendAndWait(rpc, STRANGER, executeTx(b.delay, addGuardianTx({ ...b, controller: WALLET }, GUARDIAN)!));
   await sendAndWait(rpc, STRANGER, executeTx(b.delay, wider));
-  const stateB = await inspect(rpc, b.safe);
+  const stateB = await inspect(rpc, b.safe, forkHints);
   assert.equal(stateB.state, "invalid");
   assert.equal(stateB.checks.find((c) => c.id === "cancel-only")?.ok, false);
   ok("a wider permission for the shared role: invalid");
@@ -313,7 +316,7 @@ try {
   const looseOwners = await councilOwners(rpc, loose);
   await sendAndWait(rpc, GUARDIAN, councilApproveTx(loose, await councilHash(rpc, loose, lower)));
   await sendAndWait(rpc, WALLET, councilExecTx(loose, lower, looseOwners));
-  const stateC = await inspect(rpc, c.safe);
+  const stateC = await inspect(rpc, c.safe, forkHints);
   assert.equal(stateC.state, "invalid");
   assert.equal(stateC.checks.find((check) => check.id === "council")?.ok, false);
   ok("a Council Safe that needs only one owner: invalid");
@@ -321,7 +324,7 @@ try {
   step("10. The change goes through when there is nothing left to cancel");
   const d = await make(WALLET, 4);
   await through(d.delay, WALLET, addGuardianTx({ ...d, controller: WALLET }, GUARDIAN)!);
-  const stateD = await inspect(rpc, d.safe);
+  const stateD = await inspect(rpc, d.safe, forkHints);
   const councilD = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(d.safe, WALLET, GUARDIAN)))!;
   const ownersD = await councilOwners(rpc, councilD);
   const partsD = { ...d, controller: WALLET, guardian: GUARDIAN, council: councilD, members: stateD.members };
@@ -342,7 +345,7 @@ try {
   const swapD = councilSwapTx(partsD, ownersD, SECOND, stalePoint)!;
   await sendAndWait(rpc, GUARDIAN, councilApproveTx(councilD, await councilHash(rpc, councilD, swapD)));
   await sendAndWait(rpc, WALLET, councilExecTx(councilD, swapD, ownersD));
-  const afterD = await inspect(rpc, d.safe);
+  const afterD = await inspect(rpc, d.safe, forkHints);
   for (const check of afterD.checks) if (!check.ok) console.log(`  BAD ${check.label} (${check.detail})`);
   assert.equal(afterD.state, "locked");
   assert.ok(sameAddress(afterD.controller, SECOND));
@@ -355,7 +358,7 @@ try {
   await through(e.delay, WALLET, addGuardianTx({ ...e, controller: WALLET }, GUARDIAN)!);
   await sendAndWait(rpc, WALLET, depositTx(e.safe, null, ETH));
   const balanceE = await nativeBalance(rpc, e.safe);
-  const stateE = await inspect(rpc, e.safe);
+  const stateE = await inspect(rpc, e.safe, forkHints);
   const councilE = safeFromReceipt(await sendAndWait(rpc, STRANGER, councilCreateTx(e.safe, WALLET, GUARDIAN)))!;
   const ownersE = await councilOwners(rpc, councilE);
   const partsE = { ...e, controller: WALLET, guardian: GUARDIAN, council: councilE, members: stateE.members };
@@ -390,7 +393,7 @@ try {
   await warp(DAY + 60n);
   await reverts(STRANGER, executeTx(e.delay, stolen), null, "a withdrawal of the old wallet runs after the change");
   assert.equal(await nativeBalance(rpc, e.safe), balanceE);
-  assert.ok(sameAddress((await inspect(rpc, e.safe)).controller, SECOND));
+  assert.ok(sameAddress((await inspect(rpc, e.safe, forkHints)).controller, SECOND));
   ok("the change went through, one cancel after it removed the rest, and nothing of the thief ran");
 
   console.log("\nAll guardian checks passed.");
