@@ -54,7 +54,7 @@ import {
   tokenBalance,
   withdrawalTx,
 } from "../src/lib/chronobox.ts";
-import { madeOnFork } from "./fork-hints.ts";
+import { madeAfter, madeOnFork } from "./fork-hints.ts";
 
 const URL = process.env.FORK_RPC ?? "http://127.0.0.1:8545";
 // Anvil accounts 3 and 4. The dev wallet in the browser uses accounts 0 to 2,
@@ -355,14 +355,20 @@ try {
   ok("one cancel, read from the two numbers alone, emptied the line");
 
   step("9b. An RPC without old logs");
+  // Both checks make the app search from block 0. The Roles modifier was made on the fork, so the part before it is
+  // answered here, not by the forked RPC (see fork-hints.ts). The app still asks the same questions.
+  const asked: string[] = [];
+  const fromFork = madeAfter(rpc, roles, forkHints.head, asked);
   const noHistory: Rpc = async (method, params = []) => {
     if (method === "eth_getLogs" && (params as any[])[0]?.address?.toLowerCase() === roles.toLowerCase()) throw new Error("query exceeds max block range");
-    return rpc(method, params);
+    return fromFork(method, params);
   };
   assert.equal((await inspect(noHistory, safe)).state, "unverified");
   ok("without the event history the vault is unverified, not locked");
   const wrongHints: BlockHints = { get: () => toBigInt(locked.blockNumber) + 5n, set: () => undefined };
-  assert.equal((await inspect(rpc, safe, wrongHints)).state, "locked");
+  asked.length = 0;
+  assert.equal((await inspect(fromFork, safe, wrongHints)).state, "locked");
+  assert.deepEqual(asked, ["0x" + (toBigInt(locked.blockNumber) + 5n).toString(16), "0x0"], "the history is read from the remembered block, then from block 0");
   ok("a wrong remembered block does not break the check");
 
   step("9c. A genuine SafeProxy in front of a fake singleton is caught");
@@ -471,7 +477,7 @@ try {
       ]),
     );
     // The same network and the same reader, as a page that refreshes: a pass could be kept between the two looks.
-    const hints: BlockHints = { chainId: 1, get: () => null, set: () => undefined };
+    const hints: BlockHints = { chainId: 1, get: forkHints.get, set: () => undefined };
     const before = await inspect(rpc, live, hints);
     assert.equal(before.state, "invalid");
     assert.equal(before.checks.find((c) => c.id === "owner")?.ok, false);
