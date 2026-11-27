@@ -280,14 +280,21 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         )}
       </section>
 
-      {session && rows !== null ? (
-        <section class="section section-center">
-          <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
-            Open a Chronobox by its address
-          </button>
-          {opening ? <OpenByAddress chainId={openChain} onChain={setOpenChain} text={openText} onText={setOpenText} target={openTarget && openAddress ? vaultHref(openTarget, openAddress) : null} /> : null}
-        </section>
-      ) : null}
+      {/* At the end of the page, the way in once more, and the way to any Chronobox by its address. */}
+      <section class="section section-center start-end">
+        <Button
+          kind="primary"
+          onClick={() => {
+            wantsSetup.current = true;
+            props.onConnect();
+          }}
+        >
+          Get started
+        </Button>
+        <a class="link-button" href="#/open">
+          Open a Chronobox by its address
+        </a>
+      </section>
     </div>
   );
 }

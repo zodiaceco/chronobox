@@ -3897,3 +3897,11 @@ img.token-badge.token-icon {
   color: var(--blue-text);
   font-size: 0.9rem;
 }
+
+/* The end of the landing page: the way in once more, and the way to any Chronobox */
+.start-end {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding-top: 8px;
+}
