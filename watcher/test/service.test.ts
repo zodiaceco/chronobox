@@ -20,6 +20,8 @@ const ONE_ETH = 10n ** 18n;
 
 let chain: MockChain;
 let rpcDelayMs = 0;
+/** The methods of the requests that the RPC got. */
+let rpcSeen: string[] = [];
 let rpc: { url: string; close: () => Promise<void> };
 let redis: FakeRedis;
 let redisServer: { url: string; close: () => Promise<void> };
@@ -35,6 +37,7 @@ before(async () => {
   rpc = await startServer(async (_req, body, res) => {
     if (rpcDelayMs) await new Promise((r) => setTimeout(r, rpcDelayMs));
     const msg = JSON.parse(body);
+    rpcSeen.push(msg.method);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, ...handle(chain, msg.method, msg.params ?? []) }));
   });
   redis = new FakeRedis(REDIS_TOKEN);
@@ -60,6 +63,7 @@ after(async () => { await rpc.close(); await redisServer.close(); await tg.close
 beforeEach(() => {
   chain = new MockChain();
   rpcDelayMs = 0;
+  rpcSeen = [];
   redis.data.clear();
   redis.commands = [];
   said = [];
@@ -123,12 +127,33 @@ test('settings of the service', () => {
   assert.throws(() => serviceConfig(env({ TELEGRAM_KEY: 'too-short' })), ConfigError);
 });
 
-/** The result of a network without the time of its last full poll, which only has to be there. */
+/** The result of a network without the time of its last full poll and its count of RPC requests, which only have to be there. */
 const net = (n: any) => {
-  const { observedAt, ...rest } = n;
+  const { observedAt, rpc: calls, ...rest } = n;
   assert.ok(!Number.isNaN(Date.parse(observedAt)), `observedAt: ${observedAt}`);
+  if (n.ok && !n.skipped) for (const k of ['scan', 'vaults', 'read']) assert.ok(Number.isInteger(calls?.[k]), `rpc.${k}: ${calls?.[k]}`);
   return rest;
 };
+
+test('a poll counts its requests to the RPC: the search apart from the reads of the vaults', async () => {
+  chain.withCancel();
+  await poll(env(), cron(), deps);
+  chain.create();
+  await poll(env(), cron(), deps);
+  chain.mine(12n);
+  chain.enqueue(OWNER_WALLET, ONE_ETH);
+  rpcSeen = [];
+  logs.length = 0;
+  const r = await poll(env(), cron(), deps);
+  const calls = (r.body as any).networks[0].rpc;
+  assert.equal(calls.read, 1, 'the vault with the new request is read');
+  assert.ok(calls.scan > 0 && calls.vaults > 0, JSON.stringify(calls));
+  assert.equal(calls.scan + calls.vaults, rpcSeen.length, 'every request the RPC got is counted, once');
+  const line = logs.find((l) => l.includes(': rpc: '));
+  assert.ok(line, logs.join('\n'));
+  assert.match(line, new RegExp(`: rpc: ${rpcSeen.length} requests \\(search ${calls.scan}, 1 Chronobox read ${calls.vaults}\\): `));
+  assert.match(line, new RegExp(`eth_call ${rpcSeen.filter((m) => m === 'eth_call').length}\\b`));
+});
 
 test('only Vercel Cron starts a poll', async () => {
   assert.equal((await poll(env(), cron('wrong-secret-of-the-same-size'), deps)).status, 401);

@@ -229,6 +229,16 @@ export class RevertError extends Error {}
  */
 export class BadAnswerError extends RevertError {}
 
+/** Requests sent to the RPC, by method. Each try counts, also one that failed and went on to the next endpoint. */
+export type RpcCounts = Record<string, number>;
+
+/** All requests in `counts`. */
+export const totalCalls = (counts: RpcCounts) => Object.values(counts).reduce((a, b) => a + b, 0);
+
+/** "eth_call 20, eth_getLogs 4": the methods, most requests first. */
+export const callsByMethod = (counts: RpcCounts) =>
+  Object.entries(counts).sort(([a, x], [b, y]) => y - x || a.localeCompare(b)).map(([m, n]) => `${m} ${n}`).join(', ');
+
 export class Rpc {
   urls: string[];
   idx = 0;
@@ -236,16 +246,20 @@ export class Rpc {
   timeoutMs: number;
   fetchFn: FetchFn;
   auth?: RpcAuth;
-  constructor(urls: string[], fetchFn: FetchFn = fetch, timeoutMs = 20000, auth?: RpcAuth) {
+  /** Where the requests are counted, if anywhere. */
+  counts?: RpcCounts;
+  constructor(urls: string[], fetchFn: FetchFn = fetch, timeoutMs = 20000, auth?: RpcAuth, counts?: RpcCounts) {
     this.urls = urls;
     this.auth = auth;
     this.fetchFn = fetchFn;
     this.timeoutMs = timeoutMs;
+    this.counts = counts;
   }
   async call(method: string, params: unknown[] = []): Promise<any> {
     let lastErr = 'no RPC configured';
     for (let i = 0; i < this.urls.length; i++) {
       const k = (this.idx + i) % this.urls.length;
+      if (this.counts) this.counts[method] = (this.counts[method] ?? 0) + 1;
       try {
         const res = await this.fetchFn(this.urls[k], {
           method: 'POST',

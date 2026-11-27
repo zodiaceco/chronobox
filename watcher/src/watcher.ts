@@ -2,7 +2,7 @@
 // The CLI runs it for one vault. --all and the service run one for each vault that something waits in.
 import * as path from 'node:path';
 import {
-  BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, SAFE_GUARD_SLOT, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
+  BURN_ADDRESS, MASTER_COPY, RevertError, Rpc, type RpcCounts, SAFE_GUARD_SLOT, SENTINEL, SEL, TOPIC_SAFE_MODULE_TRANSACTION, TOPIC_TRANSACTION_ADDED,
   TOPIC_MODULE_FAILURE, TOPIC_MODULE_SUCCESS, ZERO_ADDRESS, addressWord, cleanSymbol, decodeAbiString, decodeAddressArray, decodeAddresses, decodeModuleTransaction, strip,
   decodeAddress, decodeTransactionAdded, decodeUint, encAddr, encUint, hex, proxyCode, toAddr, toBig, word,
 } from './chain.ts';
@@ -130,6 +130,8 @@ export type WatcherOptions = {
   key?: string;
   /** Names the state in an error message. */
   where?: string;
+  /** Counts the requests to the RPC here. */
+  rpcCounts?: RpcCounts;
 };
 
 export class Watcher {
@@ -153,7 +155,7 @@ export class Watcher {
     this.email = opts.email;
     this.fetchFn = opts.fetch ?? fetch;
     this.rpc = new Rpc(cfg.rpcUrls, this.fetchFn, 20000,
-      cfg.rpcServiceKey ? { host: cfg.rpcServiceHost, key: cfg.rpcServiceKey } : undefined);
+      cfg.rpcServiceKey ? { host: cfg.rpcServiceHost, key: cfg.rpcServiceKey } : undefined, opts.rpcCounts);
     const out = opts.log ?? defaultLog;
     this.log = (m: string) => out(this.redact(m));
     this.store = opts.store ?? (cfg.dryRun ? new DryRunStore(stateFileStore(cfg.stateFile)) : stateFileStore(cfg.stateFile));
