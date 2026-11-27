@@ -95,7 +95,10 @@ const ROLES_TOPIC = {
 const GUARD_SLOT = keccak(utf8("guard_manager.guard.address"));
 const FALLBACK_SLOT = keccak(utf8("fallback_manager.handler.address"));
 
-/** Base salt. The nth vault of a wallet uses SALT_BASE + n. */
+/**
+ * Base salt. A wallet has one Chronobox: the Safe made with this salt nonce (index 0). Index n uses
+ * SALT_BASE + n; other indexes are left from a time when a wallet could have several.
+ */
 const SALT_BASE = toBigInt(keccak(utf8("zodiac-timebox:v1")));
 
 export const TOPIC_TRANSACTION_ADDED = topic("TransactionAdded(uint256,bytes32,address,uint256,bytes,uint8)");
@@ -139,13 +142,25 @@ export function safeInitializer(wallet: Address): Hex {
 }
 
 /**
- * The address of the nth Chronobox of a wallet. It depends only on the wallet
- * and the index, and it is the same on every chain. The app can find a
- * wallet's vaults again without a server.
+ * The address of the nth Safe of a wallet made with the Chronobox salt. It depends only on the
+ * wallet and the index, and it is the same on every chain. The app uses index 0 only: see `chronoboxOf`.
  */
 export function predictSafe(wallet: Address, index: number): Address {
   const salt = keccak(concat(keccak(safeInitializer(wallet)), uintWord(SALT_BASE + BigInt(index))));
   return create2(CONTRACTS.safeProxyFactory, salt, SAFE_PROXY_INIT_CODE_HASH);
+}
+
+/**
+ * The one Chronobox of a wallet: the same address on every chain, found without a server.
+ * A Safe made by the Safe proxy factory with CREATE2, from the 1 of 1 setup of the wallet and the salt nonce SALT_BASE.
+ */
+export function chronoboxOf(wallet: Address): Address {
+  return predictSafe(wallet, 0);
+}
+
+/** Does the Chronobox of this wallet exist on the connected chain? */
+export async function chronoboxExists(rpc: Rpc, wallet: Address): Promise<boolean> {
+  return size(await getCode(rpc, chronoboxOf(wallet))) > 0;
 }
 
 export function delayInitializer(safe: Address, cooldown: bigint, expiration: bigint): Hex {
@@ -1216,17 +1231,6 @@ export async function recoveryParts(rpc: Rpc, safe: Address): Promise<RecoveryPa
 export async function isHalfMade(rpc: Rpc, safe: Address, wallet: Address): Promise<boolean> {
   const [owners] = (await read(rpc, safe, "getOwners()", [], ["address[]"])) as [Address[]];
   return owners.length === 1 && sameAddress(owners[0], wallet);
-}
-
-/** Finds the vaults of a wallet on the connected chain. Stops at the first unused index. */
-export async function discover(rpc: Rpc, wallet: Address, limit = 100): Promise<{ index: number; safe: Address }[]> {
-  const found: { index: number; safe: Address }[] = [];
-  for (let index = 0; index < limit; index++) {
-    const safe = predictSafe(wallet, index);
-    if (size(await getCode(rpc, safe)) === 0) break;
-    found.push({ index, safe });
-  }
-  return found;
 }
 
 // ---------------------------------------------------------------------------

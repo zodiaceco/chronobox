@@ -92,7 +92,7 @@ This is detected, not configured. It was tested on the fork with a Safe as the w
 
 The app shows the deposit address only after it has checked the finished vault on chain. It runs the same checks every time you open a vault, and anybody can open any vault by address.
 
-The address of your nth vault depends only on your wallet address and n. The app finds your vaults again on any device, without a server.
+A wallet has one Chronobox. Its address depends only on the wallet address, and it is the same on every network: the Safe that the Safe proxy factory (`createProxyWithNonce`) makes from the 1 of 1 setup of your wallet, with the salt nonce `keccak256("zodiac-timebox:v1")`. The app finds it again on any device, without a server (`chronoboxOf` in `src/lib/chronobox.ts`).
 
 ### The optional guardian
 

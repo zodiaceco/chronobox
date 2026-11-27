@@ -3881,3 +3881,27 @@ img.token-badge.token-icon {
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+/* Above the setup: which wallet has no Chronobox yet */
+.home-none {
+  width: 100%;
+  max-width: 560px;
+  margin: 24px auto 0;
+  padding: 0 20px;
+}
+
+/* In the wallet menu: open any Chronobox by its address */
+.wallet-menu-link {
+  display: block;
+  margin: 4px 0 10px;
+  color: var(--blue-text);
+  font-size: 0.9rem;
+}
+
+/* The end of the landing page: the way in once more, and the way to any Chronobox */
+.start-end {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding-top: 8px;
+}

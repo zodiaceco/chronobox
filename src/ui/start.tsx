@@ -4,11 +4,10 @@
  */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, REPO } from "../lib/chains.ts";
-import { formatDuration } from "../lib/format.ts";
-import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
-import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
+import { type Address, parseAddress } from "../lib/hex.ts";
+import { vaultsOf } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
-import { discover, inspect } from "../lib/chronobox.ts";
+import { chronoboxExists, chronoboxOf } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
@@ -67,31 +66,14 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       }
       if (chain) {
         try {
-          const found = await discover(session.rpc, session.account);
-          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !found.some((f) => sameAddress(f.safe, v.safe)));
-          const here = [...found.map((f) => f.safe), ...known.map((k) => k.safe)];
-          // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
-          const inspected: Row[] = [];
-          for (let i = 0; i < here.length; i += 3) {
-            const batch = await Promise.all(
-              here.slice(i, i + 3).map(async (safe): Promise<Row> => {
-                const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
-                // A wallet shows one network at a time. What is found here stays in the list when the wallet moves on.
-                if (result?.controller && sameAddress(result.controller, session.account)) rememberVault({ chainId: chain.id, safe, wallet: session.account });
-                const title =
-                  result === null
-                    ? "Could not read it now"
-                    : result.state === "locked" || result.state === "unverified"
-                      ? `Waits ${formatDuration(result.cooldown)}`
-                      : result.state === "open"
-                        ? "Setup not finished"
-                        : "Needs a look";
-                return { chain, safe, title, note: chain.name };
-              }),
-            );
-            inspected.push(...batch);
-          }
-          list.unshift(...inspected);
+          // A wallet has one Chronobox, at one address: one read. Where it has it, that is the page; where it has none,
+          // the setup is. There is no list to choose from. Only when the chain cannot be read does the page show what
+          // this browser remembers (below).
+          const own = chronoboxOf(session.account);
+          const exists = await chronoboxExists(session.rpc, session.account);
+          if (stale) return;
+          location.hash = exists ? vaultHref(chain, own) : "#/new";
+          return;
         } catch {
           // The wallet could not read the chain. Show what the browser remembers, and say so.
           for (const saved of vaultsOf(session.account)) {
@@ -169,8 +151,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     return (
       <div class="start">
         <section class="home">
-          <h1>Your Chronoboxes</h1>
-          <p class="wiz-note">Looking for your Chronoboxes…</p>
+          <h1>Your Chronobox</h1>
+          <p class="wiz-note">Looking for your Chronobox…</p>
         </section>
       </div>
     );
@@ -181,7 +163,8 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     return (
       <div class="start">
         <section class="home">
-          <h1>Your Chronoboxes</h1>
+          {/* One of its own, on each network. More rows are on other networks, or ones it watches as a guardian. */}
+          <h1>{rows!.length === 1 ? "Your Chronobox" : "Your Chronoboxes"}</h1>
           {readNotice}
           <ul class="vault-list">
             {rows!.map((row) => (
@@ -202,9 +185,6 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             ))}
           </ul>
           <div class="home-actions">
-            <a class="button button-plain" href="#/new">
-              Create another
-            </a>
             <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
               Open one by its address
             </button>
@@ -300,14 +280,21 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
         )}
       </section>
 
-      {session && rows !== null ? (
-        <section class="section section-center">
-          <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
-            Open a Chronobox by its address
-          </button>
-          {opening ? <OpenByAddress chainId={openChain} onChain={setOpenChain} text={openText} onText={setOpenText} target={openTarget && openAddress ? vaultHref(openTarget, openAddress) : null} /> : null}
-        </section>
-      ) : null}
+      {/* At the end of the page, the way in once more, and the way to any Chronobox by its address. */}
+      <section class="section section-center start-end">
+        <Button
+          kind="primary"
+          onClick={() => {
+            wantsSetup.current = true;
+            props.onConnect();
+          }}
+        >
+          Get started
+        </Button>
+        <a class="link-button" href="#/open">
+          Open a Chronobox by its address
+        </a>
+      </section>
     </div>
   );
 }
@@ -354,5 +341,20 @@ function OpenByAddress(props: { chainId: number; onChain: (id: number) => void; 
       </div>
       {bad ? <p class="field-error">This is not a valid address. Check that it is complete and spelled right.</p> : null}
     </form>
+  );
+}
+
+/** Open any Chronobox by its address: one a guardian watches, one on another network, anybody's. */
+export function OpenPage(props: { chainId: number | undefined }) {
+  const [chainId, setChainId] = useState(props.chainId ?? CHAINS[0].id);
+  const [text, setText] = useState("");
+  const address = parseAddress(text);
+  const target = chainById(chainId);
+  return (
+    <section class="page page-center">
+      <h1>Open a Chronobox</h1>
+      <p class="lead">Any Chronobox, by its address: one you watch as a guardian, or one on another network.</p>
+      <OpenByAddress chainId={chainId} onChain={setChainId} text={text} onText={setText} target={target && address ? vaultHref(target, address) : null} />
+    </section>
   );
 }

@@ -67,7 +67,7 @@ export function vaultsOf(wallet: Address): SavedVault[] {
   return savedVaults().filter((v) => {
     const matches = v.wallet
       ? sameAddress(v.wallet, wallet)
-      : (mine ??= Array.from({ length: 20 }, (_, index) => predictSafe(wallet, index))).some((safe) => sameAddress(safe, v.safe));
+      : (mine ??= [predictSafe(wallet, 0)]).some((safe) => sameAddress(safe, v.safe));
     if (!matches) return false;
     const key = `${v.chainId}:${v.safe.toLowerCase()}`;
     if (seen.has(key)) return false;
