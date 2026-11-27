@@ -961,9 +961,8 @@ export function CreatePage(props: { session: Session; chain: Chain | undefined; 
             Back
           </button>
         ) : (
-          <a class="wiz-back" href="#/">
-            Close
-          </a>
+          // The setup is the start page of a wallet without a Chronobox: there is nothing to close it to.
+          <span class="wiz-back" aria-hidden="true" />
         )}
         <ol class="wiz-dots" aria-label={`Step ${step + 1} of ${steps.length}`}>
           {steps.map((id, i) => (
