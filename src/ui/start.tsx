@@ -4,11 +4,10 @@
  */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { type Chain, CHAINS, chainById, REPO } from "../lib/chains.ts";
-import { formatDuration } from "../lib/format.ts";
-import { type Address, parseAddress, sameAddress } from "../lib/hex.ts";
-import { blockHints, rememberVault, vaultsOf } from "../lib/store.ts";
+import { type Address, parseAddress } from "../lib/hex.ts";
+import { vaultsOf } from "../lib/store.ts";
 import { isRejection } from "../lib/wallet.ts";
-import { chronoboxExists, chronoboxOf, inspect } from "../lib/chronobox.ts";
+import { chronoboxExists, chronoboxOf } from "../lib/chronobox.ts";
 import { Button, Experimental, type Session } from "./common.tsx";
 import { HowItWorks } from "./how.tsx";
 import { Mark } from "./logo.tsx";
@@ -35,8 +34,6 @@ function shortOf(address: Address): string {
 export function StartPage(props: { session: Session | null; chain: Chain | undefined; connectOpen: boolean; onConnect: () => void }) {
   const { session, chain } = props;
   const [rows, setRows] = useState<Row[] | null>(null);
-  // The wallet has no Chronobox of its own on this network (the list may still show others).
-  const [ownMissing, setOwnMissing] = useState(false);
   const [opening, setOpening] = useState(false);
   const [openText, setOpenText] = useState("");
   const [film, setFilm] = useState(false);
@@ -60,7 +57,6 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
     let stale = false;
     setRows(null);
     setReadFailed(false);
-    setOwnMissing(false);
     (async () => {
       // Chronoboxes on other networks come from this browser's memory.
       const list: Row[] = [];
@@ -70,34 +66,14 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
       }
       if (chain) {
         try {
-          // The wallet's one Chronobox, at its one address (one read), and the ones this browser has seen it watch as a guardian.
+          // A wallet has one Chronobox, at one address: one read. Where it has it, that is the page; where it has none,
+          // the setup is. There is no list to choose from. Only when the chain cannot be read does the page show what
+          // this browser remembers (below).
           const own = chronoboxOf(session.account);
-          const found = (await chronoboxExists(session.rpc, session.account)) ? [own] : [];
-          if (found.length === 0) setOwnMissing(true);
-          const known = vaultsOf(session.account).filter((v) => v.chainId === chain.id && !sameAddress(v.safe, own));
-          const here = [...found, ...known.map((k) => k.safe)];
-          // A few vaults at a time, so a wallet with many Chronoboxes does not hit its RPC's rate limit.
-          const inspected: Row[] = [];
-          for (let i = 0; i < here.length; i += 3) {
-            const batch = await Promise.all(
-              here.slice(i, i + 3).map(async (safe): Promise<Row> => {
-                const result = await inspect(session.rpc, safe, blockHints(chain.id)).catch(() => null);
-                // A wallet shows one network at a time. What is found here stays in the list when the wallet moves on.
-                if (result?.controller && sameAddress(result.controller, session.account)) rememberVault({ chainId: chain.id, safe, wallet: session.account });
-                const title =
-                  result === null
-                    ? "Could not read it now"
-                    : result.state === "locked" || result.state === "unverified"
-                      ? `Waits ${formatDuration(result.cooldown)}`
-                      : result.state === "open"
-                        ? "Setup not finished"
-                        : "Needs a look";
-                return { chain, safe, title, note: chain.name };
-              }),
-            );
-            inspected.push(...batch);
-          }
-          list.unshift(...inspected);
+          const exists = await chronoboxExists(session.rpc, session.account);
+          if (stale) return;
+          location.hash = exists ? vaultHref(chain, own) : "#/new";
+          return;
         } catch {
           // The wallet could not read the chain. Show what the browser remembers, and say so.
           for (const saved of vaultsOf(session.account)) {
@@ -209,12 +185,6 @@ export function StartPage(props: { session: Session | null; chain: Chain | undef
             ))}
           </ul>
           <div class="home-actions">
-            {/* Chronoboxes from other networks, or watched ones, are listed; this network has none of its own yet. */}
-            {ownMissing && chain && !readFailed ? (
-              <a class="button button-plain" href="#/new">
-                Create my Chronobox on {chain.name}
-              </a>
-            ) : null}
             <button type="button" class="link-button" onClick={() => setOpening(!opening)}>
               Open one by its address
             </button>
