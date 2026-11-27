@@ -311,6 +311,16 @@ export function App() {
               <p class="mono">
                 <AddressText address={session.account} full />
               </p>
+              {/* Any Chronobox by its address: one watched as a guardian, one on another network, one handed over. */}
+              <a
+                class="wallet-menu-link"
+                href="#/open"
+                onClick={() => {
+                  if (walletChip.current) walletChip.current.open = false;
+                }}
+              >
+                Open a Chronobox by its address
+              </a>
               <Button small onClick={disconnect}>
                 Disconnect
               </Button>

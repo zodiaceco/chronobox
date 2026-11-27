@@ -3889,3 +3889,11 @@ img.token-badge.token-icon {
   margin: 24px auto 0;
   padding: 0 20px;
 }
+
+/* In the wallet menu: open any Chronobox by its address */
+.wallet-menu-link {
+  display: block;
+  margin: 4px 0 10px;
+  color: var(--blue-text);
+  font-size: 0.9rem;
+}
