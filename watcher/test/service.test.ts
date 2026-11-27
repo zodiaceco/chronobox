@@ -149,6 +149,9 @@ test('a poll counts its requests to the RPC: the search apart from the reads of 
   assert.equal(calls.read, 1, 'the vault with the new request is read');
   assert.ok(calls.scan > 0 && calls.vaults > 0, JSON.stringify(calls));
   assert.equal(calls.scan + calls.vaults, rpcSeen.length, 'every request the RPC got is counted, once');
+  // The read of the vault takes the network and the head from the search of the poll.
+  assert.equal(rpcSeen.filter((m) => m === 'eth_chainId').length, 1);
+  assert.equal(rpcSeen.filter((m) => m === 'eth_blockNumber').length, 1);
   const line = logs.find((l) => l.includes(': rpc: '));
   assert.ok(line, logs.join('\n'));
   assert.match(line, new RegExp(`: rpc: ${rpcSeen.length} requests \\(search ${calls.scan}, 1 Chronobox read ${calls.vaults}\\): `));

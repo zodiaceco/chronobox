@@ -147,6 +147,31 @@ test('first start reports Watching and treats queued items as known', async () =
   assert.deepEqual(hooks().map((h) => h.json.event), ['ready']);
 });
 
+test('a read with the head of the poll does not ask for the chain again, and never goes back to an older block', async () => {
+  chain.enqueue(OWNER_WALLET, ONE_HALF_ETH);
+  await watcher().poll();
+  chain.mine(120n);
+  const method = (m: string) => chain.calls.filter((c) => c === m).length;
+
+  // The head that the poll of the network read: the read takes it, and the time of its block.
+  chain.calls.length = 0;
+  const fresh = new Watcher(config(), { log: (m) => logs.push(m), chain: { chainId: 1, head: chain.head, timestamp: chain.now() } });
+  assert.equal(await fresh.poll(), true);
+  assert.equal(method('eth_chainId'), 0);
+  assert.equal(method('eth_blockNumber'), 0);
+  assert.equal(method('eth_getBlockByNumber'), 0);
+  assert.equal(fresh.state.lastBlock, chain.head);
+
+  // A head from before the last read of this vault (a question of the bot read it during the poll): read again.
+  const last = chain.head;
+  chain.mine(120n);
+  chain.calls.length = 0;
+  const stale = new Watcher(config(), { log: (m) => logs.push(m), chain: { chainId: 1, head: last - 5, timestamp: chain.ts(last - 5) } });
+  assert.equal(await stale.poll(), true);
+  assert.equal(method('eth_blockNumber'), 1);
+  assert.equal(stale.state.lastBlock, chain.head, 'read at the head of now, not at the older one');
+});
+
 test('a queued native withdrawal produces one Queued alert, then Ready once', async () => {
   const w = watcher();
   await w.poll();
